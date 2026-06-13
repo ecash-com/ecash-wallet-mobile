@@ -31,6 +31,13 @@ final class AppState {
     /// Which main tab is showing — owned here so "See all" on Home can switch to Activity.
     var selectedTab: MainTab = .wallet
 
+    /// Hide the balance on Home (the "eye" toggle). Persisted — privacy choices should stick.
+    var balanceHidden: Bool {
+        didSet { UserDefaults.standard.set(balanceHidden, forKey: "balanceHidden") }
+    }
+
+    private static let selectedWalletKey = "selectedWalletId"
+
     enum SyncState: Equatable {
         case idle
         case syncing
@@ -41,7 +48,13 @@ final class AppState {
         // The public WalletManager() wires the real Keychain + JSON store + BDK factory internally
         // (those are WalletService implementation details — not part of the bridged surface).
         manager = WalletManager()
+        balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
         try? manager.load()
+        // Restore the active wallet across launches (manager.load defaults to the first wallet;
+        // select is a no-op if the saved id no longer exists).
+        if let saved = UserDefaults.standard.string(forKey: Self.selectedWalletKey) {
+            manager.select(id: saved)
+        }
         refresh()
     }
 
@@ -72,6 +85,17 @@ final class AppState {
     @discardableResult
     func createWallet(label: String, network: WalletNetwork) throws -> ManagedWallet {
         let wallet = try manager.createWallet(label: label, network: network)
+        resetPerWalletState()   // the new wallet is auto-selected; don't show the old one's numbers
+        refresh()
+        return wallet
+    }
+
+    /// Import a wallet from a recovery phrase (validated by BDK in the factory), persist it,
+    /// select it. Throws `WalletError.invalidMnemonic` on a bad phrase — never echoes the input.
+    @discardableResult
+    func importWallet(label: String, network: WalletNetwork, mnemonic: String) throws -> ManagedWallet {
+        let wallet = try manager.importWallet(label: label, network: network, mnemonic: mnemonic)
+        resetPerWalletState()   // the imported wallet is auto-selected
         refresh()
         return wallet
     }
@@ -85,6 +109,27 @@ final class AppState {
         CreateViewModel(create: { label, network in
             _ = try self.createWallet(label: label, network: network)
         })
+    }
+
+    /// Vend an `ImportViewModel` wired to this manager (used by the Import flow).
+    func makeImportViewModel() -> ImportViewModel {
+        ImportViewModel(importWallet: { label, network, mnemonic in
+            _ = try self.importWallet(label: label, network: network, mnemonic: mnemonic)
+        })
+    }
+
+    /// Vend a `BackupViewModel` for the selected wallet, or nil if none is selected. The wallet
+    /// id is captured at presentation time (same rule as Send — a switch mid-flow can't
+    /// redirect which wallet's phrase is shown or marked backed up).
+    func makeBackupViewModel() -> BackupViewModel? {
+        guard let id = selectedWalletId else { return nil }
+        return BackupViewModel(
+            loadMnemonic: { try self.manager.mnemonic(for: id) },
+            markBackedUp: {
+                try self.manager.setBackedUp(id: id)
+                self.refresh()   // flips `isBackedUp` → the Home warning disappears
+            },
+            authenticate: { reason in await DeviceAuth.authenticate(reason: reason) })
     }
 
     /// Vend a `SendViewModel` for the selected wallet, or nil if none is selected. Captures the
@@ -110,10 +155,50 @@ final class AppState {
         transactions = sorted([tx] + transactions.filter { $0.txid != tx.txid })
     }
 
+    /// Switch the active wallet. Clears the previous wallet's on-screen state immediately and
+    /// re-syncs the new one (isolated per Golden Rule §5 — nothing carries across).
+    func selectWallet(id: String) {
+        guard id != selectedWalletId else { return }
+        manager.select(id: id)
+        resetPerWalletState()
+        refresh()
+        Task { await sync() }
+    }
+
+    /// Rename a wallet's label (app metadata — does NOT survive seed-only recovery; see
+    /// docs/accounts-and-labels.md for the future BIP-329 label export).
+    func renameWallet(id: String, to label: String) {
+        let trimmed = label.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        try? manager.renameWallet(id: id, to: String(trimmed.prefix(24)))
+        refresh()
+    }
+
+    /// Remove a wallet — purges its mnemonic, metadata, and chain store (Golden Rule §5).
+    /// Callers present the confirmation gate (extra-loud when `!isBackedUp`).
+    func removeWallet(id: String) {
+        let wasSelected = id == selectedWalletId
+        try? manager.removeWallet(id: id)
+        if wasSelected { resetPerWalletState() }
+        refresh()
+        if wasSelected && selectedWalletId != nil {
+            Task { await sync() }
+        }
+    }
+
+    /// Clear state that belongs to the outgoing wallet so it can never bleed into the next
+    /// (balance/transactions repopulate from the new wallet's sync; cached-first is a TODO).
+    private func resetPerWalletState() {
+        balance = .zero
+        transactions = []
+        syncState = .idle
+    }
+
     /// Wipe ALL wallets (Keychain + JSON store + BDK chain stores) → back to the empty state.
     /// Dev/reset affordance — the iOS Keychain survives app deletion, so this is the reliable wipe.
     func wipeAllWallets() {
         try? manager.removeAllWallets()
+        resetPerWalletState()
         refresh()
     }
 
@@ -176,6 +261,9 @@ final class AppState {
     private func refresh() {
         wallets = manager.wallets
         selectedWalletId = manager.selectedWalletId
+        // Persist the active wallet so it survives cold starts (create/import/select/remove all
+        // funnel through here).
+        UserDefaults.standard.set(selectedWalletId, forKey: Self.selectedWalletKey)
         // We deliberately do NOT read balance/transactions here. Both require building the BDK engine
         // (open SQLite, derive descriptors), and on a wallet with real chain data that blocks the
         // main thread long enough to ANR on launch (CLAUDE.md §10 — BDK work stays off the main

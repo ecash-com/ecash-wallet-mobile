@@ -17,17 +17,15 @@ struct OnboardingView: View {
     var body: some View {
         NavigationStack(path: $path) {
             WelcomeView(onCreate: { path.append(.createConfirm) },
-                        onImport: { path.append(.importPlaceholder) })
+                        onImport: { path.append(.importWallet) })
                 .navigationDestination(for: OnboardingRoute.self) { route in
                     switch route {
                     case .createConfirm:
                         CreateConfirmView(viewModel: app.makeCreateViewModel(),
                                           defaultName: app.nextDefaultWalletName)
-                    case .importPlaceholder:
-                        // Slice 4 — Import wallet.
-                        PlaceholderScreen(heading: "Import wallet",
-                                          note: "Restoring from a recovery phrase comes in a later step.")
-                            .navigationTitle("Import")
+                    case .importWallet:
+                        ImportWalletView(viewModel: app.makeImportViewModel(),
+                                         defaultName: app.nextDefaultWalletName)
                     }
                 }
         }
@@ -36,5 +34,5 @@ struct OnboardingView: View {
 
 enum OnboardingRoute: Hashable {
     case createConfirm
-    case importPlaceholder
+    case importWallet
 }

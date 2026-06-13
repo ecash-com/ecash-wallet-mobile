@@ -92,11 +92,15 @@ open class MainActivity: AppCompatActivity {
 
     override fun onResume() {
         super.onResume()
+        // Expose the foreground activity to WalletService's platform glue (FLAG_SECURE on
+        // seed-bearing screens, BiometricPrompt) — the transpiled module can't reach skip.ui.
+        wallet.service.AndroidActivityHolder.current = this
         AppDelegate.shared.onResume()
     }
 
     override fun onPause() {
         super.onPause()
+        wallet.service.AndroidActivityHolder.current = null
         AppDelegate.shared.onPause()
     }
 

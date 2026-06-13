@@ -9,6 +9,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <!-- <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" /> -->
 
+    <!-- Biometric/device-credential prompt gating the Backup seed reveal -->
+    <uses-permission android:name="android.permission.USE_BIOMETRIC" />
+
     <application
         android:label="${PRODUCT_NAME}"
         android:icon="@mipmap/ic_launcher"

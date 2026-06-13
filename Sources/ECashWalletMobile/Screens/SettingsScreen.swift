@@ -10,9 +10,25 @@ import SwiftUI
 struct SettingsScreen: View {
     @AppStorage("appearance") var appearance = ""
     @Environment(AppState.self) var app
+    @State var showBackup = false   // not `private` — Fuse bridges @State (skip-fuse rule)
 
     var body: some View {
         List {
+            if let wallet = app.selectedWallet {
+                Section("Security") {
+                    Button { showBackup = true } label: {
+                        HStack {
+                            Text("Back up recovery phrase")
+                                .textStyle(.body)
+                                .foregroundStyle(Theme.Colors.text0)
+                            Spacer()
+                            Text(wallet.isBackedUp ? "Backed up" : "Not backed up")
+                                .textStyle(.xs)
+                                .foregroundStyle(wallet.isBackedUp ? Theme.Colors.positive : Theme.Colors.warning)
+                        }
+                    }
+                }
+            }
             Section("Appearance") {
                 Picker("Theme", selection: $appearance) {
                     Text("System").tag("")
@@ -40,6 +56,11 @@ struct SettingsScreen: View {
         }
         .groupedListStyle()
         .navigationTitle("Settings")
+        .fullScreenFlow(isPresented: $showBackup) {
+            if let vm = app.makeBackupViewModel() {
+                BackupFlowView(viewModel: vm)
+            }
+        }
     }
 
     private var versionString: String {

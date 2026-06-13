@@ -10,6 +10,7 @@ import WalletService
 /// a hand-built VStack+ForEach, which recursed in SkipUI's Compose layout.
 struct ActivityScreen: View {
     @Environment(AppState.self) var app
+    @State var detailTx: WalletTx? = nil   // not `private` — Fuse bridges @State (skip-fuse rule)
 
     var body: some View {
         Group {
@@ -22,13 +23,24 @@ struct ActivityScreen: View {
             } else {
                 List {
                     ForEach(app.transactions) { tx in
-                        TxRow(tx: tx, unitLabel: app.unitLabel)
+                        Button {
+                            detailTx = tx
+                        } label: {
+                            TxRow(tx: tx, unitLabel: app.unitLabel)
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .listStyle(.plain)
+                .refreshable { await app.sync() }
             }
         }
         .navigationTitle("Activity")
         .task { await app.sync() }
+        .sheet(item: $detailTx) { tx in
+            if let wallet = app.selectedWallet {
+                TxDetailSheet(tx: tx, unitLabel: app.unitLabel, network: wallet.network)
+            }
+        }
     }
 }

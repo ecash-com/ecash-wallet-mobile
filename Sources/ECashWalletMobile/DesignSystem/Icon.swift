@@ -22,6 +22,8 @@ enum Icon {
     // Money actions
     static let send = "north_east"
     static let receive = "south_west"
+    static let swap = "swap_horiz"
+    static let buy = "credit_card"
     static let scan = "qr_code_scanner"
     static let qr = "qr_code"
     static let backspace = "backspace"
@@ -37,6 +39,7 @@ enum Icon {
     // Navigation
     static let back = "chevron_left"
     static let disclosure = "chevron_right"
+    static let expand = "expand_more"
     static let close = "close"
     static let check = "check"
 

@@ -203,8 +203,9 @@ it; only "New address" advances the reveal index).
 ## Vertical feature slices (each = engine + VM + UI + tests; see "Definition of done")
 
 > Order is dependency-driven. Build the manager-first multi-wallet model from the start (§4).
-> Shipped so far: 1 → 2 → 5 (Send pulled forward; the daily-driver loop is live on Signet).
-> **Next: Slice 4 — Import wallet** (start from a known seed), then Backup (Slice 3).
+> Shipped so far: 1 → 2 → 5 → 4 → 3 (all core slices; the daily-driver loop is live on Signet
+> with backup + restore complete). **Next: Slice 7 — wallet manager/switcher + labeling**
+> (per Jake, 2026-06-12), then tx detail (Slice 6 remainder).
 
 ### Slice 1 — Create wallet  ✅ (model: `docs/wallet-and-network-model.md`)
 - [x] **No network question** — generate seed → persist → route Home as selected wallet (dev
@@ -224,17 +225,31 @@ it; only "New address" advances the reveal index).
       share, **network shown**. *(Optional BIP21 amount on receive: TODO.)*
 - [x] State drives through `@Observable AppState` (no separate Home/Receive VMs needed yet).
 
-### Slice 3 — Backup wallet
-- [ ] Gated reveal (biometric/passcode) of selected wallet's mnemonic; **screenshot-blocked**
-      (FLAG_SECURE on Android / obscure on iOS background).
-- [ ] Verify step (confirm N random words) → mark `isBackedUp`, clear banner.
-- [ ] BackupViewModel verify-logic tests.
+### Slice 3 — Backup wallet  ✅
+- [x] Gated reveal of the selected wallet's mnemonic: explicit "I understand" gate → **device
+      auth** (iOS LocalAuthentication biometric-or-passcode; Android framework `BiometricPrompt`
+      API 28+ incl. device-credential fallback — passes through when nothing is enrolled) →
+      numbered word-chip grid. **Capture-blocked**: Android `FLAG_SECURE` via
+      `PlatformBridge.setSecureScreen` + `AndroidActivityHolder` (activity tracked by `Main.kt`
+      lifecycle glue; verified — adb screencap returns empty during the flow); iOS obscures via
+      `obscuredWhenBackgrounded()` (scenePhase overlay). Import screen hardened the same way.
+- [x] Verify step (3 random words, tap-the-right-chip; wrong answer bounces to reveal with fresh
+      questions) → `isBackedUp` → Home warning clears. Entry points: Home warning + Settings
+      "Security" row (shows Backed up / Not backed up status).
+- [x] Verify-plan logic in `WalletService.BackupVerification` (parity-tested ×5: forced-index
+      determinism, answer correctness, dupe-word phrases, bounds). Full flow emulator-verified
+      end-to-end via the accessibility tree (capture is blocked, a11y isn't).
 
-### Slice 4 — Import wallet  ◀ NEXT
-- [ ] No network question → accept 12/24-word mnemonic (descriptor strings later) → validate via
-      BDK → persist → selected (network switchable). Engine + checksum validation already built
-      and tested (`WalletManager.importWallet`); this slice is VM + UI.
-- [ ] ImportViewModel + tests; non-leaky rejection of invalid input.
+### Slice 4 — Import wallet  ✅
+- [x] No network question → 12/24-word mnemonic (descriptor strings later) → BDK validates word
+      list + checksum → persist → selected. Verified on a FRESH emulator against the BIP39 spec
+      vector: imported descriptor matches the published BIP84 account tpub (`73c5da0a` /
+      `tpubDC8msFG…`) exactly; survives restart.
+- [x] ImportViewModel (phase machine; error clears on edit) + `MnemonicInput` normalization in
+      WalletService (parity-tested: whitespace/newline/case tolerant, 12/24-only). Non-leaky
+      rejection — invalid input surfaces only the scrubbed message, never the words.
+      *(TODO with Slice 3 hardening: screenshot-block this screen like the Backup reveal.
+      Duplicate-seed detection on import: TODO.)*
 
 ### Slice 5 — Send  ✅ (core; security narrowing still open)
 - [x] Paste address / BIP21 URI → amount via **custom themed keypad** (`AmountEntry` rules,
@@ -254,19 +269,32 @@ it; only "New address" advances the reveal index).
       `docs/key-storage.md` §3.
 
 ### Slice 6 — Transaction history  🟡
-- [x] List (newest first, pending on top, sent/received styling, confirmations, recipient
-      amount + itemized miner fee) on the Activity tab (`List`/LazyColumn) + Home preview.
-- [ ] Pull-to-refresh on the Activity list.
-- [ ] Detail: txid (copy + open in network explorer), in/out summary, fee, confirmations, RBF.
-- [ ] HistoryViewModel + tests.
+- [x] List (newest first, pending on top) on the Activity tab + Home preview. Row design per
+      Jake's mock (2026-06-12): direction chip, title + amber Pending tag, "Today 14:02 ·
+      N conf" meta (">5 conf" collapses to "Confirmed"), recipient amount + unit, $0.00 fiat
+      placeholder (rate service TODO).
+- [x] Detail SHEET on row tap: amount / fee / total (sends), status, time, RBF, txid with copy
+      + open-in-explorer (`NetworkRegistry.explorerURL`).
+- [x] Pull-to-refresh syncs (Activity list + Home scroll; `.refreshable` → Compose pull-refresh,
+      verified on the emulator). The idle "Refresh" button is gone; spinner + tap-to-retry error
+      states remain.
+- [ ] HistoryViewModel + tests (app-module test target still pending).
 
 ### Slice 7 — Settings + Wallet manager  🟡
-- [x] Theme (System/Light/Dark), About/version, dev "Reset all wallet data" (full purge).
-- [ ] Fiat display currency; app-lock toggle.
+- [x] Theme (System/Light/Dark), About/version, dev "Reset all wallet data" (full purge);
+      Security row → Backup flow.
+- [x] **Wallet switcher + manager (2026-06-12):** Home-header pill (initial avatar + label +
+      chevron, per Jake's mock) → manager sheet: per-wallet rows (avatar, label, network,
+      backup state, selected check), tap-to-switch (per-wallet state fully reset — §5),
+      rename sheet (device-local label, 24-char cap), **remove with confirmation (extra-loud
+      when not backed up)**, New/Import reusing the existing flows, optional name field on
+      import. **Selection persists across launches** (UserDefaults id, re-validated on load).
+      Home redesigned to the mock: no nav title, balance + eye privacy toggle, 4-circle action
+      row (Swap/Buy disabled ghosts until in scope).
+- [ ] Fiat display currency (+ rate service for the $ placeholders); app-lock toggle.
 - [ ] Per-network backend endpoint overrides (Electrum/Esplora) scoped per network.
-- [ ] Wallet manager: list (name/badge/balance), add/import/rename/**remove (purge + backup
-      warning)**/reorder/select; wallet switcher in Home header.
-- [ ] SettingsViewModel / WalletManager UI + tests (incl. wallet-switching re-roots state).
+- [ ] Wallet reorder; per-wallet balance in the manager rows (needs cheap cached balances).
+- [ ] SettingsViewModel / WalletManager UI tests (app-module test target still pending).
 
 ---
 

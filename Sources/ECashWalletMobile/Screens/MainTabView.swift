@@ -21,7 +21,9 @@ struct MainTabView: View {
 
     var body: some View {
         TabView(selection: $selection) {
-            NavigationStack { WalletHomeScreen() }
+            // No NavigationStack: Home presents only sheets/covers, and the switcher pill makes
+            // a "Wallet" nav title redundant — the header IS the pill.
+            WalletHomeScreen()
                 .tabItem {
                     Label { Text("Wallet", bundle: .module, comment: "Wallet tab") }
                     icon: { Image(icon: Icon.wallet).tabSized() }

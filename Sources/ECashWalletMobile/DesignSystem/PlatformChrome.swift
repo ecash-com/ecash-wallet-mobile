@@ -50,4 +50,57 @@ extension View {
         self
         #endif
     }
+
+    /// Hide a TextEditor's built-in scroll background on iOS so a Theme background can show
+    /// through; Android/macOS render their native default (restyled in the polish round).
+    @ViewBuilder
+    func plainEditorBackground() -> some View {
+        #if os(iOS)
+        self.scrollContentBackground(.hidden)
+        #else
+        self
+        #endif
+    }
+
+    /// Keep a label to one truncating line on iOS (tight rows wrap there). Android is gated
+    /// out: `lineLimit` is on the historical Compose-crash modifier list (CLAUDE.md memory) and
+    /// its rows already fit single-line.
+    @ViewBuilder
+    func singleLine() -> some View {
+        #if os(iOS)
+        self.lineLimit(1)
+        #else
+        self
+        #endif
+    }
+
+    /// Cover the content whenever the scene isn't active — iOS can't block screenshots, but
+    /// this keeps seeds out of the app switcher snapshot (§7). Android needs nothing here:
+    /// `FLAG_SECURE` (PlatformBridge.setSecureScreen) already blanks capture AND the recents
+    /// thumbnail.
+    @ViewBuilder
+    func obscuredWhenBackgrounded() -> some View {
+        #if os(iOS)
+        self.modifier(ObscuredWhenBackgrounded())
+        #else
+        self
+        #endif
+    }
 }
+
+#if os(iOS)
+private struct ObscuredWhenBackgrounded: ViewModifier {
+    @Environment(\.scenePhase) private var scenePhase
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if scenePhase != .active {
+                ZStack {
+                    Theme.Colors.bg0.ignoresSafeArea()
+                    Logo(size: 72)
+                }
+            }
+        }
+    }
+}
+#endif

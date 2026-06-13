@@ -95,10 +95,14 @@ Abbreviated — see `PLAN.md` for the detailed, tracked checklist.  ✅ done · 
   "New address" advances on demand)
 - ✅ **Slice 5 — Send** (paste address/BIP21 → custom keypad amount → fee tier → review w/ network →
   sign → broadcast → optimistic pending row; full-screen flow)
-- 🟡 **Slice 6 — Transaction history** (list with itemized miner fee ✅; detail + explorer link ⬜)
-- 🟡 **Slice 7 — Settings + Wallet manager** (theme + dev reset ✅; endpoints, add/rename/remove/switch ⬜)
-- ⬜ **Slice 4 — Import wallet** (mnemonic restore — next up; engine + validation already built)
-- ⬜ **Slice 3 — Backup wallet** (gated reveal + verify)
+- 🟡 **Slice 6 — Transaction history** (mock-styled rows + tap-for-detail sheet with explorer link ✅;
+  pull-to-refresh + fiat values ⬜)
+- 🟡 **Slice 7 — Settings + Wallet manager** (theme, dev reset, backup row, wallet switcher pill +
+  manager sheet with switch/rename/add/import/remove + persistent selection ✅; endpoints, fiat, app-lock ⬜)
+- ✅ **Slice 4 — Import wallet** (12/24-word restore, BDK-validated, non-leaky errors; verified
+  against the BIP39/BIP84 spec vectors)
+- ✅ **Slice 3 — Backup wallet** (explicit gate → biometric/passcode → word chips → 3-word verify;
+  capture-blocked: FLAG_SECURE on Android, obscured-when-backgrounded on iOS; clears the Home warning)
 - ⬜ **Milestone F — Hardening & release:** app-lock, secret-scrub audit, UI smoke flows, real brand, signing/CI.
 
 ## Docs
