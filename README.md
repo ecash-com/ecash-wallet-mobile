@@ -103,7 +103,10 @@ Abbreviated — see `PLAN.md` for the detailed, tracked checklist.  ✅ done · 
   against the BIP39/BIP84 spec vectors)
 - ✅ **Slice 3 — Backup wallet** (explicit gate → biometric/passcode → word chips → 3-word verify;
   capture-blocked: FLAG_SECURE on Android, obscured-when-backgrounded on iOS; clears the Home warning)
-- ⬜ **Milestone F — Hardening & release:** app-lock, secret-scrub audit, UI smoke flows, real brand, signing/CI.
+- 🟡 **Milestone F — Hardening & release:** app-lock ✅ (biometric/passcode gate on launch +
+  foreground, Settings toggle, default ON); secret-scrub audit, UI smoke flows, real brand, signing/CI ⬜.
+- 🧪 **Tests:** WalletService parity suite (Robolectric, both platforms) + 47 app view-model tests
+  (Swift Testing, host `swift test`): Send, Backup, Import, Create, AppLock state machines.
 
 ## Docs
 

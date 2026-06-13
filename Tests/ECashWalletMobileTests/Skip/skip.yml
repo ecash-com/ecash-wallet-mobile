@@ -1,0 +1,6 @@
+# Skip configuration for the ECashWalletMobile test target.
+# Native (Fuse) like the module under test: host tests run via `swift test`; the Android side
+# runs natively via `skip android test` (CLI mode). View-model/pure-logic tests only — never
+# real BDK / Keychain / network (those need a device + the real backend).
+skip:
+  mode: 'native'

@@ -29,5 +29,13 @@ let package = Package(
             .product(name: "QRCodeGenerator", package: "swift-qrcode-generator"),
             .product(name: "WalletService", package: "WalletService")
         ], resources: [.process("Resources")], plugins: [.plugin(name: "skipstone", package: "skip")]),
+        // View-model / pure-logic tests. XCTest so they run on the host (`SKIP_BRIDGE=1 swift test`)
+        // and on Android via `skip android test` (CLI mode). These exercise the view-model state
+        // machines through their injected seams — never real BDK / Keychain / network.
+        .testTarget(name: "ECashWalletMobileTests", dependencies: [
+            "ECashWalletMobile",
+            .product(name: "WalletService", package: "WalletService"),
+            .product(name: "SkipTest", package: "skip"),
+        ], plugins: [.plugin(name: "skipstone", package: "skip")]),
     ]
 )

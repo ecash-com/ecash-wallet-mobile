@@ -1,1 +1,1 @@
-app,key,words
+ecash,bitcoin,wallet,crypto,self-custody,seed phrase,drivechain,send,receive,BDK

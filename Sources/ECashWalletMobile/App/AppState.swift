@@ -37,6 +37,10 @@ final class AppState {
     }
 
     private static let selectedWalletKey = "selectedWalletId"
+    private static let appLockKey = "appLockEnabled"
+
+    /// App-lock gate (biometric/passcode on launch + foreground resume). Default ON.
+    let appLock: AppLockModel
 
     enum SyncState: Equatable {
         case idle
@@ -55,6 +59,15 @@ final class AppState {
         if let saved = UserDefaults.standard.string(forKey: Self.selectedWalletKey) {
             manager.select(id: saved)
         }
+        // App-lock: default ON. Lock at launch only when armed AND there's a wallet to protect
+        // (a fresh install with no wallet is never gated). `object(forKey:) as? Bool` so an unset
+        // default reads as ON rather than `bool(forKey:)`'s false.
+        let lockEnabled = UserDefaults.standard.object(forKey: Self.appLockKey) as? Bool ?? true
+        appLock = AppLockModel(
+            enabled: lockEnabled,
+            startLocked: lockEnabled && manager.hasWallets,
+            authenticate: { reason in await DeviceAuth.authenticate(reason: reason) },
+            persist: { UserDefaults.standard.set($0, forKey: Self.appLockKey) })
         refresh()
     }
 
@@ -146,7 +159,12 @@ final class AppState {
                 // `manager.send` is non-isolated async — broadcast runs off the main actor.
                 try await self.manager.send(walletId: id, to: address, amount: amount, feeRate: feeRate)
             },
-            onSent: { tx in self.insertPending(tx) })
+            onSent: { tx in self.insertPending(tx) },
+            authorize: { reason in
+                // Require device auth before sending when app-lock is on (§7); pass through if off.
+                guard self.appLock.enabled else { return true }
+                return await DeviceAuth.authenticate(reason: reason)
+            })
     }
 
     /// Optimistically surface a just-broadcast tx (pending, no timestamp → sorts to the top).

@@ -292,7 +292,7 @@ console.log(JSON.stringify(out, null, 2));
 | `text0` | Primary text | `#EDEFF1` | `#0B0D0E` |
 | `text1` | Secondary / muted | `#9BA3A9` | `#5B636A` |
 | `text2` | Faint / placeholder | `#5C656B` | `#9BA3A9` |
-| `accent` | Brand / primary action | `#F7931A` *(VERIFY — placeholder)* | `#F7931A` *(VERIFY)* |
+| `accent` | Brand / primary action | `#E8A84A` (rgb 232,168,74) | `#E8A84A` |
 | `accentText` | Text on accent | `#0B0D0E` | `#0B0D0E` |
 | `positive` | Received / confirmed | `#3FB67E` | `#1F8F5F` |
 | `negative` | Sent / error / destructive | `#E5484D` | `#CE2C31` |
@@ -302,7 +302,7 @@ console.log(JSON.stringify(out, null, 2));
 
 > Mainnet wallets show **no** network badge (mainnet is the unmarked default). Every non-mainnet wallet shows the `netTestnet` badge with the network name (e.g. "TESTNET4", later "eCASH TESTNET"). Pick a `netTestnet` color that is impossible to confuse with `accent`, `positive`, or `negative`.
 
-> The `accent` is the most important value to confirm — I did not verify the eCash brand accent. Do not ship the placeholder.
+> `accent` is the real eCash brand amber **`#E8A84A` (rgb 232,168,74)**, provided by Jake 2026-06-13 (colorsets written as float components — the Skip-safe form). `accentTint` = same hue at 12% alpha; `accentHover` = a darker shade (light) / lighter shade (dark). The other surface/text tokens are still the placeholder palette pending the full ecash.com token dump (§14 #1).
 
 ### Typography
 
@@ -443,7 +443,7 @@ ANDROID_SERIAL=emulator-5554 swift test # instrumented on a real emulator (neede
 
 ## 14. Open items to confirm
 
-1. Exact ecash.com color tokens + brand **accent** — Jake is providing these (replace the §8 placeholder table; derive `accent` from the logo/site). Also confirm the `netTestnet` badge color.
+1. Brand **accent** — ✅ DONE (2026-06-13): real eCash amber `#E8A84A` (rgb 232,168,74) wired into `accent`/`accentTint`/`accentHover` colorsets. STILL PENDING: the rest of the ecash.com surface/text tokens (the `bg*`/`text*` families are still placeholders) and confirming the `netTestnet` badge color.
 2. Vendor `ecash-logo.svg` into the repo and produce the Android vector-drawable variant (see §8 Brand assets).
 3. **Type system decision:** JetBrains Mono-led (matches ecash.com) vs `DESIGN.md`'s Space Grotesk (display) + IBM Plex Sans (body) + JetBrains Mono (money/mono). Pick one; make CLAUDE.md and `DESIGN.md` agree. Confirm the actual ecash.com font.
 4. **Produce the Skip-safe `DESIGN.md` revision** (§8 carve-outs): SwiftUI-native adaptive colors instead of UIKit, Material Symbols instead of SF Symbols, iOS-26 glass gated as iOS-only enhancement, chrome confirmed against Skip's supported subset, mainnet-unmarked reconciled.

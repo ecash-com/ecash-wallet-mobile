@@ -53,6 +53,27 @@ public enum PlatformBridge {
     public static func authenticateUser(reason: String) async -> Bool {
         #if SKIP
         guard let activity = AndroidActivityHolder.current else { return true }
+        // Pre-check: if nothing is enrolled to authenticate against (no biometric AND no device
+        // PIN/pattern/password), pass through instead of showing a prompt that can hang on a
+        // credential-less device — which, with app-lock default-on, would strand the user out of
+        // their wallet. A device with no lock can't be protected by one. (API 29+; BiometricManager
+        // doesn't exist on 28, where we just show the prompt with a Cancel button.)
+        if android.os.Build.VERSION.SDK_INT >= 29 {
+            let context = ProcessInfo.processInfo.androidContext
+            if let manager = context.getSystemService(android.content.Context.BIOMETRIC_SERVICE) as? android.hardware.biometrics.BiometricManager {
+                let status: Int
+                if android.os.Build.VERSION.SDK_INT >= 30 {
+                    status = manager.canAuthenticate(
+                        android.hardware.biometrics.BiometricManager.Authenticators.BIOMETRIC_WEAK
+                        | android.hardware.biometrics.BiometricManager.Authenticators.DEVICE_CREDENTIAL)
+                } else {
+                    status = manager.canAuthenticate()
+                }
+                if status != android.hardware.biometrics.BiometricManager.BIOMETRIC_SUCCESS {
+                    return true   // nothing enrolled / hardware unavailable → don't gate
+                }
+            }
+        }
         return await withCheckedContinuation { continuation in
             let executor = activity.mainExecutor   // framework API 28+, no androidx dependency
             let builder = android.hardware.biometrics.BiometricPrompt.Builder(activity)

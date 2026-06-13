@@ -1,1 +1,15 @@
-A great new app built with Skip!
+eCash.com Wallet is a fast, self-custodial wallet for eCash — the Bitcoin hardfork from Layer Two Labs.
+
+Your keys never leave your device. Each wallet is generated on-device and its recovery phrase is stored in the Android Keystore. All signing happens locally with the Bitcoin Dev Kit (BDK).
+
+FEATURES
+• Create a new wallet, or restore one from a 12- or 24-word recovery phrase
+• Hold multiple wallets and switch between them instantly
+• Send and receive with QR codes and BIP21 payment links
+• Choose your network fee before you send
+• Review every payment — recipient, amount, fee, and network — before you sign
+• Follow your transaction history with confirmations and block-explorer links
+• Back up your recovery phrase behind a device-authentication gate
+
+YOUR COINS, YOUR CONTROL
+This is a non-custodial wallet. We never hold your keys, your recovery phrase, or your funds — and we cannot recover them for you. Write your recovery phrase down and keep it somewhere safe.

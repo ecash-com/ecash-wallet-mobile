@@ -14,8 +14,8 @@ struct SettingsScreen: View {
 
     var body: some View {
         List {
-            if let wallet = app.selectedWallet {
-                Section("Security") {
+            Section("Security") {
+                if let wallet = app.selectedWallet {
                     Button { showBackup = true } label: {
                         HStack {
                             Text("Back up recovery phrase")
@@ -28,6 +28,12 @@ struct SettingsScreen: View {
                         }
                     }
                 }
+                Toggle("Require unlock", isOn: Binding(
+                    get: { app.appLock.enabled },
+                    set: { app.appLock.setEnabled($0) }))
+                Text("Ask for Face ID, fingerprint, or your passcode when opening the app.")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text2)
             }
             Section("Appearance") {
                 Picker("Theme", selection: $appearance) {

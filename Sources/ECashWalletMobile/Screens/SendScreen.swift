@@ -5,75 +5,109 @@
 import SwiftUI
 import WalletService
 
-/// The Send flow, presented as a full-screen cover from Home. Steps through the
-/// `SendViewModel` state machine: enter (address + keypad amount + fee tier) → review
-/// (network + recipient + amount + fee — Golden Rule §7) → broadcasting → sent/failed.
+/// Routes pushed onto the Send navigation stack. Recipient is the stack root; amount and review
+/// are pushed, so each gets the platform back chevron + swipe-back for free (no custom Back).
+enum SendRoute: Hashable {
+    case amount
+    case review
+}
+
+/// The Send flow, presented as a full-screen cover from Home. Real navigation steps:
+/// recipient (root) → amount → review → broadcast → sent/failed (Golden Rule §7). The nav `path`
+/// mirrors the view model's step; system back/swipe pops it, and `.onChange` resyncs the model.
 struct SendScreen: View {
     @Environment(\.dismiss) var dismiss
     @State var vm: SendViewModel   // not `private` — Fuse bridges @State (skip-fuse rule)
+    @State var path: [SendRoute] = []
 
     init(viewModel: SendViewModel) {
         _vm = State(initialValue: viewModel)
     }
 
     var body: some View {
-        NavigationStack {
-            ZStack {
-                Theme.Colors.bg0.ignoresSafeArea()
-                content
-            }
-            .navigationTitle("Send")
-            .toolbar {
-                // `.primaryAction` (not `.topBarTrailing`/`.cancellationAction`) — the placement
-                // proven cross-platform in this codebase (ReceiveScreen) and macOS-safe for Skip.
-                ToolbarItem(placement: .primaryAction) {
-                    if vm.step == .entering {
-                        Button { dismiss() } label: { Text("Cancel") }
+        NavigationStack(path: $path) {
+            recipientStep
+                .navigationTitle("Send to")
+                .toolbar {
+                    ToolbarItem(placement: .primaryAction) {
+                        // System close affordance (no spelled-out "Cancel"): the iOS-26 `.close`
+                        // role renders the standard circular X; Android gets the Material close glyph.
+                        #if os(iOS)
+                        Button(role: .close) { dismiss() }
+                        #else
+                        Button { dismiss() } label: { Image(icon: Icon.close) }
+                        #endif
                     }
                 }
+                .navigationDestination(for: SendRoute.self) { route in
+                    ZStack {
+                        Theme.Colors.bg0.ignoresSafeArea()
+                        switch route {
+                        case .amount: amountStep.navigationTitle("Amount")
+                        case .review: reviewDestination.navigationTitle("Review")
+                        }
+                    }
+                }
+                .background(Theme.Colors.bg0)
+        }
+        // System back / swipe shortens the path → step the model back to match.
+        .onChange(of: path) { oldPath, newPath in
+            if newPath.count < oldPath.count {
+                for _ in 0..<(oldPath.count - newPath.count) { vm.back() }
             }
         }
     }
 
-    @ViewBuilder
-    private var content: some View {
-        switch vm.step {
-        case .entering:
-            entry
-        case .reviewing:
-            review
-        case .broadcasting:
+    // MARK: - Step 1: recipient (stack root)
+
+    private var recipientStep: some View {
+        ZStack {
+            Theme.Colors.bg0.ignoresSafeArea()
             VStack(spacing: Theme.Space.x4) {
-                ProgressView()
-                Text("Broadcasting…")
+                NetworkBadge(name: vm.networkDisplayName, isMainnet: vm.isMainnet)
+
+                Text("Who are you paying?")
                     .textStyle(.sm)
                     .foregroundStyle(Theme.Colors.text1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+
+                // Paste a bare address or a BIP21 URI. `.plain` strips Android's Material field
+                // container so only our `bg2` box shows (matches iOS); without it the field draws
+                // its own gray fill inside ours — a heavy doubled-box look.
+                TextField("Address or payment URI", text: $vm.addressText)
+                    .textFieldStyle(.plain)
+                    .font(.jbMono(14, .regular))
+                    .foregroundStyle(Theme.Colors.text0)
+                    .autocorrectionDisabled()
+                    .noAutocapitalization()
+                    .padding(Theme.Space.x3)
+                    .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+
+                Spacer()
+
+                WalletButton(title: "Next") {
+                    vm.confirmRecipient()
+                    if vm.step == .amount { path.append(.amount) }
+                }
+                .disabled(!vm.canContinueRecipient)
+                .opacity(vm.canContinueRecipient ? 1 : 0.4)
             }
-        case .sent:
-            sent
-        case .failed(let message):
-            failed(message)
+            .padding(Theme.Space.gutter)
         }
     }
 
-    // MARK: - Entry
+    // MARK: - Step 2: amount
 
-    private var entry: some View {
+    private var amountStep: some View {
         VStack(spacing: Theme.Space.x4) {
             NetworkBadge(name: vm.networkDisplayName, isMainnet: vm.isMainnet)
 
-            // Recipient: paste a bare address or a BIP21 URI. Mono, like all addresses.
-            TextField("Address or payment URI", text: $vm.addressText)
-                .font(.jbMono(14, .regular))
-                .foregroundStyle(Theme.Colors.text0)
-                .autocorrectionDisabled()
-                .noAutocapitalization()
-                .padding(Theme.Space.x3)
-                .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+            Text("To \(Self.shortAddress(vm.reviewAddress))")
+                .font(.jbMono(13, .regular))
+                .foregroundStyle(Theme.Colors.text2)
 
             Spacer()
 
-            // Amount, JetBrains Mono — red when it exceeds the spendable balance.
             VStack(spacing: Theme.Space.x1) {
                 Text(vm.displayAmountText)
                     .font(.jbMono(40, .medium))
@@ -99,11 +133,18 @@ struct SendScreen: View {
 
             WalletButton(title: "Review") {
                 vm.review()
+                if vm.step == .reviewing { path.append(.review) }
             }
             .disabled(!vm.canReview)
             .opacity(vm.canReview ? 1 : 0.4)
         }
         .padding(Theme.Space.gutter)
+    }
+
+    /// Middle-ellipsis truncation for the recipient recap (`tb1qab…k4f2`); full address on review.
+    private static func shortAddress(_ address: String) -> String {
+        guard address.count > 16 else { return address }
+        return "\(address.prefix(8))…\(address.suffix(6))"
     }
 
     private var feeTierPicker: some View {
@@ -115,7 +156,26 @@ struct SendScreen: View {
         .pickerStyle(.segmented)
     }
 
-    // MARK: - Review
+    // MARK: - Step 3: review destination (review / broadcasting / sent / failed)
+
+    @ViewBuilder
+    private var reviewDestination: some View {
+        switch vm.step {
+        case .broadcasting:
+            VStack(spacing: Theme.Space.x4) {
+                ProgressView()
+                Text("Broadcasting…")
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.text1)
+            }
+        case .sent:
+            sent
+        case .failed(let message):
+            failed(message)
+        default:
+            review   // .reviewing (and any transient)
+        }
+    }
 
     private var review: some View {
         VStack(spacing: Theme.Space.x5) {
@@ -150,9 +210,6 @@ struct SendScreen: View {
 
             WalletButton(title: "Confirm send") {
                 Task { await vm.confirmSend() }
-            }
-            WalletButton(title: "Back", kind: .secondary) {
-                vm.backToEntry()
             }
         }
         .padding(Theme.Space.gutter)
@@ -201,8 +258,8 @@ struct SendScreen: View {
                 .textStyle(.sm)
                 .foregroundStyle(Theme.Colors.text0)
                 .multilineTextAlignment(.center)
-            WalletButton(title: "Back") {
-                vm.backToEntry()
+            WalletButton(title: "Try again") {
+                Task { await vm.retry() }
             }
         }
         .padding(Theme.Space.gutter)

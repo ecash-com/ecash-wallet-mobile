@@ -1,0 +1,1 @@
+Self-custodial eCash wallet. Your keys never leave your device — send, receive, and manage multiple wallets, all secured locally by BDK.

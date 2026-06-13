@@ -25,6 +25,7 @@ struct WalletHomeScreen: View {
                 ScrollView {
                     content(for: wallet)
                 }
+                .scrollIndicators(.hidden)
                 .refreshable { await app.sync() }
             } else {
                 PlaceholderScreen(heading: "Your wallet", note: "No wallet selected.")

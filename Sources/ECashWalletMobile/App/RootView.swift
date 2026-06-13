@@ -13,10 +13,14 @@ import SwiftUI
 struct RootView: View {
     @AppStorage("appearance") var appearance = ""   // "" = system · "light" · "dark"
     @State var app = AppState()
+    @Environment(\.scenePhase) var scenePhase
 
     var body: some View {
         Group {
-            if app.hasWallets {
+            if app.hasWallets && app.appLock.isLocked {
+                // App-lock gate — only when there's a wallet to protect (never over onboarding).
+                LockScreen()
+            } else if app.hasWallets {
                 MainTabView()
             } else {
                 OnboardingView()
@@ -26,5 +30,12 @@ struct RootView: View {
         .tint(Theme.Colors.accent)
         .preferredColorScheme(appearance == "dark" ? .dark
                               : appearance == "light" ? .light : nil)
+        // Re-arm the lock when the app is backgrounded; the lock screen re-prompts on return.
+        // (Snapshot privacy in the app switcher is handled separately by obscuredWhenBackgrounded.)
+        .onChange(of: scenePhase) { _, phase in
+            if phase == .background {
+                app.appLock.lockOnBackground()
+            }
+        }
     }
 }

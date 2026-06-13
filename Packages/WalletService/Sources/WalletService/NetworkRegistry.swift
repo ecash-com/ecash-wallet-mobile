@@ -71,7 +71,7 @@ public enum NetworkRegistry {
                 addressHRP: "tb",
                 unitLabel: "sBTC",
                 defaultBackend: "tcp://node.signet.drivechain.info:50001",
-                explorerTxTemplate: "https://mempool.space/signet/tx/{txid}",
+                explorerTxTemplate: "https://explorer.signet.drivechain.info/tx/{txid}",
                 displayName: "Signet")
         case .regtest:
             return NetworkParams(

@@ -7,9 +7,9 @@ import Observation
 import SkipFuse   // @Observable must drive the Android (Compose) UI in Fuse
 import WalletService
 
-/// Drives the Send flow: enter (address + keypad amount + fee tier) → review → broadcast →
-/// sent/failed. Platform-agnostic and testable: it depends only on injected closures (AppState
-/// wires them to `WalletManager`), so the state machine never touches BDK directly.
+/// Drives the Send flow as discrete steps: pick recipient → set amount + fee → review →
+/// broadcast → sent/failed. Platform-agnostic and testable: it depends only on injected closures
+/// (AppState wires them to `WalletManager`), so the state machine never touches BDK directly.
 ///
 /// String-editing rules live in `WalletService.AmountEntry` (parity-tested); this type owns the
 /// step machine and validation.
@@ -17,8 +17,9 @@ import WalletService
 @Observable
 final class SendViewModel {
     enum Step: Equatable {
-        case entering
-        case reviewing
+        case recipient        // enter / paste the destination address (or BIP21 URI)
+        case amount           // keypad amount + fee tier
+        case reviewing        // confirm network + recipient + amount + fee before signing
         case broadcasting
         case sent
         case failed(String)   // user-safe message (already scrubbed by WalletError)
@@ -52,11 +53,12 @@ final class SendViewModel {
     let networkDisplayName: String
     let isMainnet: Bool
 
-    // Entry state. `addressText` accepts a bare address or a BIP21 URI (parsed at review).
+    // Entry state. `addressText` accepts a bare address or a BIP21 URI (parsed when leaving the
+    // recipient step).
     var addressText = ""
     private(set) var amountText = ""
     var tier: FeeTier = .normal
-    private(set) var step: Step = .entering
+    private(set) var step: Step = .recipient
 
     // Normalized at review() — what confirmSend() actually sends and the review screen shows.
     private(set) var reviewAddress = ""
@@ -64,19 +66,24 @@ final class SendViewModel {
 
     private let send: (_ address: String, _ amount: Amount, _ feeRate: FeeRate) async throws -> WalletTx
     private let onSent: @MainActor (WalletTx) -> Void
+    /// Device-auth gate before broadcasting (Golden Rule §7). AppState wires this to `DeviceAuth`
+    /// when app-lock is on, or a pass-through when it's off. Returns true to proceed.
+    private let authorize: (String) async -> Bool
 
     init(balance: Amount,
          unitLabel: String,
          networkDisplayName: String,
          isMainnet: Bool,
          send: @escaping (_ address: String, _ amount: Amount, _ feeRate: FeeRate) async throws -> WalletTx,
-         onSent: @escaping @MainActor (WalletTx) -> Void) {
+         onSent: @escaping @MainActor (WalletTx) -> Void,
+         authorize: @escaping (String) async -> Bool) {
         self.balance = balance
         self.unitLabel = unitLabel
         self.networkDisplayName = networkDisplayName
         self.isMainnet = isMainnet
         self.send = send
         self.onSent = onSent
+        self.authorize = authorize
     }
 
     // MARK: - Keypad
@@ -112,32 +119,55 @@ final class SendViewModel {
         return amount.sats > balance.sats
     }
 
+    /// The recipient step can advance once the address parses (a bare address or a BIP21 URI).
+    /// Address validity for the network is enforced by BDK at send time, not here.
+    var canContinueRecipient: Bool {
+        BIP21.parse(addressText) != nil
+    }
+
+    /// The amount step can advance with a positive in-balance amount (recipient already chosen).
     var canReview: Bool {
         guard let amount else { return false }
-        return amount.sats > 0
-            && !amountExceedsBalance
-            && !addressText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        return amount.sats > 0 && !amountExceedsBalance
     }
 
     // MARK: - Steps
 
-    /// Parse + normalize the entry and advance to the review step. A BIP21 URI's address is
-    /// unwrapped here; if it carries an amount and the user hasn't typed one, the URI's is used.
-    func review() {
-        guard step == .entering else { return }
-        guard let parsed = BIP21.parse(addressText) else { return }
+    /// Recipient → amount. Parses the address (unwrapping a BIP21 URI); if the URI carries an
+    /// amount and the user hasn't entered one yet, it pre-fills the amount field.
+    func confirmRecipient() {
+        guard step == .recipient, let parsed = BIP21.parse(addressText) else { return }
         reviewAddress = parsed.address
         if let uriAmount = parsed.amount, amountText.isEmpty {
             amountText = uriAmount.formattedCoin()
         }
-        guard canReview, let amount else { return }
+        step = .amount
+    }
+
+    /// Amount → review.
+    func review() {
+        guard step == .amount, canReview, let amount else { return }
         reviewAmount = amount
         step = .reviewing
     }
 
-    func backToEntry() {
-        if step == .reviewing { step = .entering }
-        if case .failed = step { step = .entering }
+    /// Step back one screen (amount → recipient, review → amount, failed → amount). Wired to the
+    /// platform back gesture/chevron via the navigation path, so there are no custom Back buttons.
+    func back() {
+        switch step {
+        case .amount: step = .recipient
+        case .reviewing: step = .amount
+        case .failed: step = .amount
+        default: break
+        }
+    }
+
+    /// Retry a failed broadcast in place (the "Try again" action on the failure screen) — returns
+    /// to the reviewed state and re-sends the same recipient/amount/fee.
+    func retry() async {
+        guard case .failed = step else { return }
+        step = .reviewing
+        await confirmSend()
     }
 
     /// Broadcast (off the main actor via the injected async closure), then hand the optimistic
@@ -145,6 +175,9 @@ final class SendViewModel {
     /// explicitly confirmed, which states network + recipient + amount + fee.
     func confirmSend() async {
         guard step == .reviewing else { return }
+        // Device-auth gate before moving money (§7). On cancel/failure, stay on review — no
+        // broadcast. A no-op authorize (app-lock off) returns true and sends straight through.
+        guard await authorize("Authorize this payment") else { return }
         step = .broadcasting
         do {
             let tx = try await send(reviewAddress, reviewAmount, tier.feeRate)

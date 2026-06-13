@@ -261,8 +261,8 @@ it; only "New address" advances the reveal index).
 - [x] Optimistic pending tx insert (replaced by BDK truth on next sync); typed error surfaces
       for insufficient funds/dust/broadcast.
 - [x] SendViewModel state machine (entering→reviewing→broadcasting→sent/failed). Activity rows
-      itemize recipient amount vs miner fee. *(VM unit tests pending app-module test target;
-      mainnet-weightier confirm deferred — no mainnet networks shipped.)*
+      itemize recipient amount vs miner fee. **VM unit-tested (17 Swift Testing cases).**
+      *(mainnet-weightier confirm deferred — no mainnet networks shipped.)*
 - [ ] **Narrow the engine to watch-only + sign-on-demand:** build the everyday `Wallet` from the
       PUBLIC descriptors (no mnemonic), load the mnemonic → private descriptors only to sign here,
       then drop it. Shrinks the secret's in-memory window; pairs with the per-send gate. See
@@ -300,7 +300,14 @@ it; only "New address" advances the reveal index).
 
 ## Milestone F — Security, hardening, parity, release
 
-- [ ] **App lock** — biometric/passcode gate on launch and before send (on by default for send).
+- [x] **App lock** — biometric/passcode gate on launch + foreground resume, **Settings toggle**
+      ("Require unlock"), default ON. `AppLockModel` (testable @Observable, injected auth+persist
+      seams) → `LockScreen` root gate + scenePhase re-arm; reuses `DeviceAuth` (the same path the
+      Backup reveal uses, Jake-verified with PIN). Persisted; no-lockout on credential-less devices
+      (DeviceAuth passes through — verified live on iOS). **9 unit tests.** *(Per-SEND re-auth not
+      added — the launch/foreground gate covers the session; revisit with the watch-only/sign-on-
+      demand item below. Live Android gate re-verify pending a stable emulator — current AVD's GMS
+      subsystem degraded after heavy cycling; auth mechanism already proven via Backup.)*
 - [ ] **Secret-scrub audit** — no seed/xprv/descriptor-with-keys in any log/error/analytics/
       crash path (automated assertion + manual pass).
 - [ ] **Maestro smoke flow** — create → receive → see address, on both platforms
