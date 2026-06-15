@@ -27,6 +27,10 @@ INFOPLIST_KEY_CFBundleDisplayName = eCash.com
 // still falls back to passcode gracefully via the `.deviceOwnerAuthentication` policy.
 INFOPLIST_KEY_NSFaceIDUsageDescription = Unlock the app and confirm sending funds with Face ID.
 
+// Camera usage string. REQUIRED for the Send-screen QR scanner (AVFoundation) — without it iOS
+// kills the app on camera access. (Android's CAMERA permission auto-merges from SkipQRCode.)
+INFOPLIST_KEY_NSCameraUsageDescription = Scan a QR code to fill in a payment address.
+
 // iOS-specific Info.plist property keys
 INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphone*] = YES
 INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphone*] = YES

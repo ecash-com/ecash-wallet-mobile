@@ -269,6 +269,12 @@ public final class WalletManager: @unchecked Sendable {
         try liveEngine(walletId: walletId).balance()
     }
 
+    /// Not-yet-spendable balance (incoming 0-conf + immature) — shown separately from the spendable
+    /// `balance`. Cached read, no network. See README "Spendable balance".
+    public func pendingBalance(walletId: String) throws -> Amount {
+        try liveEngine(walletId: walletId).pendingBalance()
+    }
+
     /// Sync the wallet against its network backend (Electrum full scan → persist), then return the
     /// updated balance. Does network I/O — callers MUST invoke this off the main actor (Android
     /// throws `NetworkOnMainThreadException` otherwise). `async` so the call site can `await` it.

@@ -1,5 +1,5 @@
 {
-  "originHash" : "ac39e18113f20b31b8d46e00e45102e6054692e59962adb92af8a269b08c449c",
+  "originHash" : "6019804a86236461113b302bcfc42cd774426a6a0e6d329ec0b1c7f0170302be",
   "pins" : [
     {
       "identity" : "bdk-swift",
@@ -89,6 +89,15 @@
       "state" : {
         "revision" : "119d266a295f0c2156fe58cd23325bad0ee115c8",
         "version" : "1.7.4"
+      }
+    },
+    {
+      "identity" : "skip-qrcode",
+      "kind" : "remoteSourceControl",
+      "location" : "https://source.skip.tools/skip-qrcode.git",
+      "state" : {
+        "revision" : "0395085d7391af1e06ad7952d134ed4a466038a5",
+        "version" : "0.0.1"
       }
     },
     {

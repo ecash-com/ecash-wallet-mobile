@@ -19,6 +19,7 @@ public final class MockWalletEngine: WalletEngineProtocol {
 
     // Fixtures the tests set up.
     public var balanceToReturn: Amount
+    public var pendingBalanceToReturn: Amount = .zero
     public var addressToReturn: AddressInfo
     public var transactionsToReturn: [WalletTx]
     public var utxosToReturn: [Utxo]
@@ -47,6 +48,11 @@ public final class MockWalletEngine: WalletEngineProtocol {
     public func balance() throws -> Amount {
         if let error = errorToThrow { throw error }
         return balanceToReturn
+    }
+
+    public func pendingBalance() throws -> Amount {
+        if let error = errorToThrow { throw error }
+        return pendingBalanceToReturn
     }
 
     public func nextReceiveAddress() throws -> AddressInfo {

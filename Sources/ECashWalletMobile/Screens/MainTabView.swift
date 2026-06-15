@@ -11,8 +11,9 @@ enum MainTab: String, Hashable {
 }
 
 /// The main shell once a wallet exists. Stock `TabView` → native tabs on each platform.
-/// Tab icons are Material Symbols `.symbolset` resources (never SF Symbols) and render
-/// identically on iOS and Android.
+/// Tab icons are Material Symbols `.symbolset` resources (never SF Symbols) and render identically
+/// on iOS and Android. The selected tab uses the **filled** variant (`*Fill`), unselected the
+/// outlined one — the Material 3 convention, applied on both platforms by swapping on `selection`.
 struct MainTabView: View {
     // Plain @State, NOT @AppStorage: persisting the selected tab meant a crash on one tab put
     // every subsequent launch straight back into that tab — a permanent crash loop (this also
@@ -26,21 +27,21 @@ struct MainTabView: View {
             WalletHomeScreen()
                 .tabItem {
                     Label { Text("Wallet", bundle: .module, comment: "Wallet tab") }
-                    icon: { Image(icon: Icon.wallet).tabSized() }
+                    icon: { Image(icon: selection == .wallet ? Icon.walletFill : Icon.wallet).tabSized() }
                 }
                 .tag(MainTab.wallet)
 
             NavigationStack { ActivityScreen() }
                 .tabItem {
                     Label { Text("Activity", bundle: .module, comment: "Activity tab") }
-                    icon: { Image(icon: Icon.activity).tabSized() }
+                    icon: { Image(icon: selection == .activity ? Icon.activityFill : Icon.activity).tabSized() }
                 }
                 .tag(MainTab.activity)
 
             NavigationStack { SettingsScreen() }
                 .tabItem {
                     Label { Text("Settings", bundle: .module, comment: "Settings tab") }
-                    icon: { Image(icon: Icon.settings).tabSized() }
+                    icon: { Image(icon: selection == .settings ? Icon.settingsFill : Icon.settings).tabSized() }
                 }
                 .tag(MainTab.settings)
         }

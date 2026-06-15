@@ -126,6 +126,12 @@ final class SendViewModel {
         BIP21.parse(addressText) != nil
     }
 
+    /// The parsed destination address for the current input (unwrapping a BIP21 URI), or nil if the
+    /// input isn't a valid address yet. Drives the live mono confirmation under the recipient field.
+    var recipientAddressPreview: String? {
+        BIP21.parse(addressText)?.address
+    }
+
     /// The amount step can advance with a positive in-balance amount (recipient already chosen).
     var canReview: Bool {
         guard let amount else { return false }

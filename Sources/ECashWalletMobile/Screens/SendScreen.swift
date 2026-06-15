@@ -4,6 +4,7 @@
 
 import SwiftUI
 import WalletService
+import SkipQRCode   // Android camera scanner (AndroidBarcodeScanner); iOS uses QRScannerView
 
 /// Routes pushed onto the Send navigation stack. Recipient is the stack root; amount and review
 /// are pushed, so each gets the platform back chevron + swipe-back for free (no custom Back).
@@ -20,6 +21,7 @@ struct SendScreen: View {
     @State var vm: SendViewModel   // not `private` — Fuse bridges @State (skip-fuse rule)
     @State var path: [SendRoute] = []
     @State var showMainnetConfirm = false   // extra explicit gate for real-money sends (Golden Rule §6/§7)
+    @State var showScanner = false          // iOS camera scanner cover (Android uses an activity)
 
     init(viewModel: SendViewModel) {
         _vm = State(initialValue: viewModel)
@@ -39,17 +41,34 @@ struct SendScreen: View {
                         Theme.Colors.bg0.ignoresSafeArea()
                         switch route {
                         case .amount: amountStep.navigationTitle(Text("Amount", bundle: .module, comment: "send amount step title"))
-                        case .review: reviewDestination.navigationTitle(Text("Review", bundle: .module, comment: "send review step title"))
+                        case .review:
+                            reviewDestination
+                                .navigationTitle(Text("Review", bundle: .module, comment: "send review step title"))
+                                // Once broadcasting/sent, the only way out is "Done" — no back button.
+                                .navigationBarBackButtonHidden(backLocked)
                         }
                     }
                 }
                 .background(Theme.Colors.bg0)
         }
-        // System back / swipe shortens the path → step the model back to match.
+        // System back / swipe shortens the path → step the model back to match. Except once the send
+        // is in flight or succeeded: there's nothing to go back to, so undo any pop (blocks swipe +
+        // Android system-back). Combined with the hidden back button, "Done" is the only exit.
         .onChange(of: path) { oldPath, newPath in
-            if newPath.count < oldPath.count {
-                for _ in 0..<(oldPath.count - newPath.count) { vm.back() }
+            guard newPath.count < oldPath.count else { return }
+            if backLocked {
+                path = oldPath
+                return
             }
+            for _ in 0..<(oldPath.count - newPath.count) { vm.back() }
+        }
+    }
+
+    /// True while a send is broadcasting or has succeeded — back navigation is disabled in both.
+    private var backLocked: Bool {
+        switch vm.step {
+        case .broadcasting, .sent: return true
+        default: return false
         }
     }
 
@@ -66,17 +85,40 @@ struct SendScreen: View {
                     .foregroundStyle(Theme.Colors.text1)
                     .frame(maxWidth: .infinity, alignment: .leading)
 
-                // Paste a bare address or a BIP21 URI. `.plain` strips Android's Material field
-                // container so only our `bg2` box shows (matches iOS); without it the field draws
-                // its own gray fill inside ours — a heavy doubled-box look.
-                TextField("Address or payment URI", text: $vm.addressText)
-                    .textFieldStyle(.plain)
-                    .font(.jbMono(14, .regular))
-                    .foregroundStyle(Theme.Colors.text0)
-                    .autocorrectionDisabled()
-                    .noAutocapitalization()
-                    .fieldBoxInset()
-                    .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                // Paste a bare address or a BIP21 URI, or tap the trailing scan icon. `.plain` strips
+                // Android's Material field container so only our `bg2` box shows (matches iOS).
+                HStack(spacing: Theme.Space.x2) {
+                    TextField("Address or payment URI", text: $vm.addressText)
+                        .textFieldStyle(.plain)
+                        .font(.jbMono(14, .regular))
+                        .foregroundStyle(Theme.Colors.text0)
+                        .autocorrectionDisabled()
+                        .noAutocapitalization()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+
+                    // Scan a QR. Android → SkipQRCode's ML Kit activity; iOS → the AVFoundation cover.
+                    Button { startScan() } label: {
+                        Image(icon: Icon.scan)
+                            .resizable().scaledToFit().frame(width: 20, height: 20)
+                            .foregroundStyle(Theme.Colors.accent)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .fieldBoxInset()
+                .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+
+                // Once the input parses to a valid address (bare or BIP21), confirm it back in mono.
+                if let preview = vm.recipientAddressPreview {
+                    HStack(alignment: .top, spacing: Theme.Space.x2) {
+                        Image(icon: Icon.check)
+                            .resizable().scaledToFit().frame(width: 14, height: 14)
+                            .foregroundStyle(Theme.Colors.positive)
+                        Text(verbatim: preview)
+                            .font(.jbMono(13, .regular))
+                            .foregroundStyle(Theme.Colors.text1)
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
 
                 Spacer()
 
@@ -89,6 +131,39 @@ struct SendScreen: View {
             }
             .padding(Theme.Space.gutter)
         }
+        #if os(iOS)
+        .fullScreenCover(isPresented: $showScanner) {
+            ZStack(alignment: .topTrailing) {
+                QRScannerView { code in
+                    vm.addressText = code   // BIP21 is parsed when leaving the recipient step
+                    showScanner = false
+                }
+                .ignoresSafeArea()
+
+                Button { showScanner = false } label: {
+                    Image(icon: Icon.close)
+                        .resizable().scaledToFit().frame(width: 20, height: 20)
+                        .foregroundStyle(.white)
+                        .padding(Theme.Space.x3)
+                        .background(.black.opacity(0.5), in: Circle())
+                }
+                .padding(Theme.Space.x4)
+            }
+        }
+        #endif
+    }
+
+    /// Launch the platform scanner: SkipQRCode's full-screen activity on Android (its completion
+    /// fires off-main, so hop to the main actor to set the field), the camera cover on iOS.
+    private func startScan() {
+        #if os(iOS)
+        showScanner = true
+        #else
+        AndroidBarcodeScanner.scan { code in
+            guard let code else { return }
+            Task { @MainActor in vm.addressText = code }
+        }
+        #endif
     }
 
     // MARK: - Step 2: amount

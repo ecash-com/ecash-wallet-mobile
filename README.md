@@ -169,6 +169,14 @@ Your keys stay on your device, and the app is built to keep them exposed as litt
 - **Guarded backup.** Revealing the phrase is behind an explicit gate + device auth, screenshots are
   blocked during the reveal (Android `FLAG_SECURE`; obscured in the iOS app switcher), and you
   confirm a few words before it's marked backed up.
+- **Spendable balance (0-conf policy).** Only **confirmed coins + your own unconfirmed change** are
+  treated as spendable. Coins you *received* that are still unconfirmed (0-conf) are shown separately
+  as **pending** and are kept out of coin selection until they confirm — because an unconfirmed
+  incoming payment can still be double-spent or RBF-replaced, which would orphan anything you tried to
+  send on top of it. This mirrors Bitcoin Core's trusted/untrusted rule (BDK gives us the
+  `confirmed` / `trustedPending` / `untrustedPending` split; the send path also marks untrusted
+  outpoints unspendable). A configurable confirmation threshold — and potentially a **per-network**
+  one (e.g. stricter on mainnet than on testnets) — is a planned option.
 - **Clean removal.** Removing a wallet purges its phrase from the secure store plus all of its
   on-device data.
 

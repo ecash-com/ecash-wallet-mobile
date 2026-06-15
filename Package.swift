@@ -19,6 +19,8 @@ let package = Package(
         // via Fuse, so the receive QR renders identically with no `#if`. (SkipQRCode is scan-only,
         // for the Send scanner later — it has no generation API.)
         .package(url: "https://github.com/fwcd/swift-qrcode-generator.git", from: "2.0.0"),
+        // Camera-based QR/barcode SCANNER for the Send flow (scan-only; generation stays QRCodeGenerator).
+        .package(url: "https://source.skip.tools/skip-qrcode.git", "0.0.1"..<"2.0.0"),
         // The BDK seam lives in its own transpiled+bridged package (the SkipSQL pattern);
         // it carries the bdk-swift / bdk-android dependencies internally.
         .package(path: "Packages/WalletService")
@@ -27,6 +29,7 @@ let package = Package(
         .target(name: "ECashWalletMobile", dependencies: [
             .product(name: "SkipFuseUI", package: "skip-fuse-ui"),
             .product(name: "QRCodeGenerator", package: "swift-qrcode-generator"),
+            .product(name: "SkipQRCode", package: "skip-qrcode"),
             .product(name: "WalletService", package: "WalletService")
         ], resources: [.process("Resources")], plugins: [.plugin(name: "skipstone", package: "skip")]),
         // View-model / pure-logic tests. XCTest so they run on the host (`SKIP_BRIDGE=1 swift test`)

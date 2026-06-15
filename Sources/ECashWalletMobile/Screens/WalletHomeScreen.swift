@@ -11,6 +11,11 @@ struct WalletHomeScreen: View {
     @Environment(AppState.self) var app
     @State var showReceive = false   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
     @State var showSend = false
+    // Bumped each time Send opens so the cover gets a FRESH SendScreen (new view model + nav path).
+    // On Android SkipUI keeps a `fullScreenCover`'s view + @State alive across dismiss/re-present, so
+    // without a changing `.id` the next Send reopened on the previous flow's "Sent" step with stale
+    // data (iOS recreates the cover, so it was Android-only). See SendScreen `.id(sendToken)`.
+    @State var sendToken = 0
     @State var showBackup = false
     @State var showWalletManager = false
     @State var detailTx: WalletTx? = nil
@@ -39,7 +44,7 @@ struct WalletHomeScreen: View {
         // Send is a full-screen cover — a focused, multi-step money flow, not a peek-and-dismiss.
         .fullScreenFlow(isPresented: $showSend) {
             if let vm = app.makeSendViewModel() {
-                SendScreen(viewModel: vm)
+                SendScreen(viewModel: vm).id(sendToken)
             }
         }
         // Backup: gate → reveal → verify; clears the warning below on success.
@@ -95,6 +100,13 @@ struct WalletHomeScreen: View {
                         .font(.jbMono(14, .regular))
                         .foregroundStyle(Theme.Colors.text2)
                 }
+                // Incoming unconfirmed (0-conf) — not yet spendable; shown so it doesn't look lost.
+                if !app.balanceHidden, app.pendingBalance.sats > 0 {
+                    Text("+\(app.pendingBalance.formattedCoin()) \(params.unitLabel) pending",
+                         bundle: .module, comment: "incoming unconfirmed balance, not yet spendable; %@ are amount + unit")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.warning)
+                }
                 syncStatus
             }
             .padding(.vertical, Theme.Space.x5)
@@ -126,7 +138,7 @@ struct WalletHomeScreen: View {
                 .padding(.top, Theme.Space.x4)
         } else {
             VStack(alignment: .leading, spacing: Theme.Space.x3) {
-                Text("ACTIVITY", bundle: .module, comment: "home activity section header")
+                Text("Recent activity", bundle: .module, comment: "home activity section header")
                     .textStyle(.overline)
                     .foregroundStyle(Theme.Colors.text2)
                 ForEach(app.recentTransactions) { tx in
@@ -155,6 +167,7 @@ struct WalletHomeScreen: View {
                 showReceive = true
             }
             actionCircle(icon: Icon.send, title: "Send", prominent: true, enabled: true) {
+                sendToken += 1   // force a fresh Send flow (see sendToken)
                 showSend = true
             }
         }

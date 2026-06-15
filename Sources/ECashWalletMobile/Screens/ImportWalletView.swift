@@ -18,6 +18,13 @@ struct ImportWalletView: View {
     @State var walletName = ""
     @State var network: WalletNetwork = .signet   // default to a testnet-class net; mainnet is deliberate
 
+    // iOS-only keyboard ergonomics (focus advance + scroll-to-dismiss). Guarded so the Android
+    // (Compose) transpile is untouched; the Skip docs sanction inline `#if os(iOS)` in a view.
+    #if os(iOS)
+    @FocusState private var focusedField: Field?
+    private enum Field { case phrase, name }
+    #endif
+
     init(viewModel: ImportViewModel, defaultName: String) {
         self.defaultName = defaultName
         _vm = State(initialValue: viewModel)
@@ -27,13 +34,13 @@ struct ImportWalletView: View {
         ZStack {
             Theme.Colors.bg0.ignoresSafeArea()
 
+            // ScrollView (not a fixed VStack): the on-screen keyboard would otherwise cover the
+            // name field + Import button, and a large nav title only collapses correctly inside a
+            // scroll view. Content scrolls clear of the keyboard; the button lives at the end.
+            ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.x4) {
                 // Network is chosen up front (it fixes the address set) and unmistakable (Golden Rule §4/§6).
                 NetworkSelector(network: $network)
-
-                Text("Restore from recovery phrase", bundle: .module, comment: "import wallet heading")
-                    .textStyle(.h1)
-                    .foregroundStyle(Theme.Colors.text0)
 
                 Text("Enter your 12 or 24 word phrase, separated by spaces. It never leaves this device.",
                      bundle: .module, comment: "import wallet instructions")
@@ -55,6 +62,9 @@ struct ImportWalletView: View {
                             .stroke(Theme.Colors.border, lineWidth: 1)
                     )
                     .onChange(of: vm.phrase) { _, _ in vm.phraseEdited() }
+                    #if os(iOS)
+                    .focused($focusedField, equals: .phrase)
+                    #endif
 
                 // Live word count — quiet guidance, no judgment until submit.
                 Text(wordCountText, bundle: .module)
@@ -69,6 +79,11 @@ struct ImportWalletView: View {
                     .autocorrectionDisabled()
                     .fieldBoxInset()
                     .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    #if os(iOS)
+                    .focused($focusedField, equals: .name)
+                    .submitLabel(.go)
+                    .onSubmit { if vm.canSubmit { submitImport() } }
+                    #endif
 
                 if let error = vm.errorMessage {
                     Text(error)
@@ -76,24 +91,30 @@ struct ImportWalletView: View {
                         .foregroundStyle(Theme.Colors.negative)
                 }
 
-                Spacer()
-
                 WalletButton(title: vm.isImporting
                                 ? "Importing…"
                                 : "Import wallet") {
-                    let trimmed = walletName.trimmingCharacters(in: .whitespacesAndNewlines)
-                    vm.submit(label: trimmed.isEmpty ? defaultName : String(trimmed.prefix(24)),
-                              network: network)
+                    submitImport()
                 }
                 .disabled(!vm.canSubmit)
                 .opacity(vm.canSubmit ? 1 : 0.4)
+                .padding(.top, Theme.Space.x2)
             }
             .padding(Theme.Space.gutter)
+            }
+            #if os(iOS)
+            .scrollDismissesKeyboard(.interactively)   // swipe the content down to dismiss
+            #endif
         }
         .navigationTitle(Text("Import wallet", bundle: .module, comment: "import wallet screen title"))
         .onAppear { PlatformBridge.setSecureScreen(true) }
         .onDisappear { PlatformBridge.setSecureScreen(false) }
         .obscuredWhenBackgrounded()
+    }
+
+    private func submitImport() {
+        let trimmed = walletName.trimmingCharacters(in: .whitespacesAndNewlines)
+        vm.submit(label: trimmed.isEmpty ? defaultName : String(trimmed.prefix(24)), network: network)
     }
 
     private var wordCountText: LocalizedStringKey {

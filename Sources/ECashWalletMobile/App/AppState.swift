@@ -21,8 +21,10 @@ final class AppState {
     private(set) var wallets: [ManagedWallet] = []
     private(set) var selectedWalletId: String?
 
-    /// The selected wallet's balance (cached first, then refreshed by `sync()`).
+    /// The selected wallet's SPENDABLE balance (confirmed + own unconfirmed change), refreshed by `sync()`.
     private(set) var balance: Amount = .zero
+    /// Not-yet-spendable balance (incoming 0-conf + immature). Shown separately so it doesn't look lost.
+    private(set) var pendingBalance: Amount = .zero
     /// Sync lifecycle for the selected wallet, so the UI can show a spinner / error.
     private(set) var syncState: SyncState = .idle
     /// The selected wallet's transactions, newest first (pending at the top). Cached, then refreshed.
@@ -92,7 +94,7 @@ final class AppState {
 
     /// The most recent transactions for the Home preview (full list lives on the Activity tab).
     var recentTransactions: [WalletTx] {
-        Array(transactions.prefix(4))
+        Array(transactions.prefix(10))
     }
 
     /// Display unit label (sBTC / tBTC / BTC) for the selected wallet's network.
@@ -216,6 +218,7 @@ final class AppState {
     /// (balance/transactions repopulate from the new wallet's sync; cached-first is a TODO).
     private func resetPerWalletState() {
         balance = .zero
+        pendingBalance = .zero
         transactions = []
         syncState = .idle
     }
@@ -242,6 +245,7 @@ final class AppState {
             // main actor; execution resumes here on the main actor for the observable updates.
             let updated = try await manager.sync(walletId: id)
             balance = updated
+            pendingBalance = (try? manager.pendingBalance(walletId: id)) ?? .zero
             transactions = sorted((try? manager.transactions(walletId: id)) ?? [])
             syncState = .idle
             // Refresh fiat alongside the balance (no-op for networks without a price provider).

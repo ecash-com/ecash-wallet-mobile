@@ -52,7 +52,11 @@ import org.bitcoindevkit.__ // bdk-android (Kotlin) — note the `.__` wildcard
 public protocol WalletEngineProtocol: AnyObject {
     var network: WalletNetwork { get }
 
+    /// SPENDABLE ("Available") balance: confirmed coins + our own unconfirmed change.
     func balance() throws -> Amount
+    /// NOT-yet-spendable balance: incoming unconfirmed (0-conf) + immature coinbase. Shown
+    /// separately so funds aren't perceived as lost while they wait to confirm.
+    func pendingBalance() throws -> Amount
     func nextReceiveAddress() throws -> AddressInfo
     /// The lowest revealed-but-unused receive address (reveals one only if none exists). Does
     /// NOT advance on repeat calls — the default for the Receive screen, so casual opens don't
@@ -108,14 +112,24 @@ public final class WalletEngine: WalletEngineProtocol {
         self.signPsbt = signPsbt
     }
 
+    /// SPENDABLE / "Available" balance — confirmed coins + our OWN unconfirmed change
+    /// (BDK's `trustedPending`). Incoming unconfirmed (`untrustedPending`) and immature coinbase
+    /// are deliberately excluded: they're reported by `pendingBalance()` and can't be spent until
+    /// they confirm (spend policy — see README "Spendable balance"). This is what coin selection in
+    /// `send` honors too, via `untrustedUnconfirmedOutpoints()`.
     public func balance() throws -> Amount {
         let balance = wallet.balance()
-        let total = balance.confirmed.toSat()
-            + balance.immature.toSat()
-            + balance.trustedPending.toSat()
-            + balance.untrustedPending.toSat()
         // BDK vends UInt64 sats; our Amount is signed Int64 (bridge-safe, fits all real values).
-        return Amount(sats: Int64(total))
+        let available = balance.confirmed.toSat() + balance.trustedPending.toSat()
+        return Amount(sats: Int64(available))
+    }
+
+    /// NOT-yet-spendable balance — incoming 0-conf (`untrustedPending`) + immature coinbase.
+    /// Surfaced separately so received-but-unconfirmed funds read as "pending", not missing.
+    public func pendingBalance() throws -> Amount {
+        let balance = wallet.balance()
+        let pending = balance.untrustedPending.toSat() + balance.immature.toSat()
+        return Amount(sats: Int64(pending))
     }
 
     public func nextReceiveAddress() throws -> AddressInfo {
@@ -191,6 +205,43 @@ public final class WalletEngine: WalletEngineProtocol {
         return result
     }
 
+    /// Outpoints to KEEP OUT of coin selection: unconfirmed UTXOs that aren't our own change.
+    /// An unconfirmed tx is "trusted" only if we contributed inputs to it (`sentAndReceived.sent
+    /// > 0` → our own spend/change); incoming 0-conf (no inputs of ours) is "untrusted" and stays
+    /// unspendable until it confirms — so a sender can't get us to forward coins that could be
+    /// double-spent or RBF-replaced before confirming. Mirrors Bitcoin Core's trusted/untrusted
+    /// rule. (Spend policy — README "Spendable balance".)
+    private func untrustedUnconfirmedOutpoints() -> [OutPoint] {
+        var unconfirmedTxids = Set<String>()
+        var trustedTxids = Set<String>()
+        for canonical in wallet.transactions() {
+            let tx = canonical.transaction
+            let confirmed: Bool
+            #if SKIP
+            confirmed = canonical.chainPosition is ChainPosition.Confirmed
+            #else
+            switch canonical.chainPosition {
+            case .confirmed: confirmed = true
+            case .unconfirmed: confirmed = false
+            }
+            #endif
+            if confirmed { continue }
+            let txid = "\(tx.computeTxid())"
+            unconfirmedTxids.insert(txid)
+            if wallet.sentAndReceived(tx: tx).sent.toSat() > UInt64(0) {
+                trustedTxids.insert(txid)   // our own unconfirmed change → spendable
+            }
+        }
+        var excluded: [OutPoint] = []
+        for output in wallet.listUnspent() {
+            let txid = "\(output.outpoint.txid)"
+            if unconfirmedTxids.contains(txid) && !trustedTxids.contains(txid) {
+                excluded.append(output.outpoint)
+            }
+        }
+        return excluded
+    }
+
     public func listUtxos() throws -> [Utxo] {
         // listUnspent() already excludes spent outputs. Build into a Swift array (see transactions()).
         var result: [Utxo] = []
@@ -232,9 +283,24 @@ public final class WalletEngine: WalletEngineProtocol {
             #else
             let bdkFeeRate = try BitcoinDevKit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
             #endif
+            // Spend policy: confirmed coins + our own unconfirmed change only. Excluding the
+            // untrusted (incoming 0-conf) outpoints keeps them out of coin selection (empty list
+            // is a harmless no-op). See `untrustedUnconfirmedOutpoints` / README "Spendable balance".
+            // bdk-android's `unspendable` takes a Kotlin `List`, so convert the Swift array to the
+            // backing Kotlin list on the transpiled side; Apple takes the `[OutPoint]` as-is.
+            let untrusted: [OutPoint] = untrustedUnconfirmedOutpoints()
+            #if SKIP
+            // `.kotlin()` yields a star-projected MutableList; the unchecked cast restores the
+            // concrete element type bdk-android's `unspendable(List<OutPoint>)` requires (the list
+            // really does hold OutPoints, so the cast is safe).
+            let unspendable = untrusted.kotlin() as! kotlin.collections.List<OutPoint>
+            #else
+            let unspendable = untrusted
+            #endif
             psbt = try TxBuilder()
                 .addRecipient(script: script, amount: bdkAmount)
                 .feeRate(feeRate: bdkFeeRate)
+                .unspendable(unspendable: unspendable)
                 .finish(wallet: wallet)
         } catch {
             // Insufficient-funds / dust / fee errors classified, never echoed (Golden Rule §2).

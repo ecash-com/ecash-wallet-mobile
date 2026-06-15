@@ -14,10 +14,13 @@ import SwiftUI
 /// `Icons.xcassets` and update the asset-name strings below. Call sites use the semantic
 /// `Icon.*` names + `Image(icon:)`, so none of them change.
 enum Icon {
-    // Tabs
+    // Tabs (outlined = unselected; *Fill = selected, Material 3 style)
     static let wallet = "account_balance_wallet"
+    static let walletFill = "account_balance_wallet_fill"
     static let activity = "format_list_bulleted"
+    static let activityFill = "format_list_bulleted_fill"
     static let settings = "settings"
+    static let settingsFill = "settings_fill"
 
     // Money actions
     static let send = "north_east"
