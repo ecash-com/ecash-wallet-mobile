@@ -126,14 +126,16 @@ Abbreviated — see `PLAN.md` for the detailed, tracked checklist.  ✅ done · 
 - ✅ **Slice 1 — Create wallet** (generate → home on a test network; no network question at create)
 - ✅ **Slice 2 — Home + Receive** (balance, sync state, activity preview; unused address + QR —
   "New address" advances on demand)
-- ✅ **Slice 5 — Send** (paste address/BIP21 → custom keypad amount → fee tier → review w/ network →
-  sign → broadcast → optimistic pending row; full-screen flow)
+- ✅ **Slice 5 — Send** (paste **or QR-scan** address/BIP21 → custom keypad amount → fee tier → review
+  w/ network → sign → broadcast → optimistic pending row; full-screen flow. Spendable = confirmed +
+  own change; the success screen is Done-only)
 - 🟡 **Slice 6 — Transaction history** (rows + redesigned detail sheet — amount/fee/total, **fee rate,
-  block height, size**, RBF, txid, big block-explorer button — and pull-to-refresh ✅; fiat values ⬜)
-- 🟡 **Slice 7 — Settings + Wallet manager** (theme, dev reset, backup row, wallet switcher pill +
-  manager sheet with switch/rename/add/import/remove + persistent selection, app-lock toggle, and an
-  **open-source licenses** screen, and **custom per-network backend endpoints** (Electrum/Esplora +
-  Test-connection + global SOCKS5/Tor proxy) ✅; fiat ⬜)
+  block height, size**, RBF, txid, big block-explorer button — pull-to-refresh, and **fiat on the
+  balance + rows** ✅; fiat on the detail-sheet amount ⬜)
+- ✅ **Slice 7 — Settings + Wallet manager** (theme, **display currency** (USD/EUR/GBP/JPY, Bitfinex),
+  dev reset, backup row, wallet switcher pill + manager sheet with switch/rename/add/import/remove +
+  persistent selection, app-lock toggle, an **open-source licenses** screen, and **custom per-network
+  backend endpoints** (Electrum/Esplora + Test-connection))
 - ✅ **Slice 4 — Import wallet** (12/24-word restore, BDK-validated, non-leaky errors; verified
   against the BIP39/BIP84 spec vectors)
 - ✅ **Slice 3 — Backup wallet** (explicit gate → biometric/passcode → word chips → 3-word verify;
@@ -209,6 +211,7 @@ app screen and this table should be kept in sync.
 | [Bitcoin Dev Kit](https://bitcoindevkit.org) (`bdk-swift` / `bdk-android`) | Wallet engine | Apache-2.0 / MIT |
 | [SkipKeychain](https://source.skip.tools/skip-keychain) | Secure mnemonic storage | LGPL-3.0 |
 | [swift-qrcode-generator](https://github.com/fwcd/swift-qrcode-generator) | Receive QR codes | MIT |
+| [SkipQRCode](https://source.skip.tools/skip-qrcode) | Send QR scanning (Android camera) | LGPL-3.0 |
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | Mono / numeric typeface | OFL-1.1 |
 | [Space Grotesk](https://github.com/floriankarsten/space-grotesk) | Display typeface | OFL-1.1 |
 | [Material Symbols](https://github.com/google/material-design-icons) | Icon set (`.symbolset`) | Apache-2.0 |

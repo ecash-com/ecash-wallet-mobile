@@ -58,7 +58,7 @@ A native mobile Bitcoin wallet — **eCash.com Wallet** — for **eCash**, the L
 | Wallet engine (Android) | `bdk-android` (Maven `org.bitcoindevkit:bdk-android`) | ~2.3.x; needs **NDK 27+**, **Kotlin 2.1.10+** |
 | Secure storage | SkipKeychain | iOS Keychain / Android Keystore |
 | Local storage | **BDK-owned SQLite** (chain data — UTXOs/txs/derivation state, per wallet via `Persister.newSqlite`) + **JSON `FileWalletStore`** (public wallet-list metadata) | **NOT SkipSQL** (removed — BDK owns its own store). Secrets → Keychain (above). Account/address labels are app-owned metadata (post-v1; see `docs/accounts-and-labels.md`). |
-| QR | SkipQRCode | receive display + send scan |
+| QR | **generate:** QRCodeGenerator (pure-Swift) · **scan:** SkipQRCode (Android ML Kit) / AVFoundation (iOS) | Receive QR + Send scanner; SkipQRCode is scan-only |
 | Min OS | iOS 26+ (manifest `.iOS("26.0")` + `IPHONEOS_DEPLOYMENT_TARGET=26.0`; ≈75–86% of active iPhones, climbing), Android 9 (**API 28** — Skip Fuse floor; emitted `minSdkVersion=28`, ≈93.5% of active devices) | iOS-26 floor lets the iOS path use Liquid Glass without `#available`; bdk-android needs NDK 27+ / NDK target API ≥29. macOS test/transpile host stays `.v14`. |
 
 Pin exact versions in `Package.swift` / `skip.yml`. BDK is pre-3.0 on an ~8-week cadence — upgrade deliberately, never float.

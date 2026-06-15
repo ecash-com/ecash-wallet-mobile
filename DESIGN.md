@@ -20,7 +20,9 @@
 Android. Brand only through `.tint`, the `Theme` fonts/colors, and a small set of domain views.**
 Confirm every chrome element is in Skip's supported subset before relying on it.
 
-- **Tabs** → stock `TabView` + `.tabItem` (native bottom bar / Material navigation). No custom bar,
+- **Tabs** → stock `TabView` + `.tabItem` (native bottom bar / Material navigation). The selected
+  tab uses the **filled** Material Symbol variant, unselected the outlined one (swapped on selection,
+  both platforms). No custom bar,
   no floating FAB, no search-role tab. (iOS-26 Liquid Glass is *not* used — it has no Compose
   mapping; if ever added it must be `#if os(iOS)`-gated and off the shared path.)
 - **Navigation** → `NavigationStack` + `.navigationTitle` + `.toolbar` for multi-step flows.

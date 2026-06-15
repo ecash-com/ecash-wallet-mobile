@@ -41,6 +41,10 @@ extension OpenSourceLicense {
             license: "MIT",
             url: "https://github.com/fwcd/swift-qrcode-generator"),
         OpenSourceLicense(
+            name: "SkipQRCode",
+            license: "LGPL-3.0",
+            url: "https://source.skip.tools/skip-qrcode"),
+        OpenSourceLicense(
             name: "JetBrains Mono",
             license: "OFL-1.1",
             url: "https://github.com/JetBrains/JetBrainsMono"),

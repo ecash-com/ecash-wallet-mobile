@@ -206,8 +206,8 @@ it; only "New address" advances the reveal index).
 > Order is dependency-driven. Build the manager-first multi-wallet model from the start (§4).
 > Shipped: 1 → 2 → 5 → 4 → 3, plus the wallet manager/switcher (Slice 7) and the redesigned tx
 > detail with full on-chain data (Slice 6) — the daily-driver loop is live on Signet, verified on
-> real devices' simulators. **Remaining (mostly Milestone F + open items):** QR-scan for Send, fiat
-> on the tx-detail amount, full license texts, real brand tokens, signing/CI, and v2 backends (CBF +
+> real devices' simulators. **Remaining (mostly Milestone F + open items):** fiat on the tx-detail
+> amount, full license texts, real brand tokens, signing/CI, and v2 backends (CBF +
 > embedded Tor).
 
 ### Slice 1 — Create wallet  ✅ (model: `docs/wallet-and-network-model.md`)
@@ -261,7 +261,11 @@ it; only "New address" advances the reveal index).
       parity-tested) + Max → fee tier (fixed 1/2/5 sat/vB; live estimates TODO) → **review
       screen stating network** + recipient/amount/fee-rate → confirm → build/sign/broadcast.
       Presented as a full-screen flow. **Proven with real mined Signet sends both directions.**
-      *(QR scan: TODO. True max via TxBuilder drain: TODO. Exact fee preview on review needs a
+      **QR scan (2026-06-15):** scan icon in the recipient field → SkipQRCode's ML Kit activity
+      (Android) / AVFoundation `QRScannerView` (iOS); a live mono parsed-address confirmation shows
+      under the field. Spend policy: confirmed + own change only (incoming 0-conf excluded). Success
+      screen is Done-only (back hidden + swipe/system-back blocked).
+      *(True max via TxBuilder drain: TODO. Exact fee preview on review needs a
       build-without-broadcast engine call: TODO.)*
 - [x] Optimistic pending tx insert (replaced by BDK truth on next sync); typed error surfaces
       for insufficient funds/dust/broadcast.
