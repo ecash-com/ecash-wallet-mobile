@@ -117,6 +117,8 @@ No change to `WalletService` or a view model merges without tests in the same PR
 Abbreviated — see `PLAN.md` for the detailed, tracked checklist.  ✅ done · 🟡 in progress · ⬜ not started
 
 - ✅ **M0 — Foundation:** design system (`Theme`), app shell + navigation, icons, logo, network badge.
+  Brand fonts everywhere incl. nav-bar titles (Space Grotesk — iOS `UINavigationBarAppearance` /
+  Android Compose `Typography`); text scaling capped so large OS sizes don't break money layouts.
 - ✅ **M1 — WalletService core (pure, fully tested):** Amount/BIP21/Descriptors/NetworkRegistry/
   WalletError + KeyStore/WalletStore/WalletManager + mock engine.
 - ✅ **M2 — Real BDK engine:** create/import, balance, addresses, transactions, UTXOs, send, sync,

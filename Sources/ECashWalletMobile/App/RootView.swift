@@ -28,7 +28,14 @@ struct RootView: View {
             }
         }
         .environment(app)
+        .brandNavigationTitleFont()
         .tint(Theme.Colors.accent)
+        // Cap Dynamic Type so the largest accessibility sizes don't break the fixed-size amount/
+        // address layouts. iOS only (real SwiftUI honors the upper-bound cap); Android font scaling
+        // is a separate concern handled by Compose.
+        #if os(iOS)
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
+        #endif
         .preferredColorScheme(appearance == "dark" ? .dark
                               : appearance == "light" ? .light : nil)
         // Privacy cover: hides balances/addresses from the app-switcher snapshot whenever the app

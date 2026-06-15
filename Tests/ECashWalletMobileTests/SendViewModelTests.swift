@@ -37,7 +37,8 @@ import WalletService
         confirmations: Int32(0), timestampEpochSeconds: nil, isRBF: true)
 
     /// Build a VM with `balance` sats and a recording send seam.
-    private func makeVM(balanceSats: Int64 = 1_000_000) -> (SendViewModel, SendRecorder) {
+    private func makeVM(balanceSats: Int64 = 1_000_000,
+                        validate: @escaping (String) -> Bool = { _ in true }) -> (SendViewModel, SendRecorder) {
         let rec = SendRecorder(txToReturn: Self.pendingTx)
         let vm = SendViewModel(
             balance: Amount(sats: balanceSats),
@@ -52,7 +53,8 @@ import WalletService
                 return rec.txToReturn
             },
             onSent: { tx in rec.onSentTx = tx },
-            authorize: { _ in rec.authCallCount += 1; return rec.authResult })
+            authorize: { _ in rec.authCallCount += 1; return rec.authResult },
+            validateAddress: validate)
         return (vm, rec)
     }
 
@@ -63,6 +65,43 @@ import WalletService
     }
     private func enterPointOhOne(_ vm: SendViewModel) {
         vm.tapDigit(0); vm.tapDot(); vm.tapDigit(0); vm.tapDigit(1)   // "0.01"
+    }
+
+    // MARK: - Recipient address validation (early: format + network/prefix)
+
+    @Test func recipientValidationGatesAdvanceAndPreview() {
+        // Validator stands in for BDK: only tb1… is valid for this (testnet) wallet.
+        let (vm, _) = makeVM(validate: { $0.hasPrefix("tb1") })
+
+        // Valid address → can advance, green preview, no error.
+        vm.addressText = "tb1qexamplerecipientaddress"
+        #expect(vm.canContinueRecipient)
+        #expect(vm.recipientAddressPreview == "tb1qexamplerecipientaddress")
+        #expect(!vm.recipientAddressInvalid)
+
+        // Wrong-network / malformed → blocked, no preview, invalid flag set.
+        vm.addressText = "bc1qmainnetaddresspastedbymistake"
+        #expect(!vm.canContinueRecipient)
+        #expect(vm.recipientAddressPreview == nil)
+        #expect(vm.recipientAddressInvalid)
+
+        // Empty → not an error (just nothing entered yet).
+        vm.addressText = ""
+        #expect(!vm.canContinueRecipient)
+        #expect(!vm.recipientAddressInvalid)
+
+        // BIP21 URI: the embedded address is what gets validated.
+        vm.addressText = "bitcoin:tb1qexamplerecipientaddress?amount=0.001"
+        #expect(vm.canContinueRecipient)
+        #expect(vm.recipientAddressPreview == "tb1qexamplerecipientaddress")
+        #expect(!vm.recipientAddressInvalid)
+    }
+
+    @Test func recipientWithInvalidAddressCannotConfirm() {
+        let (vm, _) = makeVM(validate: { $0.hasPrefix("tb1") })
+        vm.addressText = "not-an-address"
+        vm.confirmRecipient()
+        #expect(vm.step == .recipient)   // stays put; never reaches amount
     }
 
     // MARK: - Initial / keypad

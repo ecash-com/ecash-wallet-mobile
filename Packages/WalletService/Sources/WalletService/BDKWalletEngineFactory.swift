@@ -114,6 +114,18 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         }
     }
 
+    /// Validate a recipient address for `network` via BDK — `Address(address:network:)` checks the
+    /// checksum AND the network/prefix (a `bc1…` on testnet, or `tb1…` on mainnet, fails). Sync,
+    /// no network. Used to validate the Send recipient as the user types (Golden Rule §6/§7).
+    public func isValidAddress(_ address: String, network: WalletNetwork) -> Bool {
+        do {
+            _ = try Address(address: address, network: BDKSeam.network(network))
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// Validate a backend by building the client and fetching the chain tip. Throws `.syncFailed`
     /// on unreachable/invalid (scrubbed). Network I/O — callers run it off the main actor.
     public func testBackend(kind: String, url: String, socks5: String?) throws {

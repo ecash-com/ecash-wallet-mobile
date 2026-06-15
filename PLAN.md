@@ -89,6 +89,10 @@ Goal: a styled, navigable, empty app with the design system in place. No wallet 
         `Theme` text styles (Display/Title/Body/Caption/Mono-numeric) with tabular figures for
         amounts/addresses — not ad-hoc `.font(...)` at call sites. (Type-system §14 #3.)
         *Needs the font files from Jake.*
+        - [x] **Nav-bar titles** in Space Grotesk too — iOS `UINavigationBarAppearance`, Android
+              Compose `Typography` in `Main.kt` (verified both platforms; `DESIGN.md §2`).
+        - [x] **Text-scaling cap** so large OS sizes don't break money layouts — iOS
+              `dynamicTypeSize(...xLarge)`, Android `LocalDensity.fontScale` clamp to 1.15 in `Main.kt`.
   - [x] **Spacing / radius / motion** — 4-pt grid tokens, card/input radii, standard
         animations (§8) — also on `Theme`, used everywhere.
 - [x] Remove the template demo (items/todo `ViewModel`, `ContentView` sample screens,

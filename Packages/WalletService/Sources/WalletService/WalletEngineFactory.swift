@@ -46,6 +46,10 @@ public protocol WalletEngineFactory: AnyObject {
     func engine(for wallet: ManagedWallet,
                 backendKind: String, backendURL: String, backendProxy: String?,
                 loadMnemonic: @escaping () throws -> String?) throws -> WalletEngineProtocol
+    /// True if `address` is valid for `network` — correct checksum AND matching network/prefix
+    /// (BDK's `Address(address:network:)` parse). Synchronous, no network: safe to call on the main
+    /// actor as the user types, to validate the Send recipient early (typos + wrong-network paste).
+    func isValidAddress(_ address: String, network: WalletNetwork) -> Bool
     /// Probe a backend (build the client + fetch the chain tip) so Settings can validate a custom
     /// endpoint before saving. Throws on unreachable/invalid; does network I/O (call off main).
     func testBackend(kind: String, url: String, socks5: String?) throws
@@ -94,6 +98,13 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
     public func testBackend(kind: String, url: String, socks5: String?) throws {
         lastTestedURL = url
         if failTestBackend { throw WalletError.syncFailed }
+    }
+
+    /// Deterministic stub: an address is "valid" if non-empty and space-free. The view-model tests
+    /// inject their own validator, so this only backs any direct manager-level use.
+    public func isValidAddress(_ address: String, network: WalletNetwork) -> Bool {
+        let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !trimmed.isEmpty && !trimmed.contains(" ")
     }
 
     public func purgeChainData(for walletId: String) {

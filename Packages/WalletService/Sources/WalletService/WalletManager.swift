@@ -247,6 +247,12 @@ public final class WalletManager: @unchecked Sendable {
         try factory.testBackend(kind: kind, url: url, socks5: trimmedOrNil(socks5))
     }
 
+    /// Validate a recipient address for a network (checksum + network/prefix), via BDK. Sync, no I/O
+    /// — safe to call as the user types. See `WalletEngineFactory.isValidAddress`.
+    public func isValidAddress(_ address: String, network: WalletNetwork) -> Bool {
+        factory.isValidAddress(address, network: network)
+    }
+
     /// Get-or-build the cached live engine for a walletId (see `engines`).
     private func liveEngine(walletId: String) throws -> WalletEngineProtocol {
         if let cached = engines[walletId] { return cached }

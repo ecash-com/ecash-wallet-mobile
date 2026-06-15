@@ -174,7 +174,9 @@ final class AppState {
                 // Require device auth before sending when app-lock is on (§7); pass through if off.
                 guard self.appLock.enabled else { return true }
                 return await DeviceAuth.authenticate(reason: reason)
-            })
+            },
+            // Validate the recipient against THIS wallet's network (checksum + prefix), up front.
+            validateAddress: { address in self.manager.isValidAddress(address, network: wallet.network) })
     }
 
     /// Optimistically surface a just-broadcast tx (pending, no timestamp → sorts to the top).

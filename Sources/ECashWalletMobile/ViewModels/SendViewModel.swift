@@ -70,13 +70,17 @@ final class SendViewModel {
     /// Device-auth gate before broadcasting (Golden Rule §7). AppState wires this to `DeviceAuth`
     /// when app-lock is on, or a pass-through when it's off. Returns true to proceed.
     private let authorize: (String) async -> Bool
+    /// Validates a destination address for this wallet's network (checksum + network/prefix).
+    /// Injected so the view model stays platform-agnostic; AppState wires it to BDK via WalletManager.
+    private let validateAddress: (String) -> Bool
 
     init(balance: Amount,
          unitLabel: String,
          network: WalletNetwork,
          send: @escaping (_ address: String, _ amount: Amount, _ feeRate: FeeRate) async throws -> WalletTx,
          onSent: @escaping @MainActor (WalletTx) -> Void,
-         authorize: @escaping (String) async -> Bool) {
+         authorize: @escaping (String) async -> Bool,
+         validateAddress: @escaping (String) -> Bool = { _ in true }) {
         self.balance = balance
         self.unitLabel = unitLabel
         self.network = network
@@ -85,6 +89,7 @@ final class SendViewModel {
         self.send = send
         self.onSent = onSent
         self.authorize = authorize
+        self.validateAddress = validateAddress
     }
 
     // MARK: - Keypad
@@ -120,16 +125,26 @@ final class SendViewModel {
         return amount.sats > balance.sats
     }
 
-    /// The recipient step can advance once the address parses (a bare address or a BIP21 URI).
-    /// Address validity for the network is enforced by BDK at send time, not here.
+    /// The recipient step can advance only once the input parses (bare address or BIP21 URI) AND
+    /// the address is VALID for this wallet's network — checksum + prefix checked up front (not just
+    /// at send), so typos and wrong-network pastes are caught before amount/review/auth.
     var canContinueRecipient: Bool {
-        BIP21.parse(addressText) != nil
+        guard let parsed = BIP21.parse(addressText) else { return false }
+        return validateAddress(parsed.address)
     }
 
-    /// The parsed destination address for the current input (unwrapping a BIP21 URI), or nil if the
-    /// input isn't a valid address yet. Drives the live mono confirmation under the recipient field.
+    /// The parsed, VALID destination for the current input (unwrapping a BIP21 URI), or nil. Drives
+    /// the green mono confirmation under the recipient field.
     var recipientAddressPreview: String? {
-        BIP21.parse(addressText)?.address
+        guard let parsed = BIP21.parse(addressText), validateAddress(parsed.address) else { return nil }
+        return parsed.address
+    }
+
+    /// True when the input is a non-empty address that does NOT validate for this network — a typo
+    /// or a wrong-network paste. Drives a red inline warning ("Not a valid <network> address").
+    var recipientAddressInvalid: Bool {
+        guard let parsed = BIP21.parse(addressText) else { return false }   // empty/unparseable → no error yet
+        return !validateAddress(parsed.address)
     }
 
     /// The amount step can advance with a positive in-balance amount (recipient already chosen).
@@ -143,7 +158,8 @@ final class SendViewModel {
     /// Recipient → amount. Parses the address (unwrapping a BIP21 URI); if the URI carries an
     /// amount and the user hasn't entered one yet, it pre-fills the amount field.
     func confirmRecipient() {
-        guard step == .recipient, let parsed = BIP21.parse(addressText) else { return }
+        guard step == .recipient, let parsed = BIP21.parse(addressText),
+              validateAddress(parsed.address) else { return }
         reviewAddress = parsed.address
         if let uriAmount = parsed.amount, amountText.isEmpty {
             amountText = uriAmount.formattedCoin()

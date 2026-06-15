@@ -304,7 +304,7 @@ console.log(JSON.stringify(out, null, 2));
 ### Spacing & shape
 
 - 4-pt base grid (4/8/12/16/24/32). Corner radius 12 for cards, 8 for inputs/buttons. Generous touch targets (44pt min).
-- Honor safe areas; respect Dynamic Type / font scaling.
+- Honor safe areas; respect Dynamic Type / font scaling, but **cap it** so the largest OS sizes can't break the fixed-width amount/address layouts: iOS `dynamicTypeSize(...xLarge)` at the app root; Android clamps `LocalDensity.fontScale` to 1.15 in `Main.kt` (see §10 + `DESIGN.md §2`).
 
 ### Icons (hard rule)
 
@@ -356,6 +356,7 @@ Keep each screen thin: view → view model → `WalletManager` / `WalletEngine`.
 - **No force-unwraps** on anything network/BDK-derived.
 - **Naming:** `EcashWallet*` for app modules; types read in plain Bitcoin terms (`Utxo`, `WalletTx`, `FeeRate`). No cute codenames in shipping code.
 - **Sheet chrome:** sheets that keep a nav bar use `CloseToolbarButton` (system X) / `ConfirmToolbarButton` (system checkmark) from `Components/ToolbarButtons.swift` — never spelled-out "Cancel"/"Done". **Read-only/simple sheets (Receive, tx detail) drop the nav bar entirely** and rely on swipe-to-dismiss — a `NavigationStack` toolbar renders a grey Material top app bar on Android that tints on scroll.
+- **Android Compose theming lives in `Main.kt`, NOT app-module view modifiers.** In a Fuse app a SwiftUI view body's `#if SKIP` branch never runs on Android — the body bridges back to native Swift (where `SKIP` is undefined), so `material3TopAppBar` / `ComposeView` in an app-module `ViewModifier` is dead code. Apply Compose-level theming (nav-title `Typography`, `LocalDensity` font-scale clamp) at the editable Compose root in `Android/app/src/main/kotlin/Main.kt`; the iOS equivalent (`UINavigationBarAppearance`, `dynamicTypeSize`) stays in Swift. **Nav-bar titles** use Space Grotesk via this split (iOS appearance + Android `Main.kt` typography) — see `DESIGN.md §2`.
 - **Text inputs:** `.textFieldStyle(.plain)` + `fieldBoxInset()` (`DesignSystem/PlatformChrome.swift`) over a `Theme` box — `.plain` kills SkipUI's Material `OutlinedTextField` border on Android; applies to `TextEditor` too.
 - **Localization (`skip-localization`):** author every user-facing string at a `bundle: .module` site (extracts to `Resources/Localizable.xcstrings`). Forms: `Text("…", bundle: .module, comment:)` for rendered text; a `LocalizedStringKey` param rendered via `Text(key, bundle: .module)` for component labels; `Text(verbatim:)` for non-translatable data (amounts/addresses/txids). **Never `String(localized:bundle:comment:)`** — it doesn't compile in the Fuse native-Android pass. Full rules + the date/count deferral: memory `fuse-localization-no-string-localized`.
 - **Tests:** the important parts are covered — see §11. Treat WalletService logic and view models as must-cover; write tests in the same PR as the code.

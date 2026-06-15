@@ -128,6 +128,21 @@ Text(app.balance.formattedCoin()).font(.jbMono(36, .medium))   // home balance
 Text("Received", bundle: .module, comment: "…").textStyle(.h3)
 ```
 
+**Navigation-bar titles** are Space Grotesk too, applied the platform-native way (not a custom
+principal toolbar item, so the native large-title behavior survives):
+- **iOS** — a global `UINavigationBarAppearance` (`BrandNavigationTitleFont`, applied once at the
+  app root): SpaceGrotesk-SemiBold for inline titles, SpaceGrotesk-Bold for large titles, at native
+  point sizes. Background/color stay native.
+- **Android** — a Compose `Typography` override in `Android/app/src/main/kotlin/Main.kt` (the
+  `title*`/`headline*` roles SkipUI's top app bar reads). It *must* live in `Main.kt`: in a Fuse app
+  a SwiftUI view body's `#if SKIP` branch never runs on Android (it bridges back to native Swift),
+  so `material3TopAppBar` in an app-module modifier is dead — Compose theming goes in the Kotlin root.
+
+**Text scaling is capped** so the largest OS text sizes can't break the fixed-width amount/address
+layouts: iOS `dynamicTypeSize(...xLarge)` at the app root; Android clamps `LocalDensity.fontScale`
+to **1.15** (≈ "Large") in `Main.kt`, leaving `density` untouched so only text — not dp layout —
+stops growing. Below the cap, the user's chosen size still applies.
+
 ---
 
 ## 3. Spacing, radius, motion

@@ -107,7 +107,7 @@ struct SendScreen: View {
                 .fieldBoxInset()
                 .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
 
-                // Once the input parses to a valid address (bare or BIP21), confirm it back in mono.
+                // Valid address (for THIS network) → green ✓ + the parsed address in mono.
                 if let preview = vm.recipientAddressPreview {
                     HStack(alignment: .top, spacing: Theme.Space.x2) {
                         Image(icon: Icon.check)
@@ -118,6 +118,13 @@ struct SendScreen: View {
                             .foregroundStyle(Theme.Colors.text1)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
+                } else if vm.recipientAddressInvalid {
+                    // Typo or wrong-network paste — caught before amount/review/auth.
+                    Text("Not a valid \(vm.networkDisplayName) address", bundle: .module,
+                         comment: "send: entered address is invalid / wrong network; %@ is the network name")
+                        .textStyle(.sm)
+                        .foregroundStyle(Theme.Colors.negative)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
                 Spacer()
