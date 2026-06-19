@@ -34,6 +34,16 @@ final class CoinNewsDetailViewModel {
     private(set) var actionError: String?
     var commentText: String = ""
 
+    /// Your vote per COMMENT id (mirrors the persistent ledger; first-wins like the story vote).
+    /// Comments are votable because each carries its own on-chain ItemID (`id`).
+    private(set) var commentVotes: [String: VoteDirection] = [:]
+    /// The comment id currently being voted on (for its inline spinner); nil if none.
+    private(set) var votingCommentId: String? = nil
+    /// The comment this composer is replying to (nil = a top-level comment on the story). Drives the
+    /// reply banner + the parent id used at post time. Only INDEXED comments can be replied to (a
+    /// pending comment has no real ItemID to address on-chain).
+    private(set) var replyingTo: CoinNewsComment? = nil
+
     private let fetchItem: (String) async throws -> CoinNewsItem?
     private let fetchThread: (String) async throws -> [CoinNewsComment]
     private let vote: (_ targetIdHex: String, _ up: Bool) async throws -> WalletTx
@@ -63,10 +73,11 @@ final class CoinNewsDetailViewModel {
     }
 
     func isPendingComment(_ id: String) -> Bool { pendingCommentIds.contains(id) }
-    // Allow re-casting: the on-chain rule is first-wins (a duplicate just costs a fee and is ignored
-    // by the indexer), so we don't hard-lock on the optimistic broadcast — important while the
-    // indexer's points aggregate may not reflect a vote. The ▲/▼ highlight still shows your choice.
-    var canVote: Bool { !isVoting }
+    /// First-wins: once you've successfully voted, lock it. Votes dedup per (author, target) on-chain
+    /// (§8) — a second vote can't change your first; it'd only cost another fee and do nothing. We
+    /// gate on `myVote == nil` (set only after a successful broadcast), so a FAILED vote leaves you
+    /// free to retry. The ▲/▼ keep showing your recorded choice.
+    var canVote: Bool { myVote == nil && !isVoting }
 
     func load() async {
         if case .loaded = state { return }
@@ -87,9 +98,16 @@ final class CoinNewsDetailViewModel {
             let pend = pending.comments(on: network).filter {
                 $0.parentHex == item.id || fetchedIds.contains($0.parentHex)
             }
-            comments = pend + fetched
+            // Order so each reply sits under the comment it replies to (the view indents replies).
+            comments = threadedOrder(pend + fetched)
             pendingCommentIds = Set(pend.map { $0.id })
             myVote = pending.myVote(targetId: item.id, on: network)
+            // Mirror per-comment votes from the persistent ledger so each comment's arrows highlight.
+            var cVotes: [String: VoteDirection] = [:]
+            for c in comments {
+                if let v = pending.myVote(targetId: c.id, on: network) { cVotes[c.id] = v }
+            }
+            commentVotes = cVotes
             state = .loaded
         } catch {
             state = .failed("Couldn't load the thread. Pull to retry.")
@@ -122,19 +140,85 @@ final class CoinNewsDetailViewModel {
         actionError = nil
         guard await authorize("Authorize this comment") else { return }
         isPosting = true
+        // Reply to a comment when one's selected (its on-chain ItemID), else the story.
+        let parentId = replyingTo?.id ?? item.id
         do {
-            let tx = try await comment(item.id, body)
+            let tx = try await comment(parentId, body)
             // Optimistic copy (local id by txid), reconciled by content when the indexer returns it.
-            let local = CoinNewsComment(id: "pending:\(tx.txid)", parentHex: item.id, body: body)
+            let local = CoinNewsComment(id: "pending:\(tx.txid)", parentHex: parentId, body: body)
             pending.addComment(local, on: network)
-            comments.insert(local, at: 0)
+            // A reply goes directly under the comment it replies to; a top-level comment to the top.
+            if parentId != item.id, let idx = comments.firstIndex(where: { $0.id == parentId }) {
+                comments.insert(local, at: idx + 1)
+            } else {
+                comments.insert(local, at: 0)
+            }
             pendingCommentIds.insert(local.id)
             commentText = ""
+            replyingTo = nil
         } catch let error as WalletError {
             actionError = error.userMessage
         } catch {
             actionError = "Couldn't post your comment. Please try again."
         }
         isPosting = false
+    }
+
+    // MARK: - Per-comment vote + reply
+
+    func commentVote(_ id: String) -> VoteDirection? { commentVotes[id] }
+    func isVotingComment(_ id: String) -> Bool { votingCommentId == id }
+    /// First-wins per comment (same rule as the story vote — §8 dedup). Locked once you've voted.
+    func canVoteComment(_ id: String) -> Bool { commentVotes[id] == nil && votingCommentId == nil }
+
+    /// Up/down vote a single comment (its own ItemID is the vote target). Same on-chain path as the
+    /// story vote; first-wins (locked after a successful vote), one in flight at a time.
+    func voteOnComment(_ comment: CoinNewsComment, _ dir: VoteDirection) async {
+        guard canVoteComment(comment.id) else { return }
+        actionError = nil
+        guard await authorize("Authorize this vote") else { return }
+        votingCommentId = comment.id
+        do {
+            _ = try await vote(comment.id, dir == .up)
+            pending.setVote(targetId: comment.id, dir, on: network)
+            commentVotes[comment.id] = dir
+        } catch let error as WalletError {
+            actionError = error.userMessage
+        } catch {
+            actionError = "Couldn't submit your vote. Please try again."
+        }
+        votingCommentId = nil
+    }
+
+    func startReply(to comment: CoinNewsComment) { replyingTo = comment }
+    func cancelReply() { replyingTo = nil }
+
+    // MARK: - Threading
+
+    /// Flatten comments depth-first so each reply sits directly under the comment it replies to,
+    /// top-level comments (parent = the story) first. The view indents replies one level. Orphans
+    /// (parent not in the set) are appended so nothing is dropped.
+    private func threadedOrder(_ all: [CoinNewsComment]) -> [CoinNewsComment] {
+        var childrenByParent: [String: [CoinNewsComment]] = [:]
+        for c in all { childrenByParent[c.parentHex, default: []].append(c) }
+        var result: [CoinNewsComment] = []
+        var visited = Set<String>()
+        appendThread(parentId: item.id, childrenByParent: childrenByParent, into: &result, visited: &visited)
+        for c in all where !visited.contains(c.id) {
+            visited.insert(c.id)
+            result.append(c)
+        }
+        return result
+    }
+
+    private func appendThread(parentId: String,
+                              childrenByParent: [String: [CoinNewsComment]],
+                              into result: inout [CoinNewsComment],
+                              visited: inout Set<String>) {
+        for c in (childrenByParent[parentId] ?? []) where !visited.contains(c.id) {
+            visited.insert(c.id)
+            result.append(c)
+            appendThread(parentId: c.id, childrenByParent: childrenByParent, into: &result, visited: &visited)
+        }
     }
 }

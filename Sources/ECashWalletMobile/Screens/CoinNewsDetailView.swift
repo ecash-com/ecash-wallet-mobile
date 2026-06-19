@@ -15,6 +15,7 @@ import SwiftUI
 struct CoinNewsDetailView: View {
     @Environment(\.openURL) var openURL   // not `private` — Fuse bridges view properties
     @State var vm: CoinNewsDetailViewModel
+    @FocusState var composerFocused: Bool   // dismiss the keyboard on send
 
     init(viewModel: CoinNewsDetailViewModel) {
         _vm = State(initialValue: viewModel)
@@ -137,24 +138,67 @@ struct CoinNewsDetailView: View {
     }
 
     private func commentRow(_ c: CoinNewsComment) -> some View {
-        VStack(alignment: .leading, spacing: Theme.Space.x1) {
+        let isReply = c.parentHex != vm.item.id   // a reply to another comment → indent one level
+        return VStack(alignment: .leading, spacing: Theme.Space.x2) {
             Text(LocalizedStringKey(stringLiteral: c.body))
                 .textStyle(.body)
                 .foregroundStyle(Theme.Colors.text0)
-            HStack(spacing: Theme.Space.x2) {
+            HStack(spacing: Theme.Space.x3) {
                 if let xpk = c.authorXpkHex, xpk.count >= 8 {
                     Text(verbatim: String(xpk.prefix(8)))
                         .textStyle(.xs)
                         .foregroundStyle(Theme.Colors.text2)
                 }
                 if vm.isPendingComment(c.id) {
+                    // Not indexed yet → no real ItemID to reply to / vote on; show the badge only.
                     Text("Broadcasting…", bundle: .module, comment: "comment not yet indexed")
                         .textStyle(.xs)
                         .foregroundStyle(Theme.Colors.warning)
+                } else {
+                    commentVoteControl(c)
+                    replyButton(c)
                 }
+                Spacer()
             }
         }
         .padding(.vertical, Theme.Space.x1)
+        .padding(.leading, isReply ? Theme.Space.x4 : 0)
+    }
+
+    /// Compact up/down vote on a single comment. No count — the indexer doesn't expose a per-comment
+    /// vote tally — so we only highlight the user's own choice (up = accent, down = negative).
+    private func commentVoteControl(_ c: CoinNewsComment) -> some View {
+        let mine = vm.commentVote(c.id)
+        let voting = vm.isVotingComment(c.id)
+        let locked = !vm.canVoteComment(c.id)   // first-wins: disabled once you've voted (or mid-vote)
+        return HStack(spacing: Theme.Space.x1) {
+            commentVoteButton(c, up: true, selected: mine == .up, disabled: locked)
+            commentVoteButton(c, up: false, selected: mine == .down, disabled: locked)
+            if voting { ProgressView() }
+        }
+    }
+
+    private func commentVoteButton(_ c: CoinNewsComment, up: Bool, selected: Bool, disabled: Bool) -> some View {
+        let tint = up ? Theme.Colors.accent : Theme.Colors.negative
+        return Button {
+            Task { await vm.voteOnComment(c, up ? .up : .down) }
+        } label: {
+            Text(verbatim: up ? "▲" : "▼")
+                .textStyle(.xs)
+                .foregroundStyle(selected ? tint : Theme.Colors.text2)
+                .frame(width: 24, height: 24)
+        }
+        .buttonStyle(.plain)
+        .disabled(disabled)
+    }
+
+    private func replyButton(_ c: CoinNewsComment) -> some View {
+        Button { vm.startReply(to: c) } label: {
+            Text("Reply", bundle: .module, comment: "reply to a comment")
+                .textStyle(.xs)
+                .foregroundStyle(Theme.Colors.text1)
+        }
+        .buttonStyle(.plain)
     }
 
     // MARK: - Composer (chat-style, pinned to the bottom)
@@ -172,11 +216,16 @@ struct CoinNewsDetailView: View {
                     .padding(.top, Theme.Space.x2)
             }
 
+            if let target = vm.replyingTo {
+                replyBanner(target)
+            }
+
             HStack(alignment: .center, spacing: Theme.Space.x2) {
-                TextField("Add a comment", text: $vm.commentText)
+                TextField(vm.replyingTo == nil ? "Add a comment" : "Reply", text: $vm.commentText)
                     .textFieldStyle(.plain)
                     .textStyle(.body)
                     .foregroundStyle(Theme.Colors.text0)
+                    .focused($composerFocused)
                     .fieldBoxInset()
                     .background(Theme.Colors.bg2, in: Capsule())
                 sendButton
@@ -187,9 +236,37 @@ struct CoinNewsDetailView: View {
         .background(Theme.Colors.bg0)   // uniform with the content; the top hairline separates it
     }
 
+    /// "Replying to <snippet> ✕" banner above the composer when a comment is selected as the target.
+    private func replyBanner(_ c: CoinNewsComment) -> some View {
+        HStack(spacing: Theme.Space.x2) {
+            Rectangle().fill(Theme.Colors.accent).frame(width: 2, height: 28)
+            VStack(alignment: .leading, spacing: 1) {
+                Text("Replying to", bundle: .module, comment: "reply banner label")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text2)
+                Text(verbatim: replySnippet(c.body))
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.text1)
+            }
+            Spacer()
+            Button { vm.cancelReply() } label: {
+                Image(icon: Icon.close).foregroundStyle(Theme.Colors.text2)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, Theme.Space.x3)
+        .padding(.top, Theme.Space.x2)
+    }
+
+    private func replySnippet(_ s: String) -> String {
+        let trimmed = s.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.count > 50 ? String(trimmed.prefix(50)) + "…" : trimmed
+    }
+
     private var sendButton: some View {
         let disabled = vm.commentText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || vm.isPosting
         return Button {
+            composerFocused = false   // close the keyboard on send
             Task { await vm.postComment() }
         } label: {
             ZStack {

@@ -133,7 +133,8 @@ Abbreviated — see `PLAN.md` for the detailed, tracked checklist.  ✅ done · 
   own change; the success screen is Done-only)
 - 🟡 **Slice 6 — Transaction history** (rows + redesigned detail sheet — amount/fee/total, **fee rate,
   block height, size**, RBF, txid, big block-explorer button — pull-to-refresh, and **fiat on the
-  balance + rows** ✅; fiat on the detail-sheet amount ⬜)
+  balance + rows** ✅; CoinNews txs get a kind header + collapsible raw-detail disclosure ✅; fiat on
+  the detail-sheet amount ⬜)
 - ✅ **Slice 7 — Settings + Wallet manager** (theme, **display currency** (USD/EUR/GBP/JPY, Bitfinex),
   dev reset, backup row, wallet switcher pill + manager sheet with switch/rename/add/import/remove +
   persistent selection, app-lock toggle, an **open-source licenses** screen, and **custom per-network
@@ -142,6 +143,12 @@ Abbreviated — see `PLAN.md` for the detailed, tracked checklist.  ✅ done · 
   against the BIP39/BIP84 spec vectors)
 - ✅ **Slice 3 — Backup wallet** (explicit gate → biometric/passcode → word chips → 3-word verify;
   capture-blocked: FLAG_SECURE on Android, obscured-when-backgrounded on iOS; clears the Home warning)
+- 🟡 **CoinNews — on-chain `OP_RETURN` bulletin board** (per network; News tab hidden on Bitcoin):
+  read the feed (Top/Latest, topics, follow/filter, threads) via the public `coinnews.v1` indexer;
+  publish **stories, topics, comments, votes** plus **replies-to-comments and comment votes** as
+  signed `OP_RETURN`s (BIP-340 identity per wallet); optimistic local copies until indexed; votes are
+  first-wins; CoinNews txs are tagged in Activity with a kind-aware detail. Trust-minimized
+  client-side verification ⬜.
 - 🟡 **Milestone F — Hardening & release:** app-lock ✅ (biometric/passcode gate on launch +
   foreground, Settings toggle, default ON); secret-scrub audit ✅; localization pass ✅;
   UI smoke flows, real brand, signing/CI ⬜.
@@ -201,7 +208,7 @@ non-negotiable rules are CLAUDE.md §2 (Golden Rules) and §7 (Security model).
 - `docs/backends-and-endpoints.md` — how chain data is fetched + the custom-endpoint plan (Electrum/Esplora v1, CBF v2).
 - `docs/release.md` — build/sign/ship to App Store + Google Play via fastlane (iOS connected; Android Play setup checklist).
 - `docs/network-switching.md` — design record (planned) for switching a wallet's network in-app (storage groundwork done).
-- `docs/coinnews-integration.md` — design record (planned) for fetching + publishing CoinNews (on-chain `OP_RETURN` bulletin board).
+- `docs/coinnews-integration.md` — design + status for fetching + publishing CoinNews (on-chain `OP_RETURN` bulletin board); read + publish + vote/comment/reply built.
 
 ## Open source & acknowledgements
 

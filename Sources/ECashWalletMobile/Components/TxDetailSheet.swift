@@ -17,6 +17,7 @@ struct TxDetailSheet: View {
     let unitLabel: String
     let network: WalletNetwork
     @State var copied = false   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
+    @State var detailsExpanded = false   // CoinNews txs: raw tx rows fold into a DisclosureGroup
 
     var body: some View {
         // No NavigationStack/toolbar and no close button: the sheet is swipe-down dismissible, and a
@@ -26,8 +27,13 @@ struct TxDetailSheet: View {
             Theme.Colors.bg0.ignoresSafeArea()
             ScrollView {
                 VStack(spacing: Theme.Space.x5) {
-                    hero
-                    detailsCard
+                    if tx.isCoinNews {
+                        coinNewsHero
+                        detailsDisclosure   // raw tx rows hidden until tapped
+                    } else {
+                        hero
+                        detailsCard
+                    }
                     txidCard
                     explorerButton
                 }
@@ -72,6 +78,51 @@ struct TxDetailSheet: View {
         .padding(.top, Theme.Space.x4)
     }
 
+    // MARK: - CoinNews hero
+
+    /// CoinNews txs are 0-value `OP_RETURN`s — the amount is just the fee, so leading with a big
+    /// "0.00000000" is noise. Instead: the news glyph, the action ("CoinNews Comment" / "Upvote" /
+    /// …), the status pill, and the date. The raw chain rows live in `detailsDisclosure` below.
+    private var coinNewsHero: some View {
+        VStack(spacing: Theme.Space.x3) {
+            ZStack {
+                Circle().fill(Theme.Colors.accentTint)
+                Image(icon: Icon.news)
+                    .resizable().scaledToFit()
+                    .frame(width: 26, height: 26)
+                    .foregroundStyle(Theme.Colors.accent)
+            }
+            .frame(width: 64, height: 64)
+
+            Text(verbatim: coinNewsTitle)
+                .font(.grotesk(22, .semibold))
+                .foregroundStyle(Theme.Colors.text0)
+
+            statusPill
+
+            if let epoch = tx.timestampEpochSeconds {
+                Text(verbatim: Self.fullDate(epoch))
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.text2)
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.top, Theme.Space.x4)
+    }
+
+    /// "CoinNews Comment" / "Upvote" / "Downvote" / "Story" / "Topic" (upvote vs downvote spelled out
+    /// here — the Activity row collapses both to "vote").
+    private var coinNewsTitle: String {
+        switch tx.coinNewsKind {
+        case "topic": return "CoinNews Topic"
+        case "story": return "CoinNews Story"
+        case "comment": return "CoinNews Comment"
+        case "upvote": return "CoinNews Upvote"
+        case "downvote": return "CoinNews Downvote"
+        default: return "CoinNews Post"
+        }
+    }
+
     /// Status pill: amber "Pending" (0 conf) / amber "Confirming" (1–5) / green "Confirmed" (>5).
     private var statusPill: some View {
         HStack(spacing: Theme.Space.x1) {
@@ -101,8 +152,24 @@ struct TxDetailSheet: View {
 
     // MARK: - Details
 
+    /// CoinNews: the raw chain rows, collapsed behind a tap. `DisclosureGroup` renders on both
+    /// platforms (SwiftUI on iOS, a Compose expandable on Android).
+    private var detailsDisclosure: some View {
+        DisclosureGroup(isExpanded: $detailsExpanded) {
+            detailRows.padding(.top, Theme.Space.x3)
+        } label: {
+            Text("Transaction details", bundle: .module, comment: "collapsible raw tx details")
+                .textStyle(.button)
+                .foregroundStyle(Theme.Colors.text0)
+        }
+        .tint(Theme.Colors.accent)
+        .cardStyle()
+    }
+
+    private var detailsCard: some View { detailRows.cardStyle() }
+
     @ViewBuilder
-    private var detailsCard: some View {
+    private var detailRows: some View {
         VStack(spacing: Theme.Space.x3) {
             row("Amount", "\(amountCoin) \(unitLabel)")
             if !tx.isReceived, let fee = tx.feeSats {
@@ -134,7 +201,6 @@ struct TxDetailSheet: View {
                         : Text("No", bundle: .module, comment: "tx is not replaceable"))
             }
         }
-        .cardStyle()
     }
 
     private var hairline: some View {

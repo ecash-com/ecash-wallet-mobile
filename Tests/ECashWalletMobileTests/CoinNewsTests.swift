@@ -131,7 +131,7 @@ import Testing
     @Test func liveCoinNewsV1Feed() async throws {
         guard ProcessInfo.processInfo.environment["COINNEWS_V1_LIVE"] == "1" else { return }
 
-        let endpoint = CoinNewsEndpoint(baseURL: URL(string: "https://signet.dc.galaxoidlabs.com")!)
+        let endpoint = CoinNewsEndpoint(baseURL: URL(string: "https://coinnews.signet.dc.galaxoidlabs.com")!)
         let client = CoinNewsV1Client(endpoint: endpoint)
 
         let topics = try await client.topics()
