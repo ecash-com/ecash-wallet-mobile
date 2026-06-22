@@ -16,3 +16,15 @@
 # BDK + secp256k1 are JNI/UniFFI native bindings loaded reflectively — keep them intact in release.
 -keep class org.bitcoindevkit.** { *; }
 -keep class fr.acinq.secp256k1.** { *; }
+# ML Kit barcode scanner (SkipQRCode's Send-flow QR scanner — com.google.mlkit:barcode-scanning).
+# BarcodeScanning.getClient() discovers its scanner component REFLECTIVELY via ML Kit's component
+# framework (MlKitComponentDiscoveryService + Firebase ComponentRegistrar). Without keep rules R8
+# strips/renames those registrars in release, so getClient() finds nothing → NullPointerException in
+# MLKitScanActivity$BarcodeAnalyzer.<init> and the scanner never opens (works in debug, R8 is off).
+-keep class com.google.mlkit.** { *; }
+-keep class com.google.android.gms.internal.mlkit_** { *; }
+-keep class com.google.android.gms.vision.** { *; }
+-keep class * implements com.google.firebase.components.ComponentRegistrar { *; }
+-keep class com.google.firebase.components.** { *; }
+-dontwarn com.google.mlkit.**
+-dontwarn com.google.android.gms.**
