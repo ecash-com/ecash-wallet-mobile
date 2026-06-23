@@ -167,7 +167,8 @@ struct WalletHomeScreen: View {
                 showReceive = true
             }
             actionCircle(icon: Icon.send, title: "Send", prominent: true, enabled: true) {
-                sendToken += 1   // force a fresh Send flow (see sendToken)
+                app.beginSendFlow()   // drop any cached (finished) Send VM → fresh flow
+                sendToken += 1        // force a fresh SendScreen (new nav path) (see sendToken)
                 showSend = true
             }
         }

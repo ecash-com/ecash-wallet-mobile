@@ -338,4 +338,59 @@ import WalletService
         #expect(rec.callCount == 0)
         #expect(vm.step == .reviewing)
     }
+
+    // MARK: - Navigation lock (the "popped back to the address screen mid-send" bug)
+
+    /// A device-auth gate the test can hold open, to observe the in-flight window while the prompt
+    /// is up. An actor so the non-isolated `authorize` closure touches the continuation safely.
+    private actor AuthGate {
+        private var continuation: CheckedContinuation<Void, Never>?
+        private var released = false
+        func wait() async {
+            if released { return }
+            await withCheckedContinuation { self.continuation = $0 }
+        }
+        func release() {
+            released = true
+            continuation?.resume()
+            continuation = nil
+        }
+    }
+
+    /// The fix for the reported bug: while the auth prompt is up, `step` is still `.reviewing` but
+    /// the flow must report itself LOCKED, so a scene-phase change (iOS) / system-back (Android)
+    /// can't pop the NavigationStack and walk the user back to the address screen before the send
+    /// completes. Idle review is unlocked; success stays locked (Done is the only exit).
+    @Test func navigationLockedThroughTheAuthPromptWindow() async {
+        let gate = AuthGate()
+        let rec = SendRecorder(txToReturn: Self.pendingTx)
+        let vm = SendViewModel(
+            balance: Amount(sats: 1_000_000),
+            unitLabel: "sBTC",
+            network: .signet,
+            send: { _, _, _ in rec.callCount += 1; return rec.txToReturn },
+            onSent: { _ in },
+            authorize: { _ in await gate.wait(); return true },
+            validateAddress: { _ in true })
+        vm.addressText = "tb1qrecipient"
+        vm.confirmRecipient()
+        enterPointOhOne(vm)
+        vm.review()
+        #expect(!vm.isSendingLocked)        // idle review → back is allowed
+
+        let task = Task { await vm.confirmSend() }
+        var spins = 0
+        while !vm.authorizing && spins < 10_000 { await Task.yield(); spins += 1 }
+
+        #expect(vm.authorizing)             // suspended inside authorize()
+        #expect(vm.step == .reviewing)      // review still on screen behind the prompt
+        #expect(vm.isSendingLocked)         // …but navigation is locked — the fix
+        #expect(rec.callCount == 0)         // not broadcast until auth resolves
+
+        await gate.release()
+        await task.value
+        #expect(vm.step == .sent)
+        #expect(!vm.authorizing)
+        #expect(vm.isSendingLocked)         // success screen stays locked
+    }
 }

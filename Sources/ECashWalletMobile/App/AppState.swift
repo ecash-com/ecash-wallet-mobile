@@ -237,12 +237,27 @@ final class AppState {
             authenticate: { reason in await DeviceAuth.authenticate(reason: reason) })
     }
 
-    /// Vend a `SendViewModel` for the selected wallet, or nil if none is selected. Captures the
-    /// wallet id at presentation time so a wallet switch mid-flow can't redirect the send.
+    /// The in-flight Send flow's view model, cached on `AppState` (which is owned by `RootView` and
+    /// never torn down). `makeSendViewModel()` returns this SAME instance across SwiftUI re-renders
+    /// AND a full cover/SendScreen recreation — which the biometric prompt's scene-phase change
+    /// triggers on the first send after a cold launch. Without the cache, the recreation handed
+    /// SendScreen a brand-new VM stuck at the address step while the ORIGINAL VM's broadcast Task
+    /// finished off-screen, so a successful send landed the user back on the address screen.
+    /// `beginSendFlow()` clears it at each Send tap so a fresh flow never reuses a finished one.
+    @ObservationIgnored private var activeSendVM: SendViewModel?
+
+    /// Discard any cached Send VM so the next `makeSendViewModel()` builds a fresh flow. Call when
+    /// the user opens Send (before presenting the cover).
+    func beginSendFlow() { activeSendVM = nil }
+
+    /// Vend a `SendViewModel` for the selected wallet, or nil if none is selected. Returns the
+    /// cached in-flight instance if one exists (survives recreation); otherwise builds + caches one.
+    /// Captures the wallet id at presentation time so a wallet switch mid-flow can't redirect the send.
     func makeSendViewModel() -> SendViewModel? {
+        if let activeSendVM { return activeSendVM }
         guard let id = selectedWalletId, let wallet = selectedWallet else { return nil }
         let params = NetworkRegistry.params(for: wallet.network)
-        return SendViewModel(
+        let vm = SendViewModel(
             balance: balance,
             unitLabel: params.unitLabel,
             network: wallet.network,
@@ -258,6 +273,8 @@ final class AppState {
             },
             // Validate the recipient against THIS wallet's network (checksum + prefix), up front.
             validateAddress: { address in self.manager.isValidAddress(address, network: wallet.network) })
+        activeSendVM = vm
+        return vm
     }
 
     /// Vend a `PostStoryViewModel` for the selected wallet (CoinNews "post news"), or nil if none.

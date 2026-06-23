@@ -61,6 +61,15 @@ final class SendViewModel {
     var tier: FeeTier = .normal
     private(set) var step: Step = .recipient
 
+    /// True from the instant "Confirm send" is tapped until the device-auth prompt resolves — the
+    /// send is already "in flight" here even though `step` is still `.reviewing` (we keep the review
+    /// on screen behind the biometric prompt). Navigation MUST stay locked across this window:
+    /// presenting the prompt flips scenePhase on iOS (and exposes system-back on Android), which can
+    /// pop the Send NavigationStack; if back isn't locked, the path-sync handler walks the step
+    /// machine reviewing→amount→recipient and the user lands back on the address screen mid-auth
+    /// instead of reaching the success screen. See `isSendingLocked` + SendScreen's `backLocked`.
+    private(set) var authorizing = false
+
     // Normalized at review() — what confirmSend() actually sends and the review screen shows.
     private(set) var reviewAddress = ""
     private(set) var reviewAmount: Amount = .zero
@@ -153,6 +162,19 @@ final class SendViewModel {
         return amount.sats > 0 && !amountExceedsBalance
     }
 
+    /// Back navigation must be disabled whenever a send is in flight: while the auth prompt is up
+    /// (`authorizing`, step still `.reviewing`), while broadcasting, and on the terminal success
+    /// screen (the only exit is "Done"). Only the editable steps — recipient, amount, idle review,
+    /// and failed — allow stepping back. SendScreen reads this to lock both swipe-back and the
+    /// path-sync handler so an auth-time scene/back event can't pop the user off the flow.
+    var isSendingLocked: Bool {
+        if authorizing { return true }
+        switch step {
+        case .broadcasting, .sent: return true
+        default: return false
+        }
+    }
+
     // MARK: - Steps
 
     /// Recipient → amount. Parses the address (unwrapping a BIP21 URI); if the URI carries an
@@ -197,11 +219,17 @@ final class SendViewModel {
     /// pending tx to AppState. Golden Rule §7: only reachable from the review step the user
     /// explicitly confirmed, which states network + recipient + amount + fee.
     func confirmSend() async {
-        guard step == .reviewing else { return }
+        guard step == .reviewing, !authorizing else { return }
         // Device-auth gate before moving money (§7). On cancel/failure, stay on review — no
         // broadcast. A no-op authorize (app-lock off) returns true and sends straight through.
-        guard await authorize("Authorize this payment") else { return }
+        // `authorizing` locks navigation for the whole prompt window (see `isSendingLocked`); we
+        // promote to `.broadcasting` BEFORE clearing it so there's never a synchronous gap where
+        // the flow is unlocked on `.reviewing` after a successful auth.
+        authorizing = true
+        let approved = await authorize("Authorize this payment")
+        guard approved else { authorizing = false; return }
         step = .broadcasting
+        authorizing = false
         do {
             let tx = try await send(reviewAddress, reviewAmount, tier.feeRate)
             onSent(tx)

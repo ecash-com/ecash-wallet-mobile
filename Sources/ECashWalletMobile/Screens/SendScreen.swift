@@ -42,35 +42,59 @@ struct SendScreen: View {
                         switch route {
                         case .amount: amountStep.navigationTitle(Text("Amount", bundle: .module, comment: "send amount step title"))
                         case .review:
-                            reviewDestination
+                            review
                                 .navigationTitle(Text("Review", bundle: .module, comment: "send review step title"))
-                                // Once broadcasting/sent, the only way out is "Done" — no back button.
-                                .navigationBarBackButtonHidden(backLocked)
+                                // No back button once the status overlay can take over.
+                                .navigationBarBackButtonHidden(pathLocked)
                         }
                     }
                 }
                 .background(Theme.Colors.bg0)
         }
-        // System back / swipe shortens the path → step the model back to match. Except once the send
-        // is in flight or succeeded: there's nothing to go back to, so undo any pop (blocks swipe +
-        // Android system-back). Combined with the hidden back button, "Done" is the only exit.
-        .onChange(of: path) { oldPath, newPath in
-            guard newPath.count < oldPath.count else { return }
-            if backLocked {
-                path = oldPath
-                return
+        // Post-confirm UI (broadcasting / sent / failed) is a FULL-SCREEN OVERLAY driven by
+        // `vm.step`, NOT a navigation destination. `confirmSend` runs on its own Task, so if the
+        // biometric prompt's scene-phase change resets the NavigationStack underneath, the send
+        // still completes and this overlay still shows the real outcome — fixing the "first send
+        // pops back to the address screen even though it sent" bug. The overlay is opaque and
+        // ignores safe areas, so it also covers the nav bar and blocks the stack beneath it.
+        .overlay {
+            if showStatusOverlay {
+                ZStack {
+                    Theme.Colors.bg0.ignoresSafeArea()
+                    switch vm.step {
+                    case .sent: sent
+                    case .failed(let message): failed(message)
+                    default: broadcasting   // .broadcasting AND auth-in-flight (still .reviewing)
+                    }
+                }
+                .transition(.opacity)
             }
+        }
+        // Mirror system back/swipe on the EDITABLE steps to the step machine. While auth is in
+        // flight or the status overlay owns the screen, ignore pops entirely — the overlay covers
+        // any underlying reset, so there's nothing to walk back.
+        .onChange(of: path) { oldPath, newPath in
+            guard newPath.count < oldPath.count, !pathLocked else { return }
             for _ in 0..<(oldPath.count - newPath.count) { vm.back() }
         }
     }
 
-    /// True while a send is broadcasting or has succeeded — back navigation is disabled in both.
-    private var backLocked: Bool {
+    /// The post-confirm status UI (broadcast spinner / success / failure) renders as a full-screen
+    /// overlay, decoupled from the navigation path so a stack reset can't hide it. Covers the whole
+    /// in-flight window — from the moment auth starts (`authorizing`, step still `.reviewing`)
+    /// through broadcast to the terminal screens — so a recreation mid-flow shows a spinner, never
+    /// the address step underneath.
+    private var showStatusOverlay: Bool {
+        if vm.authorizing { return true }
         switch vm.step {
-        case .broadcasting, .sent: return true
+        case .broadcasting, .sent, .failed: return true
         default: return false
         }
     }
+
+    /// Navigation is "locked" whenever the status overlay is up: don't hand system back-pops to the
+    /// step machine, and hide the Review back button.
+    private var pathLocked: Bool { showStatusOverlay }
 
     // MARK: - Step 1: recipient (stack root)
 
@@ -233,24 +257,15 @@ struct SendScreen: View {
         .pickerStyle(.segmented)
     }
 
-    // MARK: - Step 3: review destination (review / broadcasting / sent / failed)
+    // MARK: - Step 3: review (the nav destination) + status overlay (broadcasting / sent / failed)
 
-    @ViewBuilder
-    private var reviewDestination: some View {
-        switch vm.step {
-        case .broadcasting:
-            VStack(spacing: Theme.Space.x4) {
-                ProgressView()
-                Text("Broadcasting…", bundle: .module, comment: "send broadcast in progress")
-                    .textStyle(.sm)
-                    .foregroundStyle(Theme.Colors.text1)
-            }
-        case .sent:
-            sent
-        case .failed(let message):
-            failed(message)
-        default:
-            review   // .reviewing (and any transient)
+    /// Broadcast-in-progress — shown in the full-screen status overlay (see `body`), not pushed.
+    private var broadcasting: some View {
+        VStack(spacing: Theme.Space.x4) {
+            ProgressView()
+            Text("Broadcasting…", bundle: .module, comment: "send broadcast in progress")
+                .textStyle(.sm)
+                .foregroundStyle(Theme.Colors.text1)
         }
     }
 
@@ -369,6 +384,14 @@ struct SendScreen: View {
             WalletButton(title: "Try again") {
                 Task { await vm.retry() }
             }
+            // The recipient screen's close button is covered by this overlay, so offer an explicit
+            // way to abandon a failed send.
+            Button { dismiss() } label: {
+                Text("Close", bundle: .module, comment: "abandon a failed send")
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.text1)
+            }
+            .buttonStyle(.plain)
         }
         .padding(Theme.Space.gutter)
     }

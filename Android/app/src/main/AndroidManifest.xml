@@ -12,12 +12,19 @@
     <!-- Biometric/device-credential prompt gating the Backup seed reveal -->
     <uses-permission android:name="android.permission.USE_BIOMETRIC" />
 
+    <!-- No Android auto-backup (allowBackup=false). The seed is the ONLY backup, and it lives in the
+         Keystore-bound SkipKeychain which can't be restored to another device anyway. When backup was
+         ON we excluded just the keychain, so a reinstall restored the public wallet-list METADATA
+         without its seed → the app saw `hasWallets == true`, armed app-lock, and prompted biometrics
+         "before the first wallet" on what looked like a fresh install (a seedless zombie wallet).
+         allowBackup=false makes a reinstall a true clean slate. The rules files below are kept as
+         defense-in-depth in case backup is ever re-enabled. -->
     <application
         android:label="eCash.com"
         android:icon="@mipmap/ic_launcher"
         android:name=".AndroidAppMain"
         android:supportsRtl="true"
-        android:allowBackup="true"
+        android:allowBackup="false"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         >
