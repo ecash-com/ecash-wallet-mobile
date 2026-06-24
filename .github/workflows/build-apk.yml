@@ -1,0 +1,82 @@
+name: Build Android APK
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release tag (e.g. android-debug-001)"
+        required: true
+        default: "android-debug-test"
+        type: string
+      release_name:
+        description: "Release name"
+        required: false
+        default: "Android Debug Build"
+        type: string
+
+# Needed for creating releases
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build Debug APK
+    runs-on: macos-26
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      - name: Select Xcode 26
+        run: sudo xcode-select -s /Applications/Xcode_26.0.app/Contents/Developer
+
+      - name: Install Skip CLI
+        run: |
+          brew update
+          brew install skiptools/skip/skip
+
+      - name: Install Swift Android SDK
+        run: skip android sdk install
+
+      - name: Build Debug APK (Android only)
+        run: skip export --debug --no-ios
+
+      - name: Generate SHA256 checksum
+        run: |
+          shasum -a 256 .build/skip-export/ECashWalletMobile-debug.apk > SHA256SUMS.txt
+          cat SHA256SUMS.txt
+
+      - name: Upload APK Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ecash-debug-apk
+          path: |
+            .build/skip-export/ECashWalletMobile-debug.apk
+            SHA256SUMS.txt
+
+      - name: Create GitHub Release with APK
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.release_tag }}
+          name: ${{ inputs.release_name }}
+          body: |
+            Automated Android debug APK build from commit ${{ github.sha }}
+
+            **To install:**
+            Download the `.apk` file below onto your Android device and tap to install.
+
+            **Verification:**
+            See `SHA256SUMS.txt` for the file checksum.
+          files: |
+            .build/skip-export/ECashWalletMobile-debug.apk
+            SHA256SUMS.txt
+          prerelease: true
+          make_latest: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
