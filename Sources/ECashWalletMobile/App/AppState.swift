@@ -239,6 +239,7 @@ final class AppState {
     func makeBackupViewModel() -> BackupViewModel? {
         guard let id = selectedWalletId else { return nil }
         return BackupViewModel(
+            walletLabel: selectedWallet?.label ?? "",
             loadMnemonic: { try self.manager.mnemonic(for: id) },
             markBackedUp: {
                 try self.manager.setBackedUp(id: id)

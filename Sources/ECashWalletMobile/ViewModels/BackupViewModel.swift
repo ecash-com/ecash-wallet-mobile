@@ -33,13 +33,19 @@ final class BackupViewModel {
     /// Set briefly when a verify answer was wrong (drives the "check again" notice on reveal).
     private(set) var verifyMissed = false
 
+    /// The label of the wallet being backed up — recovery phrases are per-wallet (each wallet is its
+    /// own seed), so the flow names which one. Captured at presentation time.
+    let walletLabel: String
+
     private let loadMnemonic: @MainActor () throws -> String?
     private let markBackedUp: @MainActor () throws -> Void
     private let authenticate: (String) async -> Bool
 
-    init(loadMnemonic: @escaping @MainActor () throws -> String?,
+    init(walletLabel: String = "",
+         loadMnemonic: @escaping @MainActor () throws -> String?,
          markBackedUp: @escaping @MainActor () throws -> Void,
          authenticate: @escaping (String) async -> Bool) {
+        self.walletLabel = walletLabel
         self.loadMnemonic = loadMnemonic
         self.markBackedUp = markBackedUp
         self.authenticate = authenticate

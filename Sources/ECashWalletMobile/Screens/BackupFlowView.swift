@@ -12,6 +12,8 @@ import WalletService
 struct BackupFlowView: View {
     @Environment(\.dismiss) var dismiss
     @State var vm: BackupViewModel   // not `private` — Fuse bridges @State (skip-fuse rule)
+    @State var understood = false     // the "I understand…" acknowledgement gate on the intro
+    @State var scamsExpanded = false  // the "Common scams" disclosure (folded by default)
 
     init(viewModel: BackupViewModel) {
         _vm = State(initialValue: viewModel)
@@ -23,7 +25,9 @@ struct BackupFlowView: View {
                 Theme.Colors.bg0.ignoresSafeArea()
                 content
             }
-            .navigationTitle(Text("Back up", bundle: .module, comment: "backup flow title"))
+            // Name the wallet being backed up — recovery phrases are per-wallet.
+            .navigationTitle(Text("\(vm.walletLabel) recovery phrase", bundle: .module, comment: "backup flow title; %@ is the wallet name"))
+            .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
                     if vm.step != .done {
@@ -58,33 +62,120 @@ struct BackupFlowView: View {
     // MARK: - Intro (the explicit gate)
 
     private var intro: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.x5) {
-            Spacer()
-            Image(icon: Icon.backup)
-                .resizable().scaledToFit()
-                .frame(width: 40, height: 40)
-                .foregroundStyle(Theme.Colors.warning)
-            Text("Your recovery phrase", bundle: .module, comment: "backup intro heading")
-                .textStyle(.h1)
-                .foregroundStyle(Theme.Colors.text0)
-            Text("The next screen shows the words that control this wallet. Anyone who sees them can take your coins.",
-                 bundle: .module, comment: "backup intro warning")
-                .textStyle(.body)
-                .foregroundStyle(Theme.Colors.text1)
-            Text("Write them down on paper, in order. Don't screenshot them, don't store them in notes or the cloud.",
-                 bundle: .module, comment: "backup intro instructions")
-                .textStyle(.body)
-                .foregroundStyle(Theme.Colors.text1)
-            Spacer()
-            WalletButton(title: vm.step == .authenticating
-                            ? "Unlocking…"
-                            : "I understand — show me") {
-                Task { await vm.begin() }
+        // Scrollable warning content above; the acknowledgement + Continue stay pinned at the bottom.
+        // (`safeAreaInset` is unavailable in SkipUI, so we use a VStack { ScrollView; controls }.)
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(spacing: Theme.Space.x5) {
+                    Text("Keep your recovery phrase secret", bundle: .module, comment: "backup intro heading")
+                        .textStyle(.h1)
+                        .foregroundStyle(Theme.Colors.text0)
+                        .multilineTextAlignment(.center)
+                        .padding(.top, Theme.Space.x4)
+
+                    VStack(alignment: .leading, spacing: Theme.Space.x4) {
+                        infoBullet(Icon.key,
+                                   Text("These words are the only key to this wallet — whoever has them controls the coins.",
+                                        bundle: .module, comment: "backup intro point: master key"))
+                        infoBullet(Icon.hide,
+                                   Text("Anyone who sees them can drain the wallet, and no one can reverse it or get the coins back.",
+                                        bundle: .module, comment: "backup intro point: theft is irreversible"))
+                        infoBullet(Icon.backup,
+                                   Text("We'll never ask for them. Don't type them into any site, app, or message.",
+                                        bundle: .module, comment: "backup intro point: never share"))
+                    }
+
+                    commonScams
+                }
+                .padding(Theme.Space.gutter)
             }
-            .disabled(vm.step == .authenticating)
-            .opacity(vm.step == .authenticating ? 0.6 : 1)
+
+            // Pinned acknowledgement gate + Continue.
+            VStack(spacing: Theme.Space.x4) {
+                Button { understood.toggle() } label: {
+                    HStack(alignment: .top, spacing: Theme.Space.x3) {
+                        ZStack {
+                            RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                                .fill(understood ? Theme.Colors.accent : Color.clear)
+                            RoundedRectangle(cornerRadius: Theme.Radius.sm)
+                                .stroke(understood ? Theme.Colors.accent : Theme.Colors.border, lineWidth: 1.5)
+                            if understood {
+                                Image(icon: Icon.check)
+                                    .resizable().scaledToFit()
+                                    .frame(width: 14, height: 14)
+                                    .foregroundStyle(Theme.Colors.accentText)
+                            }
+                        }
+                        .frame(width: 24, height: 24)
+
+                        Text("I understand that anyone who sees these words can take my funds, permanently.",
+                             bundle: .module, comment: "backup intro acknowledgement checkbox")
+                            .textStyle(.sm)
+                            .foregroundStyle(Theme.Colors.text1)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+                .buttonStyle(.plain)
+
+                WalletButton(title: vm.step == .authenticating ? "Unlocking…" : "Continue") {
+                    Task { await vm.begin() }
+                }
+                .disabled(!understood || vm.step == .authenticating)
+                .opacity(!understood || vm.step == .authenticating ? 0.5 : 1)
+            }
+            .padding(Theme.Space.gutter)
         }
-        .padding(Theme.Space.gutter)
+    }
+
+    /// A red-iconed warning point (icon chip + text), matching the intro's three callouts.
+    private func infoBullet(_ icon: Icon, _ text: Text) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.x3) {
+            ZStack {
+                RoundedRectangle(cornerRadius: Theme.Radius.sm).fill(Theme.Colors.negative)
+                Image(icon: icon)
+                    .resizable().scaledToFit()
+                    .frame(width: 16, height: 16)
+                    .foregroundStyle(.white)
+            }
+            .frame(width: 30, height: 30)
+
+            text
+                .textStyle(.body)
+                .foregroundStyle(Theme.Colors.text0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+
+    /// Folded-by-default list of how phrases actually get stolen.
+    private var commonScams: some View {
+        DisclosureGroup(isExpanded: $scamsExpanded) {
+            VStack(alignment: .leading, spacing: Theme.Space.x3) {
+                scamBullet(Text("Tricking you into copying your recovery phrase to the clipboard, where malware can read it.",
+                                bundle: .module, comment: "common scam: clipboard"))
+                scamBullet(Text("Tricking you into screenshotting it — then finding that image later in your synced cloud photos.",
+                                bundle: .module, comment: "common scam: screenshot"))
+                scamBullet(Text("Tricking you into typing it into a website or app that looks legitimate.",
+                                bundle: .module, comment: "common scam: phishing site"))
+            }
+            .padding(.top, Theme.Space.x3)
+        } label: {
+            Text("Common scams", bundle: .module, comment: "backup intro: expandable scams section")
+                .textStyle(.body)
+                .foregroundStyle(Theme.Colors.text0)
+        }
+        .tint(Theme.Colors.text2)   // disclosure chevron
+    }
+
+    private func scamBullet(_ text: Text) -> some View {
+        HStack(alignment: .top, spacing: Theme.Space.x2) {
+            Text(verbatim: "•")
+                .textStyle(.body)
+                .foregroundStyle(Theme.Colors.negative)
+            text
+                .textStyle(.sm)
+                .foregroundStyle(Theme.Colors.text1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 
     // MARK: - Reveal (word chips)
