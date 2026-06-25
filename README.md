@@ -18,6 +18,15 @@ Multi-wallet and multi-network from day one. v1 bundles **Bitcoin mainnet** (`0'
 **L2L Signet** (`1'`); eCash mainnet and L2L test networks slot in as `NetworkRegistry` entries
 later.
 
+## Contributing
+
+We're **not accepting outside code contributions right now.** The codebase is under heavy active
+development and changing quickly, and we'd like it in a more stable place before opening it up to pull
+requests.
+
+**Feature ideas are very welcome**, though — open an issue describing what you'd like to see and we'll
+take it under consideration. Bug reports are appreciated too.
+
 ## Stack
 
 | Layer | Choice |
@@ -112,49 +121,6 @@ WALLETSERVICE_LIVE=1 swift test --filter testLiveSignetSync   # opt-in live L2L 
 `swift build` only checks Apple + transpilation; **`skip export --debug` is the real Android check.**
 No change to `WalletService` or a view model merges without tests in the same PR.
 
-## Roadmap
-
-Abbreviated — see `PLAN.md` for the detailed, tracked checklist.  ✅ done · 🟡 in progress · ⬜ not started
-
-- ✅ **M0 — Foundation:** design system (`Theme`), app shell + navigation, icons, logo, network badge.
-  Brand fonts everywhere incl. nav-bar titles (Space Grotesk — iOS `UINavigationBarAppearance` /
-  Android Compose `Typography`); text scaling capped so large OS sizes don't break money layouts.
-- ✅ **M1 — WalletService core (pure, fully tested):** Amount/BIP21/Descriptors/NetworkRegistry/
-  WalletError + KeyStore/WalletStore/WalletManager + mock engine.
-- ✅ **M2 — Real BDK engine:** create/import, balance, addresses, transactions, UTXOs, send, sync,
-  typed error mapping. Runtime-verified on iOS sim + Android emulator, including real Signet
-  broadcasts in both directions. Sync = full scan once, then revealed-address sync (no gap-limit
-  blind spots).
-- ✅ **Slice 1 — Create wallet** (generate → home on a test network; no network question at create)
-- ✅ **Slice 2 — Home + Receive** (balance, sync state, activity preview; unused address + QR —
-  "New address" advances on demand)
-- ✅ **Slice 5 — Send** (paste **or QR-scan** address/BIP21 → custom keypad amount → fee tier → review
-  w/ network → sign → broadcast → optimistic pending row; full-screen flow. Spendable = confirmed +
-  own change; the success screen is Done-only)
-- 🟡 **Slice 6 — Transaction history** (rows + redesigned detail sheet — amount/fee/total, **fee rate,
-  block height, size**, RBF, txid, big block-explorer button — pull-to-refresh, and **fiat on the
-  balance + rows** ✅; CoinNews txs get a kind header + collapsible raw-detail disclosure ✅; fiat on
-  the detail-sheet amount ⬜)
-- ✅ **Slice 7 — Settings + Wallet manager** (theme, **display currency** (USD/EUR/GBP/JPY, Bitfinex),
-  dev reset, backup row, wallet switcher pill + manager sheet with switch/rename/add/import/remove +
-  persistent selection, app-lock toggle, an **open-source licenses** screen, and **custom per-network
-  backend endpoints** (Electrum/Esplora + Test-connection))
-- ✅ **Slice 4 — Import wallet** (12/24-word restore, BDK-validated, non-leaky errors; verified
-  against the BIP39/BIP84 spec vectors)
-- ✅ **Slice 3 — Backup wallet** (explicit gate → biometric/passcode → word chips → 3-word verify;
-  capture-blocked: FLAG_SECURE on Android, obscured-when-backgrounded on iOS; clears the Home warning)
-- 🟡 **CoinNews — on-chain `OP_RETURN` bulletin board** (per network; News tab hidden on Bitcoin):
-  read the feed (Top/Latest, topics, follow/filter, threads) via the public `coinnews.v1` indexer;
-  publish **stories, topics, comments, votes** plus **replies-to-comments and comment votes** as
-  signed `OP_RETURN`s (BIP-340 identity per wallet); optimistic local copies until indexed; votes are
-  first-wins; CoinNews txs are tagged in Activity with a kind-aware detail. Trust-minimized
-  client-side verification ⬜.
-- 🟡 **Milestone F — Hardening & release:** app-lock ✅ (biometric/passcode gate on launch +
-  foreground, Settings toggle, default ON); secret-scrub audit ✅; localization pass ✅;
-  UI smoke flows, real brand, signing/CI ⬜.
-- 🧪 **Tests:** WalletService parity suite (~90 XCTest cases, Robolectric — both platforms) + 54 app
-  view-model tests (Swift Testing, host `swift test`): Send, Backup, Import, Create, AppLock.
-
 ## Security model
 
 Your keys stay on your device, and the app is built to keep them exposed as little as possible.
@@ -197,18 +163,10 @@ non-negotiable rules are CLAUDE.md §2 (Golden Rules) and §7 (Security model).
 ## Docs
 
 - `CLAUDE.md` — architecture bible (the *what* and *why*; wins on conflicts).
-- `PLAN.md` — full build plan + tracked checklist (the *order*).
+- `PLAN.md` — full build plan + tracked checklist.
 - `DESIGN.md` — visual spec (tokens, type, components, voice).
-- `docs/wallet-and-network-model.md` — what a "Wallet" is (a seed) + network as a switchable view (decided; revises Golden Rule §4).
-- `docs/key-derivation.md` — key-derivation decision record (BIP84, coin-types, eCash params).
-- `docs/key-storage.md` — key-storage / secrets decision record (what's persisted, Keychain/Keystore, backup, app-lock).
-- `docs/accounts-and-labels.md` — design record for multi-account-per-seed (savings/checking) + per-key-pair labels/metadata (post-v1; app-owned, not BDK).
-- `docs/ios-device-signing.md` — runbook for installing on a real iPhone (Xcode signing) + the Android `adb` install path.
-- `docs/plausible-deniability.md` — design record (proposed) for BIP39-passphrase hidden wallets.
-- `docs/backends-and-endpoints.md` — how chain data is fetched + the custom-endpoint plan (Electrum/Esplora v1, CBF v2).
-- `docs/release.md` — build/sign/ship to App Store + Google Play via fastlane (iOS connected; Android Play setup checklist).
-- `docs/network-switching.md` — design record (planned) for switching a wallet's network in-app (storage groundwork done).
-- `docs/coinnews-integration.md` — design + status for fetching + publishing CoinNews (on-chain `OP_RETURN` bulletin board); read + publish + vote/comment/reply built.
+- `docs/release.md` — build / sign / ship to App Store + Google Play.
+- `docs/` — decision records: key storage & derivation, wallet/network model, accounts & labels, backends & endpoints, CoinNews, and more.
 
 ## Open source & acknowledgements
 

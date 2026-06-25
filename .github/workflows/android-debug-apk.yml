@@ -1,0 +1,91 @@
+name: Android Debug APK
+
+# Builds a sideloadable **debug** Android APK (arm64) when a release is published, and attaches it to
+# that GitHub Release. Also runnable on demand from the Actions tab. This is the CI mirror of
+# `scripts/run-android.sh --debug` — debug-key signed, no secrets needed (the Play-grade signed AAB
+# is a separate, local, keystore-backed flow; see docs/release.md §2b).
+#
+# NOTE (first run): Skip's Android toolchain setup (Swift Android SDK + NDK) is exacting. If the first
+# run fails, the error usually names the exact missing/mismatched piece (e.g. an NDK version or a
+# Swift-toolchain/SDK version skew) — pin that here and re-run. `skip doctor` output in the log helps.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch: {}   # manual trigger from the Actions tab
+
+permissions:
+  contents: write         # needed to attach the APK to the release
+
+concurrency:
+  group: android-debug-apk-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    # macOS: Skip Fuse compiles Swift natively for Android via the Swift Android SDK, and the Skip
+    # toolchain targets macOS. Android SDK + Java come preinstalled on the runner.
+    runs-on: macos-15
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      # Swift 6.1+ host compiler (the Swift Android SDK must match the host toolchain).
+      - name: Select Xcode
+        uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      # Skip CLI drives transpile + Gradle + Swift-for-Android; the project has no gradlew, so it
+      # uses a system Gradle (mirrors Android/fastlane/Fastfile, which calls the Homebrew gradle).
+      - name: Install Skip + Gradle
+        run: brew install skiptools/skip/skip gradle
+
+      # Base Android SDK pieces (cmdline-tools, platform-tools) into ANDROID_HOME.
+      - name: Install Android SDK (skip android home)
+        run: skip android home install
+
+      # bdk-android needs NDK 27+ (CLAUDE.md §3). If the build later asks for a specific NDK version,
+      # change this to that exact version and re-run.
+      - name: Install Android NDK 27+
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          [ -x "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager)"
+          yes | "$SDKMANAGER" "ndk;27.2.12479018"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
+
+      # Swift cross-compilation SDK for Android (the Fuse native-Android build).
+      - name: Install Swift Android SDK (skip android sdk)
+        run: skip android sdk install
+
+      - name: Diagnose toolchain
+        run: skip doctor || true
+
+      # Debug, arm64 only, no iOS leg — the fast path (see scripts/run-android.sh comments).
+      - name: Build debug APK
+        run: skip export --debug --no-ios --arch aarch64
+
+      - name: Stage APK with a versioned name
+        id: apk
+        run: |
+          set -euo pipefail
+          SRC=.build/skip-export/ECashWalletMobile-debug.apk
+          [ -f "$SRC" ] || { echo "::error::APK not found at $SRC"; ls -R .build/skip-export || true; exit 1; }
+          VERSION=$(grep -E '^MARKETING_VERSION' Skip.env | sed -E 's/.*=[[:space:]]*//' | tr -d '[:space:]')
+          DEST="eCashWallet-${VERSION:-0.0.0}-debug.apk"
+          cp "$SRC" "$DEST"
+          echo "path=$DEST" >> "$GITHUB_OUTPUT"
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: android-debug-apk
+          path: ${{ steps.apk.outputs.path }}
+          if-no-files-found: error
+
+      # Attach to the GitHub Release when this run was triggered by publishing one.
+      - name: Attach APK to release
+        if: github.event_name == 'release'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "${{ github.event.release.tag_name }}" "${{ steps.apk.outputs.path }}" --clobber

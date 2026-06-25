@@ -3,16 +3,18 @@
 > How the app is built, signed, and shipped to the **App Store / TestFlight** (iOS) and **Google
 > Play** (Android), via fastlane. Secrets are gitignored and supplied locally (templates committed).
 >
-> **Status (2026-06-19):** Version **0.1.0** (build 1) — nothing shipped yet. iOS is **connected**
-> (App Store Connect API key in place, auth + app record verified) → push via `fastlane beta`
-> (TestFlight). Android ships as a **pass-around APK** (arm64) for now (§2a); Google Play upload via
-> fastlane is documented (§2b) but not wired in this checkout (no service-account JSON / upload keystore).
+> **Status (2026-06-24):** Version **0.1.1** (build 2). iOS is **connected** (App Store Connect API
+> key in place) → push via `fastlane beta`; 0.1.1(2) uploaded to TestFlight. Android: the **upload
+> keystore is wired** and produces a Play-grade **signed AAB** (§2b, verified `CN=Layer Two Labs`);
+> remaining is Play Console setup (create app, App content section, manual first upload). Still also
+> ships a sideload **APK** (arm64) for ad-hoc testers (§2a). Play automation via fastlane needs the
+> service-account JSON (not yet created).
 
 All fastlane commands run from the platform subdir: `cd Darwin` (iOS) / `cd Android` (Android).
 Bundle id / package = `com.layertwolabs.mobile.ecashwallet` (from `Skip.env`, shared by both).
 
-**Version** is centralized in `Skip.env` — `MARKETING_VERSION` (semantic, currently `0.1.0`) +
-`CURRENT_PROJECT_VERSION` (build number, currently `1`), shared by iOS and Android. **Bump
+**Version** is centralized in `Skip.env` — `MARKETING_VERSION` (semantic, currently `0.1.1`) +
+`CURRENT_PROJECT_VERSION` (build number, currently `2`), shared by iOS and Android. **Bump
 `CURRENT_PROJECT_VERSION` before each repeat TestFlight/Play upload** (build numbers must be unique).
 
 ---
@@ -64,29 +66,61 @@ ARCH=all scripts/build-apk.sh   # every ABI (much bigger; only for x86/armv7 dev
   armv7/x86_64 native compiles (~7 min → ~1–2 min; flags in `scripts/run-android.sh` +
   `Android/gradle.properties`). `scripts/run-android.sh` is the same build but installs to a device.
 
-### 2b. Google Play (optional, not wired) ⬜
-The fastlane config exists (`Android/fastlane/` — `assemble` builds an AAB via gradle `bundleRelease`;
-`release` runs `upload_to_play_store`), but the **credentials + signing aren't wired** in this
-checkout (and its AAB output path is the skip-template default, not our build). To connect it:
+### 2b. Google Play — signed AAB
 
-1. **Google Play Console app.** Create the app in Play Console with package
-   `com.layertwolabs.mobile.ecashwallet`. **First upload must be done manually** through the Play
-   Console UI (Google blocks API uploads until at least one AAB has been uploaded by hand) — plan a
-   one-time manual first release, then fastlane for everything after.
-2. **Play service-account JSON** → `Android/fastlane/apikey.json` (gitignored). Create a service
-   account (Play Console → Setup → API access → link a Google Cloud project → create service account
-   → grant it release permissions), download the JSON key. This is the Android analog of the iOS ASC
-   key. Verify with `cd Android && fastlane run validate_play_store_json_key json_key:"fastlane/apikey.json"`.
-3. **Upload keystore + `Android/app/keystore.properties`** (both gitignored). `build.gradle.kts`
-   reads `keyAlias` / `keyPassword` / `storeFile` / `storePassword` from `keystore.properties` and
-   signs the release AAB with it (falls back to the debug key if the file is absent — fine for local
-   testing, **not** for Play). Recommended: enroll in **Play App Signing** (Google holds the app
-   signing key; you sign uploads with an *upload* key) — generate an upload keystore:
-   ```
-   keytool -genkey -v -keystore upload.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000
-   ```
-   then point `keystore.properties` at it. Keep `upload.jks` out of git (it's gitignored).
-4. **`minSdkVersion 28`** is already emitted; no extra config.
+> ⚠️ **No system Java on this Mac.** `/usr/bin/keytool` / `/usr/bin/jarsigner` are stubs that error
+> with "Unable to locate a Java Runtime." Use the JDK bundled with Android Studio:
+> `/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/{keytool,jarsigner}`
+> (or `export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"` for the session).
+
+#### Upload key — DONE (2026-06-24) ✅
+Enrolled in **Play App Signing** (Google manages the *app signing* key; we sign uploads with an
+*upload* key — recoverable via a Play Console reset if lost, but still back it up). The upload key
+lives at `Android/app/keystore.jks` (gitignored), alias `upload`, referenced by
+`Android/app/keystore.properties` (gitignored: `keyAlias`/`keyPassword`/`storeFile`/`storePassword`).
+`build.gradle.kts` auto-loads that file and signs the release build with it (falls back to the debug
+key only when the file is absent — that's the sideload-APK path in §2a).
+
+How it was generated (only redo if the key is ever rotated — keep `keystore.jks` + password backed up):
+```
+"/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/keytool" -genkeypair -v \
+  -keystore Android/app/keystore.jks -alias upload -keyalg RSA -keysize 2048 -validity 10000 \
+  -dname "CN=Layer Two Labs, O=Layer Two Labs, C=US"
+# prompts for a keystore password (min 6 chars); press RETURN at the key-password prompt to reuse it.
+# DN fields are cosmetic for an upload key — Google ignores them.
+```
+
+#### Build the signed AAB
+```
+scripts/build-apk.sh   # skip export --release; signs with keystore.properties when present
+# → .build/Android/app/outputs/bundle/release/app-release.aab   ← upload THIS to Play (not the §2a APK)
+```
+Verify it's signed with the upload key (not the debug key) before uploading:
+```
+"/Applications/Android Studio.app/Contents/jbr/Contents/Home/bin/jarsigner" -verify -verbose -certs \
+  .build/Android/app/outputs/bundle/release/app-release.aab | grep -E "CN=|jar verified"
+# expect: "jar verified." + signer "CN=Layer Two Labs"  (NOT "CN=Android Debug")
+```
+**Bump `CURRENT_PROJECT_VERSION` in `Skip.env` before each Play upload** — versionCode must strictly
+increase (0.1.1 used versionCode 2).
+
+#### Play Console — still TODO ⬜
+1. **Create the app** in Play Console, package `com.layertwolabs.mobile.ecashwallet`; choose
+   **"Let Google manage and protect your app signing key"** (Play App Signing — matches the upload-key
+   model above).
+2. **App content section** (required before ANY testing track goes live): privacy-policy URL, Data
+   safety form, content rating, target audience, ads declaration, and the **Financial features**
+   declaration (non-custodial crypto/blockchain wallet).
+3. **First AAB upload is MANUAL** via the Console UI (Google blocks API uploads until one AAB has been
+   uploaded by hand). Use the **Internal testing** track first (≤100 testers, no review wait — the
+   Play analog of TestFlight).
+4. **Play service-account JSON** (only needed to automate later uploads via fastlane) →
+   `Android/fastlane/apikey.json` (gitignored). Play Console → Setup → API access → link a Google
+   Cloud project → create service account → grant release permissions → download JSON. Verify:
+   `cd Android && fastlane run validate_play_store_json_key json_key:"fastlane/apikey.json"`.
+
+`targetSdkVersion` is **36** and `minSdkVersion` **28** (emitted automatically — both satisfy Play's
+current new-app requirement of target ≥ 35).
 
 ### Lanes (`Android/fastlane/Fastfile`), once the above exist
 - **`fastlane assemble`** — gradle `bundleRelease` → `.build/Android/app/outputs/bundle/release/app-release.aab`.
@@ -107,7 +141,7 @@ the debug **APK** (`skip export --debug`). Different artifacts — the release p
 | `Darwin/DeveloperSettings.xcconfig` | iOS | `DEVELOPMENT_TEAM` |
 | `Android/fastlane/apikey.json` | Android | Play service-account JSON |
 | `Android/app/keystore.properties` | Android | release keystore alias + passwords + path |
-| `Android/app/*.jks` / `upload.jks` | Android | the keystore itself |
+| `Android/app/keystore.jks` | Android | the upload keystore itself (alias `upload`) — back this up |
 
 Committed **templates**: `Darwin/fastlane/apikey.json.example`, `Darwin/DeveloperSettings.xcconfig.example`.
 
