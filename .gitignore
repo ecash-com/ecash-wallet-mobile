@@ -81,3 +81,14 @@ Carthage/Build/
 **/fastlane/README.md
 **/fastlane/Preview.html
 **/fastlane/test_output
+
+# Firebase / FCM / push — NEVER commit (added preventively; see docs/notifications.md).
+# Server-side SENDING keys (FCM service-account JSON, APNs .p8 — `*.p8` already ignored above) belong
+# on the backend / in CI secrets, never in the repo or the app bundle. Firebase client-config files
+# aren't needed by skip-notify, but ignore them too in case they ever get downloaded. The ONLY
+# Firebase value that may live in the app is the non-secret numeric Sender ID.
+google-services.json
+GoogleService-Info.plist
+**/firebase-service-account*.json
+**/serviceAccountKey.json
+**/*-firebase-adminsdk-*.json

@@ -71,6 +71,11 @@ struct ImportWalletView: View {
                     .textStyle(.xs)
                     .foregroundStyle(Theme.Colors.text2)
 
+                // BitWindow keeps L1 funds under a derived "l1" seed, NOT the master phrase it shows
+                // you — so the master imports cleanly but shows zero. Point users at the right phrase
+                // (no derivation done here; see docs/bitwindow-import.md).
+                bitWindowHint
+
                 // Optional name (labels are device-local; restoring a seed can't bring one back).
                 TextField("Wallet name (optional — \"\(defaultName)\")", text: $walletName)
                     .textFieldStyle(.plain)
@@ -114,6 +119,25 @@ struct ImportWalletView: View {
     private func submitImport() {
         let trimmed = walletName.trimmingCharacters(in: .whitespacesAndNewlines)
         vm.submit(label: trimmed.isEmpty ? defaultName : String(trimmed.prefix(24)), network: network)
+    }
+
+    /// Folded-by-default note for users coming from BitWindow: its on-screen "master" recovery phrase
+    /// is NOT the seed that holds their coins — they need the wallet's derived "Bitcoin Core (Patched)"
+    /// (l1) phrase, or the import succeeds with a zero balance.
+    private var bitWindowHint: some View {
+        DisclosureGroup {
+            Text("BitWindow keeps your coins under a separate seed from the master recovery phrase it shows you. Import your wallet's phrase from your BitWindow backup — not the master phrase, which imports fine but shows no balance.",
+                 bundle: .module, comment: "import: guidance for users coming from BitWindow")
+                .textStyle(.sm)
+                .foregroundStyle(Theme.Colors.text1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.top, Theme.Space.x2)
+        } label: {
+            Text("Importing from BitWindow?", bundle: .module, comment: "import: BitWindow guidance disclosure toggle")
+                .textStyle(.sm)
+                .foregroundStyle(Theme.Colors.text0)
+        }
+        .tint(Theme.Colors.text2)
     }
 
     private var wordCountText: LocalizedStringKey {
