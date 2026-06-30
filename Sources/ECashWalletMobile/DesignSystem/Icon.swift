@@ -44,6 +44,9 @@ struct Icon {
     static let scan = Icon("qr_code_scanner")
     static let qr = Icon("qr_code")
     static let backspace = Icon("backspace")
+    /// Signet faucet ("get test coins"). iOS uses the SF Symbol `drop.fill`; Android uses the
+    /// vendored `water_drop` Material symbolset (filled, to match).
+    static let faucet = Icon("water_drop", sf: "drop.fill")
 
     // General actions
     static let copy = Icon("content_copy")

@@ -18,6 +18,7 @@ struct WalletHomeScreen: View {
     @State var sendToken = 0
     @State var showBackup = false
     @State var showWalletManager = false
+    @State var showFaucet = false
     @State var detailTx: WalletTx? = nil
 
     var body: some View {
@@ -55,6 +56,12 @@ struct WalletHomeScreen: View {
         }
         // Wallet manager: switch / rename / add / import / remove.
         .sheet(isPresented: $showWalletManager) { WalletManagerSheet() }
+        // Signet faucet: request valueless test coins (signet-only; the button is gated too).
+        .sheet(isPresented: $showFaucet) {
+            if let vm = app.makeFaucetViewModel() {
+                FaucetSheet(viewModel: vm)
+            }
+        }
         // Transaction detail for a tapped activity row.
         .sheet(item: $detailTx) { tx in
             if let wallet = app.selectedWallet {
@@ -67,10 +74,14 @@ struct WalletHomeScreen: View {
     private func content(for wallet: ManagedWallet) -> some View {
         let params = NetworkRegistry.params(for: wallet.network)
         VStack(spacing: Theme.Space.x6) {
-            // Header: the wallet switcher pill, leading (mock: avatar + name + chevron).
+            // Header: the wallet switcher pill (leading) + the faucet "Get coins" pill (trailing,
+            // signet-only via `app.faucetAvailable`).
             HStack {
                 WalletSwitcherPill(label: wallet.label) { showWalletManager = true }
                 Spacer()
+                if app.faucetAvailable {
+                    FaucetButton { showFaucet = true }
+                }
             }
 
             VStack(spacing: Theme.Space.x2) {

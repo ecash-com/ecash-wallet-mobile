@@ -193,6 +193,13 @@ final class AppState {
         return CoinNewsAvailability.isAvailable(on: network)
     }
 
+    /// Whether to offer the "Get coins" faucet for the selected wallet's network. Code-level
+    /// capability (`FaucetRegistry`) — signet only, valueless test coins. Drives the home button.
+    var faucetAvailable: Bool {
+        guard let network = selectedWallet?.network else { return false }
+        return FaucetRegistry.isAvailable(on: network)
+    }
+
     /// Display unit label (sBTC / tBTC / BTC) for the selected wallet's network.
     var unitLabel: String {
         guard let network = selectedWallet?.network else { return "" }
@@ -380,6 +387,45 @@ final class AppState {
                 guard self.appLock.enabled else { return true }
                 return await DeviceAuth.authenticate(reason: reason)
             })
+    }
+
+    /// Vend a `FaucetViewModel` for the selected wallet (signet faucet — valueless test coins), or
+    /// nil if the network has no faucet (`FaucetRegistry`) or no receive address is available. The
+    /// destination is the wallet's next unused receive address; on success it re-syncs so the incoming
+    /// coins surface. The network call runs off-main via the nonisolated `FaucetClient`.
+    func makeFaucetViewModel() -> FaucetViewModel? {
+        guard let wallet = selectedWallet,
+              let config = FaucetRegistry.config(for: wallet.network),
+              let addr = nextUnusedAddress() else { return nil }
+        let network = wallet.network
+        let params = NetworkRegistry.params(for: network)
+        let client = FaucetClient(endpoint: config.endpoint)
+        return FaucetViewModel(
+            address: addr.address,
+            unitLabel: params.unitLabel,
+            amount: config.amount,
+            cooldownRemaining: faucetCooldownRemaining(for: network, cooldown: config.cooldown),
+            dispense: { destination, amount in try await client.dispense(to: destination, amount: amount) },
+            onSuccess: {
+                self.recordFaucetSuccess(for: network)   // start the client-side cooldown
+                Task { await self.sync() }               // pull the incoming coins in
+            })
+    }
+
+    /// Client-side faucet cooldown (a UX guard on top of the server's own rate limit). Persists the
+    /// last successful dispense time per network so a kill/restart doesn't reset it.
+    private static func faucetLastSuccessKey(_ network: WalletNetwork) -> String {
+        "faucetLastSuccess_\(network.rawValue)"
+    }
+
+    private func faucetCooldownRemaining(for network: WalletNetwork, cooldown: TimeInterval) -> TimeInterval {
+        let last = UserDefaults.standard.double(forKey: Self.faucetLastSuccessKey(network))
+        guard last > 0 else { return 0 }
+        return max(0, cooldown - (Date().timeIntervalSince1970 - last))
+    }
+
+    private func recordFaucetSuccess(for network: WalletNetwork) {
+        UserDefaults.standard.set(Date().timeIntervalSince1970, forKey: Self.faucetLastSuccessKey(network))
     }
 
     /// Optimistically surface a just-broadcast tx (pending, no timestamp → sorts to the top).

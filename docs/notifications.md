@@ -69,7 +69,39 @@ browser; only inline Markdown, no headings/lists — same `LocalizedStringKey` p
 only a recognized `kind` opens a sheet; anything else just shows the system banner. Announcements
 are company-only and carry **no wallet data**, so links render + open directly (no phishing gate).
 
-### What to enter in the Firebase console (Cloud Messaging → "New campaign" / "Send test message")
+### Step-by-step: sending from the Firebase console
+
+There are two ways to send. **A test message** targets one device by FCM token (fast, no setup —
+use this to verify) and shows up immediately. **A campaign** targets the app or the `announcements`
+topic (reaches everyone) but is the "Notifications" composer with a Review/Publish flow.
+
+**Quick test send (one device, recommended for verifying):**
+1. Get the device's FCM token: in the app **Settings**, in the developer section, tap **Register
+   for push notifications** if not already registered, then **Copy push token** (the token is shown
+   below the button).
+2. Firebase console → project **`ecash-wallet-3b5c9`** → left nav **Run → Messaging** (a.k.a. Cloud
+   Messaging).
+3. Click **Create your first campaign** / **New campaign** → choose **Firebase Notification
+   messages** → **Create**.
+4. Fill **Notification title** + **Notification text** (the tray text — see the table below).
+5. Click **Send test message** (top-right of the compose card). Paste the FCM token from step 1,
+   click **+** to add it, then **Test**. It arrives on that device within seconds.
+   - ⚠️ The **Send test message** dialog only sends the *notification* block — it does **not**
+     include custom data. To test the in-app sheet's `kind`/`title`/`body`, use a campaign (below)
+     or the HTTP v1 API. The notification title/text alone still opens the sheet via the fallback,
+     so a test send is enough to confirm tap→sheet works; use a campaign to exercise custom `body`.
+
+**Campaign send (all devices — the real announcement path):**
+1. Console → **Messaging** → **New campaign** → **Firebase Notification messages**.
+2. **Notification:** fill title + text (tray text).
+3. **Target:** **App** = `com.layertwolabs.mobile.ecashwallet` (iOS) / `ecash.wallet.mobile`
+   (Android). Optionally narrow to the **`announcements`** topic (every install subscribes to it).
+4. **Scheduling:** **Now**.
+5. **Additional options (optional):** expand → **Custom data** → add the `kind` / `title` / `body`
+   rows (the table below). This is what drives the rich in-app sheet.
+6. **Review** → **Publish**. (Topic/app sends can take a few minutes to fan out.)
+
+### What to enter (Notification block + Custom data)
 
 The FCM message has two parts: the **Notification** block (the tray text the OS shows) and the
 **Additional options → Custom data** block (key/value pairs that drive the in-app sheet).
