@@ -12,8 +12,8 @@ enum CoinNewsEndpointRegistry {
     static func publicEndpoint(for network: WalletNetwork) -> CoinNewsEndpoint? {
         switch network {
         case .signet:
-            // L2L drivechain signet indexer (galaxoidlabs), live 2026-06.
-            guard let url = URL(string: "https://coinnews.signet.dc.galaxoidlabs.com") else { return nil }
+            // L2L drivechain signet CoinNews indexer.
+            guard let url = URL(string: "https://coinnews.signet.drivechain.info") else { return nil }
             return CoinNewsEndpoint(baseURL: url)
         case .bitcoin:
             // No public indexer yet.
