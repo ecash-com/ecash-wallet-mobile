@@ -1,9 +1,10 @@
-name: Android Debug APK
+name: Android APK
 
-# Builds a sideloadable **debug** Android APK (arm64) when a release is published, and attaches it to
-# that GitHub Release. Also runnable on demand from the Actions tab. This is the CI mirror of
-# `scripts/run-android.sh --debug` — debug-key signed, no secrets needed (the Play-grade signed AAB
-# is a separate, local, keystore-backed flow; see docs/release.md §2b).
+# Builds a sideloadable **release** Android APK (arm64) when a release is published, and attaches it
+# to that GitHub Release. Also runnable on demand from the Actions tab. This is the CI mirror of
+# `scripts/run-android.sh` (release) — debug-key signed (via the release signingConfig), no secrets
+# needed, R8-minified + native libs compressed so it's ~half the size of the old debug artifact. The
+# Play-grade signed AAB is a separate, local, keystore-backed flow (see docs/release.md §2b).
 #
 # NOTE (first run): Skip's Android toolchain setup (Swift Android SDK + NDK) is exacting. If the first
 # run fails, the error usually names the exact missing/mismatched piece (e.g. an NDK version or a
@@ -109,25 +110,28 @@ jobs:
       - name: Write google-services.json
         run: base64 -D <<< "${{ secrets.GOOGLE_SERVICES_JSON_BASE64 }}" > Android/app/google-services.json
 
-      # Debug, arm64 only, no iOS leg — the fast path (see scripts/run-android.sh comments).
-      - name: Build debug APK
-        run: skip export --debug --no-ios --arch aarch64
+      # Release, arm64 only, no iOS leg. Release (not debug) because it's ~85MB smaller (R8 minify +
+      # optimized Swift) AND faster at runtime, and it needs NO extra secrets — the release
+      # signingConfig in Android/app/build.gradle.kts signs with the auto-generated debug keystore,
+      # so this is still a freely-sideloadable, debug-key-signed APK (same as before, just smaller).
+      - name: Build release APK
+        run: skip export --release --no-ios --arch aarch64
 
       - name: Stage APK with a versioned name
         id: apk
         run: |
           set -euo pipefail
-          SRC=.build/skip-export/ECashWalletMobile-debug.apk
+          SRC=.build/skip-export/ECashWalletMobile-release.apk
           [ -f "$SRC" ] || { echo "::error::APK not found at $SRC"; ls -R .build/skip-export || true; exit 1; }
           VERSION=$(grep -E '^MARKETING_VERSION' Skip.env | sed -E 's/.*=[[:space:]]*//' | tr -d '[:space:]')
-          DEST="eCashWallet-${VERSION:-0.0.0}-debug.apk"
+          DEST="eCashWallet-${VERSION:-0.0.0}.apk"
           cp "$SRC" "$DEST"
           echo "path=$DEST" >> "$GITHUB_OUTPUT"
 
       - name: Upload workflow artifact
         uses: actions/upload-artifact@v5
         with:
-          name: android-debug-apk
+          name: android-apk
           path: ${{ steps.apk.outputs.path }}
           if-no-files-found: error
 

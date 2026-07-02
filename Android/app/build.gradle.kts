@@ -28,8 +28,13 @@ android {
         jniLibs {
             keepDebugSymbols.add("**/*.so")
             pickFirsts.add("**/*.so")
-            // this option would compress JNI .so files and reduce overall size for Skip Fuse apps, but cost more at install time
-            //useLegacyPackaging = true
+            // Compress the JNI .so files inside the APK. Skip Fuse ships a large native payload
+            // (Swift runtime + Foundation/ICU + BDK) that is otherwise STORED UNCOMPRESSED (the APK
+            // compresses ~1%). Enabling this roughly halves the sideload APK (~164MB → ~95–110MB) at
+            // a small install-time / first-launch cost (libs are extracted on install).
+            // Note: for the Play AAB, Google prefers uncompressed libs (false) for smaller updates —
+            // revisit this flag when the Play release path is set up.
+            useLegacyPackaging = true
         }
     }
 
