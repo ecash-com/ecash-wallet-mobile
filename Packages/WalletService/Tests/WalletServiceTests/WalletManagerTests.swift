@@ -33,6 +33,9 @@ final class WalletManagerTests: XCTestCase {
 
         XCTAssertEqual(try ks.loadMnemonic(walletId: wallet.id), mnemonic)
         XCTAssertEqual(manager.wallets.count, 1)
+        // Imported wallets are already backed up (the user supplied the seed) → no backup nudge,
+        // unlike a freshly CREATED wallet (asserted false above).
+        XCTAssertTrue(wallet.isBackedUp)
     }
 
     func testImportRejectsBadMnemonicAndPersistsNothing() {

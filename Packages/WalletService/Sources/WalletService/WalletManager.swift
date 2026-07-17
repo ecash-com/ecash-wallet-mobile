@@ -83,18 +83,22 @@ public final class WalletManager: @unchecked Sendable {
     }
 
     /// Import a wallet from a mnemonic (validated by the factory; throws `.invalidMnemonic` on a
-    /// bad checksum), persist it, and select it.
+    /// bad checksum), persist it, and select it. Imported wallets are marked **already backed up** —
+    /// the user supplied the seed, so it exists outside the app; prompting them to "back up" would be
+    /// noise (no nudge, no "not backed up" banner, no remove-warning). They can still reveal it via
+    /// Backup. (Contrast create, which generates a fresh seed the user has never seen → not backed up.)
     public func importWallet(label: String, network: WalletNetwork, mnemonic: String) throws -> ManagedWallet {
         let keys = try factory.restore(network: network, mnemonic: mnemonic)
-        return try persistNewWallet(label: label, network: network, keys: keys)
+        return try persistNewWallet(label: label, network: network, keys: keys, isBackedUp: true)
     }
 
-    private func persistNewWallet(label: String, network: WalletNetwork, keys: WalletKeys) throws -> ManagedWallet {
+    private func persistNewWallet(label: String, network: WalletNetwork, keys: WalletKeys,
+                                  isBackedUp: Bool = false) throws -> ManagedWallet {
         let id = UUID().uuidString
         let wallet = ManagedWallet(id: id, label: label, network: network,
                                    externalDescriptor: keys.externalDescriptor,
                                    internalDescriptor: keys.internalDescriptor,
-                                   isBackedUp: false, sortIndex: wallets.count)
+                                   isBackedUp: isBackedUp, sortIndex: wallets.count)
         // Secret first, then public metadata. Roll back the secret if metadata write fails so we
         // never strand a mnemonic with no wallet record.
         try keyStore.saveMnemonic(keys.mnemonic, walletId: id)
