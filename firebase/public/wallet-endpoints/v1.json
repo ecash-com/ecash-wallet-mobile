@@ -1,0 +1,63 @@
+{
+  "_readme": "eCash.com Wallet backend-endpoint config. Carries ROTATABLE, non-consensus data ONLY (backend URLs, explorer/faucet/coinnews URLs, soft min-version). Consensus/derivation params (coin-type, address HRP, unit label, network magic) live in the app's compiled NetworkRegistry and are NEVER read from here. Networks are keyed by WalletNetwork rawValue. The app treats this as advisory and falls back to bundled defaults if the fetch fails or the schema is unknown; a user's per-network Settings override wins over everything.",
+
+  "schema_version": 1,
+  "generated_at": "2026-07-17T00:00:00Z",
+  "refresh_after_seconds": 600,
+
+  "networks": {
+    "bitcoin": {
+      "display_name": "Bitcoin",
+      "backends": [
+        {
+          "kind": "electrum",
+          "url": "ssl://electrum.blockstream.info:50002",
+          "priority": 1,
+          "tls": true,
+          "label": "Blockstream"
+        }
+      ],
+      "explorer_tx_template": "https://mempool.space/tx/{txid}",
+      "services": {
+        "faucet": { "url": null, "amount": null, "cooldown_seconds": null },
+        "coinnews": { "url": null }
+      }
+    },
+
+    "signet": {
+      "display_name": "L2L Signet",
+      "backends": [
+        {
+          "kind": "electrum",
+          "url": "ssl://node.signet.drivechain.info:50002",
+          "priority": 1,
+          "tls": true,
+          "label": "L2L Signet electrs"
+        }
+      ],
+      "explorer_tx_template": "https://explorer.signet.drivechain.info/tx/{txid}",
+      "services": {
+        "faucet": { "url": "https://node.signet.drivechain.info/api", "amount": 3, "cooldown_seconds": 3600 },
+        "coinnews": { "url": "https://coinnews.signet.drivechain.info" }
+      }
+    },
+
+    "ecash": {
+      "display_name": "Drynet2",
+      "backends": [
+        {
+          "kind": "esplora",
+          "url": "https://esplora.drynet2.drivechain.dev",
+          "priority": 1,
+          "tls": true,
+          "label": "L2L Esplora (mempool-electrs)"
+        }
+      ],
+      "explorer_tx_template": "https://explorer.drynet2.drivechain.dev/tx/{txid}",
+      "services": {
+        "faucet": { "url": null, "amount": null, "cooldown_seconds": null },
+        "coinnews": { "url": null }
+      }
+    }
+  }
+}

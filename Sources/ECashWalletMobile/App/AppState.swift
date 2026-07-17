@@ -169,6 +169,46 @@ final class AppState {
         coinNewsByNetwork[initialNetwork] = initialFeed
         coinNewsNetwork = initialNetwork
         refresh()
+        // Best-effort: pull the latest backend endpoints and apply them over the bundled defaults.
+        // Fire-and-forget — a failure leaves last-known-good/bundled endpoints untouched (never
+        // blocks launch). Runs after the initial `load()`, so a changed endpoint evicts engines and
+        // the next `sync()` picks it up.
+        Task { await refreshRemoteEndpoints() }
+    }
+
+    /// Fetch the remote endpoints config and apply each per-network backend into the manager. Purely
+    /// additive over the bundled defaults, and fail-safe (see `RemoteEndpointConfigService`). The
+    /// off-actor fetch returns a plain value; the apply runs here on the main actor.
+    func refreshRemoteEndpoints() async {
+        guard let config = await RemoteEndpointConfigService().load() else { return }
+        // Backends → WalletManager (user Settings override still wins; see resolvedBackend).
+        for backend in config.resolvedPrimaryBackends() {
+            manager.setRemoteBackendDefault(network: backend.network, kind: backend.kind, url: backend.url)
+        }
+        // Services → the app-side overlay the registries read (dev-env override still wins for CoinNews).
+        var coinNewsChanged = false
+        for cn in config.resolvedCoinNews() {
+            if RemoteServiceOverrides.setCoinNewsURL(cn.url, for: cn.network) { coinNewsChanged = true }
+        }
+        for f in config.resolvedFaucets() {
+            RemoteServiceOverrides.setFaucet(url: f.url, amount: f.amount,
+                                             cooldownSeconds: f.cooldownSeconds, for: f.network)
+        }
+        // A new/changed CoinNews endpoint means the cached feed for that network is stale — drop it so
+        // it rebuilds against the new indexer, and re-point the visible feed if it's the current one.
+        if coinNewsChanged {
+            coinNewsByNetwork.removeAll()
+            if let network = selectedWallet?.network ?? coinNewsNetwork {
+                coinNews = feed(for: network)
+            }
+        }
+        // Recompute derived capability flags (faucetAvailable / coinNewsAvailable → tab visibility).
+        refresh()
+        // If a wallet is showing, re-sync in case the winning backend changed (engines are evicted
+        // only on an actual change, so this is a no-op when the config matched what we already had).
+        if manager.selectedWalletId != nil {
+            await sync()
+        }
     }
 
     // MARK: - Derived state

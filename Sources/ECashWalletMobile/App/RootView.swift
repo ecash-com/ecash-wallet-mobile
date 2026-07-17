@@ -14,6 +14,7 @@ struct RootView: View {
     @AppStorage("appearance") var appearance = ""   // "" = system · "light" · "dark"
     @State var app = AppState()
     @State var privacyCovered = false   // not `private` — Fuse bridges @State (skip-fuse rule)
+    @State var wasBackgrounded = false  // true after a real background trip → drives foreground refresh
     @State var pushRouter = PushRouter.shared   // observe the shared push→UI router (Phase 2 alert)
     @Environment(\.scenePhase) var scenePhase
 
@@ -70,10 +71,19 @@ struct RootView: View {
                 privacyCovered = true
             case .background:
                 privacyCovered = true
+                wasBackgrounded = true
                 app.appLock.markBackgrounded()
             case .active:
                 app.appLock.applyForegroundLock()
                 withAnimation(.easeOut(duration: 0.28)) { privacyCovered = false }
+                // Returning from a real background trip: re-pull the remote endpoints config so a
+                // rotation takes effect without a cold launch. Guarded by `wasBackgrounded` so this
+                // does NOT double-fetch right after launch (init already fetched); iOS goes
+                // background → inactive → active, so we can't rely on the previous phase here.
+                if wasBackgrounded {
+                    wasBackgrounded = false
+                    Task { await app.refreshRemoteEndpoints() }
+                }
             default:
                 break
             }

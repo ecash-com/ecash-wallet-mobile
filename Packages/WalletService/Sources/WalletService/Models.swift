@@ -107,12 +107,20 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     case bitcoin
     /// L2L dev network; first-class in BDK.
     case signet
-    // Future: eCash is a separate chain with no rust-bitcoin variant.
-    // case ecashMainnet
-    // case ecashTestnet
+    /// The eCash fork. Currently backed by the **drynet2** dry-run chain (see
+    /// `NetworkRegistry`); the case is named `.ecash` now — its rawValue is persisted in the
+    /// wallet store + backend-override keys — so it survives the eventual drynet2→eCash rename
+    /// without a data migration. eCash is byte-identical to Bitcoin (mainnet `bc` HRP,
+    /// coin-type `0'`), so it maps to BDK `Network.bitcoin`; it is separated from Bitcoin only
+    /// by its backend. Unit label is **ECX**. (See `docs/key-derivation.md`, memory
+    /// `drynet2-ecash-network`.)
+    case ecash
 
     /// True for everything that is NOT Bitcoin mainnet. Drives the persistent network
-    /// badge (Golden Rule §6) — non-mainnet wallets must be unmistakable.
+    /// badge (Golden Rule §6) — non-mainnet wallets must be unmistakable. `.ecash` is a
+    /// **test** chain (drynet2) that nonetheless uses mainnet-style `bc` addresses, so it stays
+    /// non-mainnet here (violet chip, no real-money warnings) even though its addresses look
+    /// identical to real Bitcoin — the chip is the only thing distinguishing them.
     public var isMainnet: Bool {
         self == .bitcoin
     }

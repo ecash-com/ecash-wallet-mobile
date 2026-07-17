@@ -108,4 +108,57 @@ final class WalletManagerTests: XCTestCase {
         // (it emitted `Any.signet`). Explicit qualification is the documented workaround.
         XCTAssertEqual(engine.network, WalletNetwork.signet)
     }
+
+    // MARK: - Backend resolution precedence (user override → remote default → bundled)
+
+    /// The remote endpoints config applies BELOW a user override and ABOVE the bundled default, and
+    /// a malformed remote entry is a safe no-op. Exercised on `.ecash` to avoid other tests' state.
+    func testBackendResolutionPrecedence() throws {
+        let manager = WalletManager(keyStore: InMemoryKeyStore(),
+                                    walletStore: InMemoryWalletStore(),
+                                    factory: MockWalletEngineFactory())
+        // Start clean (UserDefaults.standard is process-global).
+        manager.clearBackendOverride(network: WalletNetwork.ecash)
+        manager.clearRemoteBackendDefaults()
+        defer {
+            manager.clearBackendOverride(network: WalletNetwork.ecash)
+            manager.clearRemoteBackendDefaults()
+        }
+
+        // 3. Bundled default: eCash → Esplora at the drynet2 root URL.
+        var resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
+        XCTAssertEqual(resolved.kind, WalletBackend.Kind.esplora)
+        XCTAssertEqual(resolved.url, "https://esplora.drynet2.drivechain.dev")
+
+        // A malformed remote entry (bad kind) must NOT change resolution.
+        manager.setRemoteBackendDefault(network: WalletNetwork.ecash, kind: "bogus", url: "https://x")
+        resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
+        XCTAssertEqual(resolved.url, "https://esplora.drynet2.drivechain.dev")
+
+        // 2. Remote default now wins over bundled.
+        manager.setRemoteBackendDefault(network: WalletNetwork.ecash,
+                                        kind: "esplora", url: "https://esplora.example.test")
+        resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
+        XCTAssertEqual(resolved.url, "https://esplora.example.test")
+
+        // 1. User override beats the remote default.
+        manager.setBackendOverride(network: WalletNetwork.ecash,
+                                   kind: "electrum", url: "ssl://user.example.test:50002")
+        resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
+        XCTAssertEqual(resolved.kind, WalletBackend.Kind.electrum)
+        XCTAssertEqual(resolved.url, "ssl://user.example.test:50002")
+        // A user override is reported as such; a remote default is NOT.
+        XCTAssertTrue(manager.hasBackendOverride(for: WalletNetwork.ecash))
+
+        // Clearing the user override falls back to the remote default (not straight to bundled).
+        manager.clearBackendOverride(network: WalletNetwork.ecash)
+        resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
+        XCTAssertEqual(resolved.url, "https://esplora.example.test")
+        XCTAssertFalse(manager.hasBackendOverride(for: WalletNetwork.ecash))
+
+        // Clearing remote defaults returns to the bundled default.
+        manager.clearRemoteBackendDefaults()
+        resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
+        XCTAssertEqual(resolved.url, "https://esplora.drynet2.drivechain.dev")
+    }
 }

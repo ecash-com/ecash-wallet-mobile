@@ -36,11 +36,15 @@ public enum BDKSeam {
         switch network {
         case .bitcoin:  return Network.BITCOIN
         case .signet:   return Network.SIGNET
+        // eCash (drynet2) is byte-identical to Bitcoin (mainnet `bc` HRP, coin-type 0');
+        // separated from Bitcoin only by its backend, so BDK sees it as BITCOIN.
+        case .ecash:    return Network.BITCOIN
         }
         #else
         switch network {
         case .bitcoin:  return Network.bitcoin
         case .signet:   return Network.signet
+        case .ecash:    return Network.bitcoin
         }
         #endif
     }

@@ -10,13 +10,23 @@ import WalletService
 /// hosted indexer return `nil` (→ empty feed; no hardcoded data).
 enum CoinNewsEndpointRegistry {
     static func publicEndpoint(for network: WalletNetwork) -> CoinNewsEndpoint? {
+        // Remote overlay wins over the bundled default (below the dev-env override applied in
+        // AppState.makeCoinNewsFetcher). Lets a drynet2/eCash indexer be turned on from the config
+        // with no app update — the News tab lights up on the next launch.
+        if let remote = RemoteServiceOverrides.coinNewsURL(for: network) {
+            return CoinNewsEndpoint(baseURL: remote)
+        }
         switch network {
         case .signet:
             // L2L drivechain signet CoinNews indexer.
             guard let url = URL(string: "https://coinnews.signet.drivechain.info") else { return nil }
             return CoinNewsEndpoint(baseURL: url)
         case .bitcoin:
-            // No public indexer yet.
+            // No public indexer (and none wanted on mainnet — see CoinNewsAvailability).
+            return nil
+        case .ecash:
+            // eCash (drynet2): no bundled indexer yet — supplied via the remote overlay above when
+            // one is live. Until then this is nil and the News tab stays hidden.
             return nil
         }
     }

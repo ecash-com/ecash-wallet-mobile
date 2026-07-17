@@ -47,5 +47,57 @@ final class NetworkRegistryTests: XCTestCase {
     func testIsMainnet() {
         XCTAssertTrue(WalletNetwork.bitcoin.isMainnet)
         XCTAssertFalse(WalletNetwork.signet.isMainnet)
+        // eCash (drynet2) is a TEST chain despite mainnet-style `bc` addresses — must NOT be
+        // treated as mainnet (drives the non-mainnet safety chip, Golden Rule §6).
+        XCTAssertFalse(WalletNetwork.ecash.isMainnet)
+    }
+
+    // MARK: - eCash (drynet2)
+
+    func testEcashParams() {
+        let p = NetworkRegistry.params(for: .ecash)
+        // Byte-identical to Bitcoin: coin-type 0', `bc` HRP. Unit label is ECX.
+        XCTAssertEqual(p.coinType, Int32(0))
+        XCTAssertEqual(p.addressHRP, "bc")
+        XCTAssertEqual(p.unitLabel, "ECX")
+        XCTAssertEqual(p.displayName, "Drynet2")
+    }
+
+    func testEcashDefaultBackendIsEsploraAtRootPath() {
+        let p = NetworkRegistry.params(for: .ecash)
+        // Default backend is the public Esplora (mempool-electrs). The wallet must default to the
+        // esplora kind (not electrum), and the URL must NOT carry an `/api` suffix — this instance
+        // serves the REST API at the root path (verified live). A trailing `/api` would 404 BDK.
+        XCTAssertEqual(p.defaultBackend, "https://esplora.drynet2.drivechain.dev")
+        XCTAssertEqual(p.defaultBackendKind, "esplora")
+        XCTAssertTrue(p.defaultBackend.hasPrefix("https://"))
+        XCTAssertFalse(p.defaultBackend.hasSuffix("/api"))
+    }
+
+    func testEcashExplorerSubstitutesTxid() {
+        let url = NetworkRegistry.explorerURL(for: "abc123", on: .ecash)
+        XCTAssertEqual(url, "https://explorer.drynet2.drivechain.dev/tx/abc123")
+        XCTAssertFalse(url.contains("{txid}"))
+    }
+
+    /// eCash shares Bitcoin's derivation/addressing (it IS a Bitcoin hardfork) — same coin-type and
+    /// HRP — and is separated ONLY by its backend endpoint. This invariant is what lets it map to
+    /// BDK `Network.bitcoin`; if it ever drifts, the mapping in `BDKSeam` must be revisited.
+    func testEcashIsByteIdenticalToBitcoinButDiffersByBackend() {
+        let btc = NetworkRegistry.params(for: .bitcoin)
+        let ecx = NetworkRegistry.params(for: .ecash)
+        XCTAssertEqual(ecx.coinType, btc.coinType)
+        XCTAssertEqual(ecx.addressHRP, btc.addressHRP)
+        XCTAssertNotEqual(ecx.defaultBackend, btc.defaultBackend)
+    }
+
+    /// The BIP84 account path for an eCash wallet must be the mainnet-coin-type path `m/84'/0'/0'`
+    /// (same as Bitcoin) — a true dry-run of eCash mainnet derivation.
+    func testEcashDescriptorPathUsesCoinTypeZero() {
+        // Spell the enum type explicitly — Skip's transpiler can't infer the owning type for a
+        // bare `.ecash` here (internal `Descriptors` helper).
+        XCTAssertEqual(Descriptors.accountPath(for: WalletNetwork.ecash), "m/84'/0'/0'")
+        XCTAssertEqual(Descriptors.accountPath(for: WalletNetwork.ecash),
+                       Descriptors.accountPath(for: WalletNetwork.bitcoin))
     }
 }

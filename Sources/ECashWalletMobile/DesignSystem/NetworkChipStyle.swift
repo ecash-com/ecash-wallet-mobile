@@ -23,7 +23,14 @@ struct NetworkChipStyle {
         case .signet:
             return NetworkChipStyle(background: Theme.Colors.netTestnet,
                                     foreground: Theme.Colors.netTestnetText)
-        // Future: case .ecashMainnet: netEcash; case .ecashTestnet: netEcashTest
+        case .ecash:
+            // eCash (drynet2) wears the eCash BRAND orange (`netEcash` = the amber accent) — this is
+            // the flagship network of the eCash wallet. NOTE: its `bc1…` addresses are byte-identical
+            // to real Bitcoin mainnet, so this amber MUST stay visually distinct from Bitcoin's
+            // `netMainnet` orange (#F7931A vs #E8A84A) — the chip is the primary safety cue (Golden
+            // Rule §6). Dark `accentText` for legible contrast on the amber.
+            return NetworkChipStyle(background: Theme.Colors.netEcash,
+                                    foreground: Theme.Colors.accentText)
         }
     }
 }

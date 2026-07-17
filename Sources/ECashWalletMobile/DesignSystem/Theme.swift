@@ -47,13 +47,15 @@ enum Theme {
         static let negativeTint = Color("negativeTint", bundle: .module)
         static let warningTint = Color("warningTint", bundle: .module)
 
-        // Network identity — NEVER reuse the brand orange for any network other than mainnet.
-        static let netMainnet = Color("netMainnet", bundle: .module) // Bitcoin (mainnet is otherwise unmarked)
+        // Network identity. Bitcoin mainnet = its own orange; eCash = the brand amber; testnets =
+        // violet. These MUST stay mutually distinguishable — eCash's amber and Bitcoin's orange in
+        // particular, since eCash uses byte-identical `bc` addresses (Golden Rule §6).
+        static let netMainnet = Color("netMainnet", bundle: .module) // Bitcoin orange #F7931A
         static let netMainnetText = Color("netMainnetText", bundle: .module)
         static let netTestnet = Color("netTestnet", bundle: .module) // high-contrast violet
         static let netTestnetText = Color("netTestnetText", bundle: .module)
-        // Reserved for after the hardfork (block 964,000):
-        static let netEcash = Color("netEcash", bundle: .module) // placeholder = amber
+        // eCash network chip = the eCash brand amber (== accent); dark text via accentText.
+        static let netEcash = Color("netEcash", bundle: .module) // eCash amber #E8A84A
         static let netEcashTest = Color("netEcashTest", bundle: .module)
     }
 

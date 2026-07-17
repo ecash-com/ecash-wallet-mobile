@@ -186,23 +186,42 @@ public final class WalletManager: @unchecked Sendable {
     private static let proxyKey = "backend.socks5"
     private func kindKey(_ n: WalletNetwork) -> String { "backend.\(n.rawValue).kind" }
     private func urlKey(_ n: WalletNetwork) -> String { "backend.\(n.rawValue).url" }
+    // Remote (fetched) per-network defaults — last-known-good from the endpoints config service.
+    // A SEPARATE namespace from the user override above, so it slots BELOW the user's choice and
+    // ABOVE the bundled default without ever masquerading as a user override in Settings. Persisted
+    // so a cold, offline launch still uses the last-known-good remote endpoint (falls back to the
+    // bundled default only if the config has never been fetched). See RemoteEndpointConfig.
+    private func remoteKindKey(_ n: WalletNetwork) -> String { "backend.remote.\(n.rawValue).kind" }
+    private func remoteUrlKey(_ n: WalletNetwork) -> String { "backend.remote.\(n.rawValue).url" }
 
     private func trimmedOrNil(_ s: String?) -> String? {
         guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
         return s
     }
 
-    /// The effective backend for a network: user override if set, else the registry default
-    /// (Electrum); the global SOCKS5 proxy is applied on top. Used when building an engine.
+    /// The effective backend for a network, in precedence order (highest first):
+    ///   1. **user override** (Settings) — the user's explicit choice always wins;
+    ///   2. **remote default** — last-known-good from the fetched endpoints config;
+    ///   3. **bundled default** — the compiled `NetworkRegistry` value (offline-safe fallback).
+    /// The global SOCKS5 proxy is applied on top of whichever wins. Consensus/derivation params are
+    /// never involved here — only the backend URL/kind is remote-configurable (Golden Rule §1/§4).
     func resolvedBackend(for network: WalletNetwork) -> WalletBackend {
         let defaults = UserDefaults.standard
         let proxy = trimmedOrNil(defaults.string(forKey: Self.proxyKey))
+        // 1. User override.
         if let url = trimmedOrNil(defaults.string(forKey: urlKey(network))),
            let kind = WalletBackend.Kind(rawValue: defaults.string(forKey: kindKey(network)) ?? "") {
             return WalletBackend(kind: kind, url: url, socks5: proxy)
         }
-        let defaultURL = NetworkRegistry.params(for: network).defaultBackend
-        return WalletBackend(kind: .electrum, url: defaultURL, socks5: proxy)
+        // 2. Remote default (last-known-good).
+        if let url = trimmedOrNil(defaults.string(forKey: remoteUrlKey(network))),
+           let kind = WalletBackend.Kind(rawValue: defaults.string(forKey: remoteKindKey(network)) ?? "") {
+            return WalletBackend(kind: kind, url: url, socks5: proxy)
+        }
+        // 3. Bundled default.
+        let params = NetworkRegistry.params(for: network)
+        let defaultKind = WalletBackend.Kind(rawValue: params.defaultBackendKind) ?? .electrum
+        return WalletBackend(kind: defaultKind, url: params.defaultBackend, socks5: proxy)
     }
 
     /// Set a per-network custom endpoint. `kind` is `"electrum"`/`"esplora"`.
@@ -218,6 +237,34 @@ public final class WalletManager: @unchecked Sendable {
         let defaults = UserDefaults.standard
         defaults.removeObject(forKey: kindKey(network))
         defaults.removeObject(forKey: urlKey(network))
+        engines.removeAll()
+    }
+
+    /// Apply a **remote** per-network default from the fetched endpoints config. Precedence-wise this
+    /// sits below any user override and above the bundled default (see `resolvedBackend`). `kind` must
+    /// be `"electrum"`/`"esplora"` and `url` non-empty, else the call is a safe no-op (a malformed
+    /// remote entry can never corrupt resolution — it just leaves the prior value in place). Engines
+    /// are evicted ONLY when the value actually changes, so a routine re-fetch of unchanged config
+    /// doesn't force a needless re-sync. Bridge-safe primitives (no `WalletBackend` on the JNI surface).
+    public func setRemoteBackendDefault(network: WalletNetwork, kind: String, url: String) {
+        guard WalletBackend.Kind(rawValue: kind) != nil, let cleanURL = trimmedOrNil(url) else { return }
+        let defaults = UserDefaults.standard
+        let changed = defaults.string(forKey: remoteUrlKey(network)) != cleanURL
+            || defaults.string(forKey: remoteKindKey(network)) != kind
+        guard changed else { return }
+        defaults.set(kind, forKey: remoteKindKey(network))
+        defaults.set(cleanURL, forKey: remoteUrlKey(network))
+        engines.removeAll()   // next sync rebuilds against the new endpoint
+    }
+
+    /// Clear all remote defaults (revert every network to user-override-or-bundled). Not needed in
+    /// normal operation — exposed for a full reset / tests.
+    public func clearRemoteBackendDefaults() {
+        let defaults = UserDefaults.standard
+        for network in WalletNetwork.allCases {
+            defaults.removeObject(forKey: remoteKindKey(network))
+            defaults.removeObject(forKey: remoteUrlKey(network))
+        }
         engines.removeAll()
     }
 

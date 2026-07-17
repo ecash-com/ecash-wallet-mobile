@@ -1,0 +1,19 @@
+{
+  "hosting": {
+    "public": "public",
+    "ignore": [
+      "firebase.json",
+      "**/.*",
+      "**/node_modules/**"
+    ],
+    "headers": [
+      {
+        "//": "Endpoints config: cache modestly so a rotated backend propagates within minutes. max-age = client/browser cache, s-maxage = Firebase CDN edge cache. Keep in sync with refresh_after_seconds in the payload.",
+        "source": "/wallet-endpoints/**",
+        "headers": [
+          { "key": "Cache-Control", "value": "public, max-age=300, s-maxage=600" }
+        ]
+      }
+    ]
+  }
+}

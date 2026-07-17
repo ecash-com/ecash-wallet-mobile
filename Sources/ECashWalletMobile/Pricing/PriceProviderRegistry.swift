@@ -16,7 +16,10 @@ enum PriceProviderRegistry {
             return BitfinexPriceProvider()
         case .signet:
             return nil
-        // Future: case .ecashMainnet: return <eCash price provider>
+        case .ecash:
+            // eCash (drynet2) dry-run coins have no fiat value — no provider (no fiat line).
+            // When real eCash has a market, add its provider here.
+            return nil
         }
     }
 

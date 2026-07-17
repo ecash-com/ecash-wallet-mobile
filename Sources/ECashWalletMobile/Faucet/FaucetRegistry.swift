@@ -24,6 +24,12 @@ enum FaucetRegistry {
     }
 
     static func config(for network: WalletNetwork) -> Config? {
+        // Remote overlay wins over the bundled default — lets a drynet2/eCash faucet be turned on (or
+        // repointed / retuned) from the config with no app update; the home "Get coins" button then
+        // appears on its own (faucetAvailable recomputes on state change).
+        if let remote = RemoteServiceOverrides.faucet(for: network) {
+            return Config(endpoint: remote.url, amount: remote.amount, cooldown: remote.cooldown)
+        }
         switch network {
         case .signet:
             // L2L drivechain signet faucet (ConnectRPC unary, HTTP+JSON — same transport as CoinNews).
@@ -32,6 +38,10 @@ enum FaucetRegistry {
             return Config(endpoint: url, amount: 3, cooldown: 3600)   // ← amount + cooldown (1h) here
         case .bitcoin:
             return nil   // no faucet on real money
+        case .ecash:
+            // eCash (drynet2): no faucet endpoint verified yet. Wire it here (endpoint + amount +
+            // cooldown) once the drynet2 faucet is confirmed reachable.
+            return nil
         }
     }
 

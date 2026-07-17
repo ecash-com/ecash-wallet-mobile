@@ -14,8 +14,13 @@ import WalletService
 enum CoinNewsAvailability {
     static func isAvailable(on network: WalletNetwork) -> Bool {
         switch network {
-        case .bitcoin: return false          // no CoinNews on Bitcoin mainnet
+        case .bitcoin: return false          // deliberate: no CoinNews on Bitcoin mainnet, ever
         case .signet: return true
+        case .ecash:
+            // eCash (drynet2): available exactly when an indexer endpoint resolves — i.e. once the
+            // remote config supplies a coinnews URL (RemoteServiceOverlay), the News tab appears on
+            // its own with no app update. Nil today → hidden.
+            return CoinNewsEndpointRegistry.publicEndpoint(for: .ecash) != nil
         }
     }
 }
