@@ -69,6 +69,12 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         let cooldownSeconds: Int?
     }
 
+    /// An explorer tx-URL template resolved to a known `WalletNetwork`.
+    struct ResolvedExplorer: Equatable, Sendable {
+        let network: WalletNetwork
+        let txTemplate: String
+    }
+
     // MARK: - Parsing
 
     /// Decode a payload. Returns `nil` on malformed JSON or a schema this app doesn't support —
@@ -126,6 +132,19 @@ struct RemoteEndpointConfig: Equatable, Sendable {
                                          url: url,
                                          amount: network.services?.faucet?.amount,
                                          cooldownSeconds: network.services?.faucet?.cooldownSeconds))
+        }
+        return result.sorted { $0.network.rawValue < $1.network.rawValue }
+    }
+
+    /// Explorer tx-URL template per **known** network that supplies a non-empty, `{txid}`-bearing
+    /// `explorer_tx_template`. A template without the `{txid}` placeholder is rejected (it couldn't
+    /// produce a real link).
+    func resolvedExplorers() -> [ResolvedExplorer] {
+        var result: [ResolvedExplorer] = []
+        for (key, network) in networks {
+            guard let walletNetwork = WalletNetwork(rawValue: key) else { continue }
+            guard let template = Self.cleaned(network.explorerTxTemplate), template.contains("{txid}") else { continue }
+            result.append(ResolvedExplorer(network: walletNetwork, txTemplate: template))
         }
         return result.sorted { $0.network.rawValue < $1.network.rawValue }
     }

@@ -1,5 +1,5 @@
 {
-  "_readme": "eCash.com Wallet backend-endpoint config. Carries ROTATABLE, non-consensus data ONLY (backend URLs, explorer/faucet/coinnews URLs, soft min-version). Consensus/derivation params (coin-type, address HRP, unit label, network magic) live in the app's compiled NetworkRegistry and are NEVER read from here. Networks are keyed by WalletNetwork rawValue. The app treats this as advisory and falls back to bundled defaults if the fetch fails or the schema is unknown; a user's per-network Settings override wins over everything.",
+  "_readme": "eCash.com Wallet backend-endpoint config. Carries ROTATABLE, non-consensus data ONLY (backend URLs, explorer tx-URL templates, faucet/coinnews service URLs). Consensus/derivation params (coin-type, address HRP, unit label, network magic) live in the app's compiled NetworkRegistry and are NEVER read from here. Networks are keyed by WalletNetwork rawValue. The app treats this as advisory and falls back to bundled defaults if the fetch fails or the schema is unknown; a user's per-network Settings override wins over everything.",
 
   "schema_version": 1,
   "generated_at": "2026-07-17T00:00:00Z",

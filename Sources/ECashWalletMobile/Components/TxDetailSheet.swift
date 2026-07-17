@@ -264,7 +264,7 @@ struct TxDetailSheet: View {
 
     @ViewBuilder
     private var explorerButton: some View {
-        if let url = URL(string: NetworkRegistry.explorerURL(for: tx.txid, on: network)) {
+        if let url = URL(string: RemoteServiceOverrides.explorerURL(for: tx.txid, on: network)) {
             Link(destination: url) {
                 HStack(spacing: Theme.Space.x2) {
                     Text("View on block explorer", bundle: .module, comment: "tx detail: open block explorer")

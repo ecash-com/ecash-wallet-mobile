@@ -179,8 +179,12 @@ final class AppState {
     /// Fetch the remote endpoints config and apply each per-network backend into the manager. Purely
     /// additive over the bundled defaults, and fail-safe (see `RemoteEndpointConfigService`). The
     /// off-actor fetch returns a plain value; the apply runs here on the main actor.
-    func refreshRemoteEndpoints() async {
+    func refreshRemoteEndpoints(force: Bool = false) async {
+        // Throttle: skip if a fetch isn't due yet (honors the payload's refresh_after_seconds). The
+        // app calls this on launch AND every foreground resume, so this keeps frequent resumes cheap.
+        guard force || RemoteConfigRefreshPolicy.isDue() else { return }
         guard let config = await RemoteEndpointConfigService().load() else { return }
+        RemoteConfigRefreshPolicy.recordFetch(interval: config.refreshAfterSeconds)
         // Backends → WalletManager (user Settings override still wins; see resolvedBackend).
         for backend in config.resolvedPrimaryBackends() {
             manager.setRemoteBackendDefault(network: backend.network, kind: backend.kind, url: backend.url)
@@ -193,6 +197,9 @@ final class AppState {
         for f in config.resolvedFaucets() {
             RemoteServiceOverrides.setFaucet(url: f.url, amount: f.amount,
                                              cooldownSeconds: f.cooldownSeconds, for: f.network)
+        }
+        for e in config.resolvedExplorers() {
+            RemoteServiceOverrides.setExplorerTemplate(e.txTemplate, for: e.network)
         }
         // A new/changed CoinNews endpoint means the cached feed for that network is stale — drop it so
         // it rebuilds against the new indexer, and re-point the visible feed if it's the current one.

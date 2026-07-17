@@ -22,6 +22,7 @@ enum RemoteServiceOverrides {
     private static func faucetURLKey(_ n: WalletNetwork) -> String { "remote.svc.faucet.\(n.rawValue).url" }
     private static func faucetAmountKey(_ n: WalletNetwork) -> String { "remote.svc.faucet.\(n.rawValue).amount" }
     private static func faucetCooldownKey(_ n: WalletNetwork) -> String { "remote.svc.faucet.\(n.rawValue).cooldown" }
+    private static func explorerKey(_ n: WalletNetwork) -> String { "remote.svc.explorer.\(n.rawValue).template" }
 
     private static func trimmedOrNil(_ s: String?) -> String? {
         guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
@@ -47,6 +48,15 @@ enum RemoteServiceOverrides {
         return (url, amount, cooldown)
     }
 
+    /// Resolve the explorer tx URL for a network: the remote overlay template if one is stored, else
+    /// the bundled `NetworkRegistry` template. `{txid}` is substituted in either case.
+    static func explorerURL(for txid: String, on network: WalletNetwork) -> String {
+        if let template = trimmedOrNil(defaults.string(forKey: explorerKey(network))) {
+            return template.replacingOccurrences(of: "{txid}", with: txid)
+        }
+        return NetworkRegistry.explorerURL(for: txid, on: network)
+    }
+
     // MARK: - Write (applied from the fetched config)
 
     /// Set/replace the remote CoinNews URL for a network. Returns true if the stored value changed
@@ -66,6 +76,12 @@ enum RemoteServiceOverrides {
         if let cooldownSeconds { defaults.set(Double(cooldownSeconds), forKey: faucetCooldownKey(network)) }
     }
 
+    /// Set/replace the remote explorer tx-URL template for a network (must contain `{txid}`).
+    static func setExplorerTemplate(_ template: String, for network: WalletNetwork) {
+        guard let clean = trimmedOrNil(template), clean.contains("{txid}") else { return }
+        defaults.set(clean, forKey: explorerKey(network))
+    }
+
     /// Clear all stored service overlays (full reset / tests).
     static func clearAll() {
         for n in WalletNetwork.allCases {
@@ -73,6 +89,7 @@ enum RemoteServiceOverrides {
             defaults.removeObject(forKey: faucetURLKey(n))
             defaults.removeObject(forKey: faucetAmountKey(n))
             defaults.removeObject(forKey: faucetCooldownKey(n))
+            defaults.removeObject(forKey: explorerKey(n))
         }
     }
 }

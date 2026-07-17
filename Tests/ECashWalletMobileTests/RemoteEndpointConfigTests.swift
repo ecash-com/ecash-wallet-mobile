@@ -178,6 +178,75 @@ import WalletService
         #expect(RemoteServiceOverrides.setCoinNewsURL("https://coinnews.drynet2.example", for: WalletNetwork.ecash) == false)
     }
 
+    // MARK: - Explorer overlay
+
+    @Test func resolvesExplorerTemplates() {
+        let config = RemoteEndpointConfig.parse(data(Self.validJSON))!
+        let explorers = config.resolvedExplorers()
+        // bitcoin + ecash carry explorer templates in the fixture; signet does not.
+        #expect(explorers.count == 2)
+        #expect(explorers.first { $0.network == WalletNetwork.ecash }?.txTemplate
+                == "https://explorer.drynet2.drivechain.dev/tx/{txid}")
+    }
+
+    @Test func rejectsExplorerTemplateWithoutTxidPlaceholder() {
+        let json = """
+        { "schema_version": 1, "networks": { "ecash": { "explorer_tx_template": "https://x.example/nope" } } }
+        """
+        #expect(RemoteEndpointConfig.parse(data(json))!.resolvedExplorers().isEmpty)
+    }
+
+    @Test func explorerOverlayBeatsBundledElseFallsBack() {
+        RemoteServiceOverrides.clearAll()
+        defer { RemoteServiceOverrides.clearAll() }
+
+        // No overlay → bundled NetworkRegistry template.
+        #expect(RemoteServiceOverrides.explorerURL(for: "abc", on: WalletNetwork.ecash)
+                == "https://explorer.drynet2.drivechain.dev/tx/abc")
+
+        // Overlay wins and substitutes {txid}.
+        RemoteServiceOverrides.setExplorerTemplate("https://scan.example/t/{txid}", for: WalletNetwork.ecash)
+        #expect(RemoteServiceOverrides.explorerURL(for: "abc", on: WalletNetwork.ecash)
+                == "https://scan.example/t/abc")
+
+        // A template missing {txid} is ignored (bundled remains).
+        RemoteServiceOverrides.clearAll()
+        RemoteServiceOverrides.setExplorerTemplate("https://scan.example/no-placeholder", for: WalletNetwork.ecash)
+        #expect(RemoteServiceOverrides.explorerURL(for: "abc", on: WalletNetwork.ecash)
+                == "https://explorer.drynet2.drivechain.dev/tx/abc")
+    }
+
+    // MARK: - Refresh throttle
+
+    @Test func throttleIsDueWhenNeverFetchedThenNotUntilIntervalElapses() {
+        let suite = "test.remoteconfig.throttle"
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        defer { d.removePersistentDomain(forName: suite) }
+
+        let t0 = Date(timeIntervalSince1970: 1_000_000)
+        // Never fetched → due.
+        #expect(RemoteConfigRefreshPolicy.isDue(now: t0, defaults: d) == true)
+
+        // Record a fetch with a 600s interval → not due 5 min later, due 11 min later.
+        RemoteConfigRefreshPolicy.recordFetch(interval: 600, now: t0, defaults: d)
+        #expect(RemoteConfigRefreshPolicy.isDue(now: t0.addingTimeInterval(300), defaults: d) == false)
+        #expect(RemoteConfigRefreshPolicy.isDue(now: t0.addingTimeInterval(660), defaults: d) == true)
+    }
+
+    @Test func throttleClampsTinyIntervalToFloor() {
+        let suite = "test.remoteconfig.throttle.floor"
+        let d = UserDefaults(suiteName: suite)!
+        d.removePersistentDomain(forName: suite)
+        defer { d.removePersistentDomain(forName: suite) }
+
+        let t0 = Date(timeIntervalSince1970: 2_000_000)
+        // A server value of 0 must not cause fetch-every-resume — clamp to the 60s floor.
+        RemoteConfigRefreshPolicy.recordFetch(interval: 0, now: t0, defaults: d)
+        #expect(RemoteConfigRefreshPolicy.isDue(now: t0.addingTimeInterval(30), defaults: d) == false)
+        #expect(RemoteConfigRefreshPolicy.isDue(now: t0.addingTimeInterval(90), defaults: d) == true)
+    }
+
     // MARK: - Service (fail-safe fetch)
 
     @Test func serviceLoadsAndResolves() async {
