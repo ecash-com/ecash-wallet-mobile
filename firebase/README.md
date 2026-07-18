@@ -1,5 +1,13 @@
 # Firebase Hosting — wallet backend-endpoint config
 
+> ⚠️ **SUPERSEDED — scheduled for removal.** The app now reads its network config from the
+> L2L-hosted **`https://drivechain.dev/config`** (a different, array-based schema — see
+> `Sources/ECashWalletMobile/Config/RemoteEndpointConfig.swift`). Nothing consumes this Firebase
+> deployment or its `public/wallet-endpoints/v1.json` (still the old object schema) anymore. Kept
+> for now as a reference/backup; **remove this `firebase/` folder and delete the `ecash-wallet-3b5c9`
+> Hosting site when convenient.** Do not edit `v1.json` expecting it to affect the app.
+
+
 This folder hosts a small **static JSON** that tells the eCash.com Wallet app which
 Electrum/Esplora backends (and explorer/faucet/CoinNews URLs) to use per network. Hosting it
 remotely lets us **rotate an endpoint without shipping an app update**.

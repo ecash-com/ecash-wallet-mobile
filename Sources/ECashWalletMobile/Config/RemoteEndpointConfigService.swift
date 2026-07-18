@@ -17,9 +17,9 @@ import FoundationNetworking   // URLSession lives here on Android/Linux Foundati
 ///
 /// Only backend URLs/kinds are applied — never consensus/derivation params (Golden Rule §1/§4).
 struct RemoteEndpointConfigService {
-    /// Production config URL (Firebase Hosting; see `firebase/README.md`). Overridable for dev via
-    /// the `WALLET_ENDPOINTS_URL` env var (mirrors the CoinNews dev-endpoint override).
-    static let productionURL = "https://ecash-wallet-3b5c9.web.app/wallet-endpoints/v1.json"
+    /// Production config URL — the L2L-hosted network config. Overridable for dev via the
+    /// `WALLET_ENDPOINTS_URL` env var (mirrors the CoinNews dev-endpoint override).
+    static let productionURL = "https://drivechain.dev/config"
 
     let url: URL
     private let fetch: @Sendable (URL) async throws -> Data

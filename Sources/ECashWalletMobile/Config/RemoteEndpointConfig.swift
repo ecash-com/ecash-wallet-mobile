@@ -5,26 +5,42 @@
 import Foundation
 import WalletService
 
-/// The decoded `wallet-endpoints/v1.json` payload (see `firebase/README.md`).
+/// The decoded network-config payload served from `https://drivechain.dev/config`
+/// (`RemoteEndpointConfigService`).
 ///
-/// This carries **rotatable, non-consensus data only** — backend endpoints (and, later,
-/// explorer/faucet/CoinNews URLs). Consensus/derivation params (coin-type, HRP, unit label,
-/// network magic) are NEVER read from here; they stay in the app's compiled `NetworkRegistry`
-/// (Golden Rule §1/§4). Decoding is lenient: unknown fields and unknown networks are ignored, so a
-/// newer server payload never breaks an older app — and any decode failure yields `nil`, which the
-/// caller treats as "keep the last-known-good / bundled endpoints" (graceful fallback).
+/// This carries **rotatable, non-consensus data only** — backend endpoints, explorer tx-URL
+/// templates, and faucet/CoinNews service URLs. Consensus/derivation params (coin-type, HRP, unit
+/// label, network magic) are NEVER read from here; they stay in the app's compiled `NetworkRegistry`
+/// (Golden Rule §1/§4). The payload's richer metadata (`currency`, `chain`, `display_name`,
+/// address/block explorer templates) is intentionally **ignored** — decoding is lenient so extra
+/// fields never break an older app, and any decode failure yields `nil`, which the caller treats as
+/// "keep the last-known-good / bundled endpoints" (graceful fallback).
+///
+/// **Network identity:** `networks` is an ARRAY; each entry is mapped to one of our `WalletNetwork`
+/// cases by its **`family`** (`bitcoin`/`signet`/`ecash`), which matches our `WalletNetwork`
+/// rawValues. `family` (not `id`) is the join key on purpose: the eCash network's `id` is `drynet2`
+/// today and will change when real eCash mainnet lands, but its `family` stays `ecash` → `.ecash`.
+/// Entries whose `family` isn't a known `WalletNetwork` are skipped (forward-compat).
 struct RemoteEndpointConfig: Equatable, Sendable {
     /// The schema this app understands. A payload with a different `schemaVersion` is ignored.
     static let supportedSchemaVersion = 1
 
     let schemaVersion: Int
     let refreshAfterSeconds: Int?
-    let networks: [String: RemoteNetwork]
+    let networks: [RemoteNetwork]
 
     struct RemoteNetwork: Equatable, Sendable {
+        let id: String?
+        let family: String?
         let backends: [RemoteBackend]
         let explorerTxTemplate: String?
         let services: RemoteServices?
+
+        /// The `WalletNetwork` this entry maps to (by `family`), or nil if unknown to this app.
+        var walletNetwork: WalletNetwork? {
+            guard let family else { return nil }
+            return WalletNetwork(rawValue: family)
+        }
     }
 
     struct RemoteBackend: Equatable, Sendable {
@@ -88,16 +104,20 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     }
 
     // MARK: - Resolution
+    //
+    // Each resolver maps entries to a `WalletNetwork` by `family` (see type doc), skips unknown
+    // networks, and returns a deterministic order (by rawValue). If the same family ever appears
+    // twice, the FIRST entry in array order wins (a `seen` guard) — today there is one per family.
 
-    /// The primary backend per **known** `WalletNetwork`, ready to apply as remote defaults.
-    /// - Network keys the app doesn't recognize are skipped (forward-compat).
+    /// The primary backend per **known** `WalletNetwork`.
     /// - Within a network, the lowest-`priority` backend with a valid kind + non-empty URL wins.
     /// - Only `electrum`/`esplora` kinds are accepted; anything else is ignored so a typo in the
     ///   config can never produce an unusable backend.
     func resolvedPrimaryBackends() -> [ResolvedBackend] {
         var result: [ResolvedBackend] = []
-        for (key, network) in networks {
-            guard let walletNetwork = WalletNetwork(rawValue: key) else { continue } // unknown → skip
+        var seen: Set<String> = []
+        for network in networks {
+            guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
             let candidates = network.backends
                 .filter { Self.isValidKind($0.kind) && !$0.url.trimmingCharacters(in: .whitespaces).isEmpty }
                 .sorted { ($0.priority ?? Int.max) < ($1.priority ?? Int.max) }
@@ -106,16 +126,15 @@ struct RemoteEndpointConfig: Equatable, Sendable {
                                           kind: best.kind,
                                           url: best.url.trimmingCharacters(in: .whitespaces)))
         }
-        // Deterministic order (by rawValue) so callers/tests don't depend on dictionary iteration.
         return result.sorted { $0.network.rawValue < $1.network.rawValue }
     }
 
     /// CoinNews indexer URL per **known** network that supplies a non-empty `services.coinnews.url`.
-    /// Unknown networks and empty/missing URLs are skipped. Deterministic order by rawValue.
     func resolvedCoinNews() -> [ResolvedCoinNews] {
         var result: [ResolvedCoinNews] = []
-        for (key, network) in networks {
-            guard let walletNetwork = WalletNetwork(rawValue: key) else { continue }
+        var seen: Set<String> = []
+        for network in networks {
+            guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
             guard let url = Self.cleaned(network.services?.coinnews?.url) else { continue }
             result.append(ResolvedCoinNews(network: walletNetwork, url: url))
         }
@@ -125,8 +144,9 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     /// Faucet config per **known** network that supplies a non-empty `services.faucet.url`.
     func resolvedFaucets() -> [ResolvedFaucet] {
         var result: [ResolvedFaucet] = []
-        for (key, network) in networks {
-            guard let walletNetwork = WalletNetwork(rawValue: key) else { continue }
+        var seen: Set<String> = []
+        for network in networks {
+            guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
             guard let url = Self.cleaned(network.services?.faucet?.url) else { continue }
             result.append(ResolvedFaucet(network: walletNetwork,
                                          url: url,
@@ -137,12 +157,12 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     }
 
     /// Explorer tx-URL template per **known** network that supplies a non-empty, `{txid}`-bearing
-    /// `explorer_tx_template`. A template without the `{txid}` placeholder is rejected (it couldn't
-    /// produce a real link).
+    /// `explorer_tx_template`. A template without the `{txid}` placeholder is rejected.
     func resolvedExplorers() -> [ResolvedExplorer] {
         var result: [ResolvedExplorer] = []
-        for (key, network) in networks {
-            guard let walletNetwork = WalletNetwork(rawValue: key) else { continue }
+        var seen: Set<String> = []
+        for network in networks {
+            guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
             guard let template = Self.cleaned(network.explorerTxTemplate), template.contains("{txid}") else { continue }
             result.append(ResolvedExplorer(network: walletNetwork, txTemplate: template))
         }
@@ -160,7 +180,7 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     }
 }
 
-// MARK: - Codable (snake_case ↔ camelCase via explicit keys; extras ignored)
+// MARK: - Codable (snake_case ↔ camelCase via explicit keys; unknown fields ignored)
 
 extension RemoteEndpointConfig: Decodable {
     enum CodingKeys: String, CodingKey {
@@ -172,13 +192,14 @@ extension RemoteEndpointConfig: Decodable {
 
 extension RemoteEndpointConfig.RemoteNetwork: Decodable {
     enum CodingKeys: String, CodingKey {
-        case backends
+        case id, family, backends, services
         case explorerTxTemplate = "explorer_tx_template"
-        case services
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.id = try? c.decodeIfPresent(String.self, forKey: .id)
+        self.family = try? c.decodeIfPresent(String.self, forKey: .family)
         // `backends` may be absent for a network that only lists services — default to empty.
         self.backends = (try? c.decode([RemoteEndpointConfig.RemoteBackend].self, forKey: .backends)) ?? []
         self.explorerTxTemplate = try? c.decodeIfPresent(String.self, forKey: .explorerTxTemplate)

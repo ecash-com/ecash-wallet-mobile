@@ -7,24 +7,30 @@ import Testing
 import WalletService
 @testable import ECashWalletMobile
 
-/// Parsing + resolution of the remote `wallet-endpoints/v1.json` config, and the fail-safe fetch
-/// service. All pure/injected — no real network.
-@Suite struct RemoteEndpointConfigTests {
+/// Parsing + resolution of the remote network config (https://drivechain.dev/config), and the
+/// fail-safe fetch service. All pure/injected — no real network. Payload `networks` is an ARRAY,
+/// mapped to `WalletNetwork` by `family` (the eCash entry's id is `drynet2`, family `ecash`).
+///
+/// `.serialized`: several tests mutate process-global `UserDefaults.standard` (via
+/// `RemoteServiceOverrides`), so they must not run in parallel or one's `clearAll()` races another.
+@Suite(.serialized) struct RemoteEndpointConfigTests {
 
-    /// A faithful v1 payload (mirrors firebase/public/wallet-endpoints/v1.json), with an extra
-    /// backend + an unknown network to exercise priority selection and forward-compat.
+    /// A faithful payload (mirrors https://drivechain.dev/config), with an extra backend + an
+    /// unknown-family network to exercise priority selection and forward-compat.
     private static let validJSON = """
     {
       "schema_version": 1,
       "refresh_after_seconds": 600,
-      "networks": {
-        "bitcoin": {
+      "networks": [
+        {
+          "id": "bitcoin", "family": "bitcoin",
           "backends": [
             { "kind": "electrum", "url": "ssl://electrum.blockstream.info:50002", "priority": 1 }
           ],
           "explorer_tx_template": "https://mempool.space/tx/{txid}"
         },
-        "ecash": {
+        {
+          "id": "drynet2", "family": "ecash",
           "backends": [
             { "kind": "electrum", "url": "ssl://electrum.drynet2.example:50002", "priority": 2 },
             { "kind": "esplora",  "url": "https://esplora.drynet2.drivechain.dev", "priority": 1 }
@@ -35,10 +41,11 @@ import WalletService
             "coinnews": { "url": "https://coinnews.drynet2.example" }
           }
         },
-        "futurenet": {
+        {
+          "id": "futurenet", "family": "futurefamily",
           "backends": [ { "kind": "esplora", "url": "https://esplora.future.example", "priority": 1 } ]
         }
-      }
+      ]
     }
     """
 
@@ -54,13 +61,50 @@ import WalletService
     }
 
     @Test func rejectsUnsupportedSchema() {
-        let json = #"{ "schema_version": 2, "networks": {} }"#
+        let json = #"{ "schema_version": 2, "networks": [] }"#
         #expect(RemoteEndpointConfig.parse(data(json)) == nil)
     }
 
     @Test func rejectsMalformedJSON() {
         #expect(RemoteEndpointConfig.parse(data("not json at all")) == nil)
         #expect(RemoteEndpointConfig.parse(Data()) == nil)
+    }
+
+    /// The real https://drivechain.dev/config entry carries extra fields we don't consume
+    /// (`family`, `display_name`, `description`, `chain`, `currency`, address/block templates).
+    /// Lenient decoding must ignore them, and the `drynet2`/family-`ecash` entry must map to `.ecash`.
+    @Test func parsesRealEndpointShapeIgnoringExtraFields() {
+        let json = """
+        {
+          "schema_version": 1,
+          "networks": [
+            {
+              "id": "drynet2", "family": "ecash", "display_name": "Drynet 2",
+              "description": "Fork of mainnet with PoW difficulty reset", "chain": "main",
+              "currency": { "name": "eCash", "ticker": "ECX" },
+              "backends": [
+                { "kind": "esplora", "url": "https://esplora.drynet2.drivechain.dev", "priority": 1, "tls": true, "label": "L2L Esplora" },
+                { "kind": "electrum", "url": "ssl://drynet2.drivechain.dev:50012", "priority": 2, "tls": true, "label": "L2L electrs" }
+              ],
+              "explorer_tx_template": "https://explorer.drynet2.drivechain.dev/tx/{txid}",
+              "explorer_address_template": "https://explorer.drynet2.drivechain.dev/address/{address}",
+              "explorer_block_template": "https://explorer.drynet2.drivechain.dev/block/{hash}",
+              "services": { "faucet": { "url": null, "amount": null, "cooldown_seconds": null },
+                            "coinnews": { "url": "https://coinnews.drynet2.drivechain.dev" } }
+            }
+          ]
+        }
+        """
+        let config = RemoteEndpointConfig.parse(data(json))
+        #expect(config != nil)
+        let backends = config?.resolvedPrimaryBackends() ?? []
+        #expect(backends.count == 1)
+        #expect(backends.first?.network == WalletNetwork.ecash)          // family "ecash" → .ecash
+        #expect(backends.first?.kind == "esplora")                       // priority 1 wins
+        #expect(backends.first?.url == "https://esplora.drynet2.drivechain.dev")
+        // coinnews present; faucet is null → not resolved.
+        #expect(config?.resolvedCoinNews().first?.url == "https://coinnews.drynet2.drivechain.dev")
+        #expect(config?.resolvedFaucets().isEmpty == true)
     }
 
     // MARK: - Resolution
@@ -92,11 +136,11 @@ import WalletService
 
     @Test func ignoresBackendsWithInvalidKind() {
         let json = """
-        { "schema_version": 1, "networks": {
-            "ecash": { "backends": [
+        { "schema_version": 1, "networks": [
+            { "family": "ecash", "backends": [
               { "kind": "bogus",   "url": "https://bad.example", "priority": 1 },
               { "kind": "esplora", "url": "https://good.example", "priority": 2 }
-            ] } } }
+            ] } ] }
         """
         let resolved = RemoteEndpointConfig.parse(data(json))!.resolvedPrimaryBackends()
         // The invalid kind is filtered out; the valid (higher-priority-number) one is used instead.
@@ -105,7 +149,7 @@ import WalletService
     }
 
     @Test func networkWithNoValidBackendIsOmitted() {
-        let json = #"{ "schema_version": 1, "networks": { "ecash": { "backends": [] } } }"#
+        let json = #"{ "schema_version": 1, "networks": [ { "family": "ecash", "backends": [] } ] }"#
         #expect(RemoteEndpointConfig.parse(data(json))!.resolvedPrimaryBackends().isEmpty)
     }
 
@@ -137,10 +181,10 @@ import WalletService
 
     @Test func blankServiceURLsAreIgnored() {
         let json = """
-        { "schema_version": 1, "networks": { "ecash": { "services": {
+        { "schema_version": 1, "networks": [ { "family": "ecash", "services": {
             "faucet":   { "url": "  " },
             "coinnews": { "url": "" }
-        } } } }
+        } } ] }
         """
         let config = RemoteEndpointConfig.parse(data(json))!
         #expect(config.resolvedCoinNews().isEmpty)
@@ -191,7 +235,7 @@ import WalletService
 
     @Test func rejectsExplorerTemplateWithoutTxidPlaceholder() {
         let json = """
-        { "schema_version": 1, "networks": { "ecash": { "explorer_tx_template": "https://x.example/nope" } } }
+        { "schema_version": 1, "networks": [ { "family": "ecash", "explorer_tx_template": "https://x.example/nope" } ] }
         """
         #expect(RemoteEndpointConfig.parse(data(json))!.resolvedExplorers().isEmpty)
     }
