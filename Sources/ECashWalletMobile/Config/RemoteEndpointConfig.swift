@@ -17,10 +17,12 @@ import WalletService
 /// "keep the last-known-good / bundled endpoints" (graceful fallback).
 ///
 /// **Network identity:** `networks` is an ARRAY; each entry is mapped to one of our `WalletNetwork`
-/// cases by its **`family`** (`bitcoin`/`signet`/`ecash`), which matches our `WalletNetwork`
-/// rawValues. `family` (not `id`) is the join key on purpose: the eCash network's `id` is `drynet2`
-/// today and will change when real eCash mainnet lands, but its `family` stays `ecash` → `.ecash`.
-/// Entries whose `family` isn't a known `WalletNetwork` are skipped (forward-compat).
+/// cases by its **`id`** (`bitcoin`/`signet`/`drynet2`). We map by `id`, NOT `family`, because
+/// `family` is a chain *category*, not a network — both Bitcoin mainnet and Signet report
+/// `family: "bitcoin"` (changed server-side 2026-07-19), so it can't identify a network. `bitcoin`/
+/// `signet` ids match our rawValues directly; the eCash test net's id is `drynet2` today (aliased to
+/// `.ecash`) and will map straight through if it's ever renamed `ecash`. Unknown ids are skipped
+/// (forward-compat).
 struct RemoteEndpointConfig: Equatable, Sendable {
     /// The schema this app understands. A payload with a different `schemaVersion` is ignored.
     static let supportedSchemaVersion = 1
@@ -36,10 +38,16 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         let explorerTxTemplate: String?
         let services: RemoteServices?
 
-        /// The `WalletNetwork` this entry maps to (by `family`), or nil if unknown to this app.
+        /// The `WalletNetwork` this entry maps to (by `id`), or nil if unknown to this app.
+        /// `bitcoin`/`signet` ids match our rawValues; the eCash test net's id `drynet2` is aliased
+        /// to `.ecash` (a future `ecash` id would map straight through via rawValue).
         var walletNetwork: WalletNetwork? {
-            guard let family else { return nil }
-            return WalletNetwork(rawValue: family)
+            guard let id else { return nil }
+            if let known = WalletNetwork(rawValue: id) { return known }
+            switch id {
+            case "drynet2": return .ecash
+            default: return nil
+            }
         }
     }
 
@@ -110,7 +118,9 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     // twice, the FIRST entry in array order wins (a `seen` guard) — today there is one per family.
 
     /// The primary backend per **known** `WalletNetwork`.
-    /// - Within a network, the lowest-`priority` backend with a valid kind + non-empty URL wins.
+    /// - The preferred backend is the lowest `priority`; when `priority` is absent (the server
+    ///   dropped it 2026-07-19), the FIRST valid backend in **array order** wins — ties always
+    ///   break by array position, so selection is deterministic with or without priorities.
     /// - Only `electrum`/`esplora` kinds are accepted; anything else is ignored so a typo in the
     ///   config can never produce an unusable backend.
     func resolvedPrimaryBackends() -> [ResolvedBackend] {
@@ -118,10 +128,14 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         var seen: Set<String> = []
         for network in networks {
             guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
-            let candidates = network.backends
-                .filter { Self.isValidKind($0.kind) && !$0.url.trimmingCharacters(in: .whitespaces).isEmpty }
-                .sorted { ($0.priority ?? Int.max) < ($1.priority ?? Int.max) }
-            guard let best = candidates.first else { continue }
+            let best = network.backends.enumerated()
+                .filter { Self.isValidKind($0.element.kind) && !$0.element.url.trimmingCharacters(in: .whitespaces).isEmpty }
+                .min { lhs, rhs in
+                    let lp = lhs.element.priority ?? Int.max
+                    let rp = rhs.element.priority ?? Int.max
+                    return lp != rp ? lp < rp : lhs.offset < rhs.offset   // tie → array order
+                }?.element
+            guard let best else { continue }
             result.append(ResolvedBackend(network: walletNetwork,
                                           kind: best.kind,
                                           url: best.url.trimmingCharacters(in: .whitespaces)))

@@ -15,8 +15,11 @@ import WalletService
 /// `RemoteServiceOverrides`), so they must not run in parallel or one's `clearAll()` races another.
 @Suite(.serialized) struct RemoteEndpointConfigTests {
 
-    /// A faithful payload (mirrors https://drivechain.dev/config), with an extra backend + an
-    /// unknown-family network to exercise priority selection and forward-compat.
+    /// Mirrors the current https://drivechain.dev/config: an ARRAY of networks mapped by `id`
+    /// (Bitcoin AND Signet both have `family: "bitcoin"` — so family can't identify a network),
+    /// backends WITHOUT `priority` (array order = preference, esplora first), plus additive service
+    /// fields we ignore (`blockbook`/`fast_withdrawal`) and per-network `assumeutxo`. Includes an
+    /// unknown-id network for forward-compat.
     private static let validJSON = """
     {
       "schema_version": 1,
@@ -25,25 +28,37 @@ import WalletService
         {
           "id": "bitcoin", "family": "bitcoin",
           "backends": [
-            { "kind": "electrum", "url": "ssl://electrum.blockstream.info:50002", "priority": 1 }
+            { "kind": "esplora",  "url": "https://esplora.mainnet.example", "tls": true, "label": "L2L Esplora" },
+            { "kind": "electrum", "url": "ssl://electrum.mainnet.example:50002", "tls": true }
           ],
-          "explorer_tx_template": "https://mempool.space/tx/{txid}"
+          "explorer_tx_template": "https://explorer.mainnet.example/tx/{txid}"
+        },
+        {
+          "id": "signet", "family": "bitcoin",
+          "backends": [
+            { "kind": "esplora",  "url": "https://esplora.signet.example", "tls": true },
+            { "kind": "electrum", "url": "ssl://node.signet.example:50002", "tls": true }
+          ],
+          "explorer_tx_template": "https://explorer.signet.example/tx/{txid}"
         },
         {
           "id": "drynet2", "family": "ecash",
           "backends": [
-            { "kind": "electrum", "url": "ssl://electrum.drynet2.example:50002", "priority": 2 },
-            { "kind": "esplora",  "url": "https://esplora.drynet2.drivechain.dev", "priority": 1 }
+            { "kind": "esplora",  "url": "https://esplora.drynet2.drivechain.dev", "tls": true },
+            { "kind": "electrum", "url": "ssl://drynet2.drivechain.dev:50012", "tls": true }
           ],
           "explorer_tx_template": "https://explorer.drynet2.drivechain.dev/tx/{txid}",
           "services": {
             "faucet":   { "url": "https://faucet.drynet2.example", "amount": 5, "cooldown_seconds": 1800 },
-            "coinnews": { "url": "https://coinnews.drynet2.example" }
-          }
+            "coinnews": { "url": "https://coinnews.drynet2.example" },
+            "blockbook": { "url": "https://blockbook.drynet2.example" },
+            "fast_withdrawal": []
+          },
+          "assumeutxo": { "url": "https://x/utxo.dat", "height": 957600, "sha256": "abc", "size_bytes": 123 }
         },
         {
-          "id": "futurenet", "family": "futurefamily",
-          "backends": [ { "kind": "esplora", "url": "https://esplora.future.example", "priority": 1 } ]
+          "id": "futurenet", "family": "future",
+          "backends": [ { "kind": "esplora", "url": "https://esplora.future.example" } ]
         }
       ]
     }
@@ -70,9 +85,9 @@ import WalletService
         #expect(RemoteEndpointConfig.parse(Data()) == nil)
     }
 
-    /// The real https://drivechain.dev/config entry carries extra fields we don't consume
-    /// (`family`, `display_name`, `description`, `chain`, `currency`, address/block templates).
-    /// Lenient decoding must ignore them, and the `drynet2`/family-`ecash` entry must map to `.ecash`.
+    /// A verbatim drynet2 entry from the current https://drivechain.dev/config (no `priority`; with
+    /// `blockbook`/`fast_withdrawal`/`assumeutxo`/`currency`/`chain`/address+block templates). Lenient
+    /// decoding must ignore the extras; the `drynet2` id must map to `.ecash`; esplora (first) wins.
     @Test func parsesRealEndpointShapeIgnoringExtraFields() {
         let json = """
         {
@@ -83,14 +98,18 @@ import WalletService
               "description": "Fork of mainnet with PoW difficulty reset", "chain": "main",
               "currency": { "name": "eCash", "ticker": "ECX" },
               "backends": [
-                { "kind": "esplora", "url": "https://esplora.drynet2.drivechain.dev", "priority": 1, "tls": true, "label": "L2L Esplora" },
-                { "kind": "electrum", "url": "ssl://drynet2.drivechain.dev:50012", "priority": 2, "tls": true, "label": "L2L electrs" }
+                { "kind": "esplora", "url": "https://esplora.drynet2.drivechain.dev", "tls": true, "label": "L2L Esplora" },
+                { "kind": "electrum", "url": "ssl://drynet2.drivechain.dev:50012", "tls": true, "label": "L2L electrs" }
               ],
               "explorer_tx_template": "https://explorer.drynet2.drivechain.dev/tx/{txid}",
               "explorer_address_template": "https://explorer.drynet2.drivechain.dev/address/{address}",
               "explorer_block_template": "https://explorer.drynet2.drivechain.dev/block/{hash}",
               "services": { "faucet": { "url": null, "amount": null, "cooldown_seconds": null },
-                            "coinnews": { "url": "https://coinnews.drynet2.drivechain.dev" } }
+                            "coinnews": { "url": "https://coinnews.drynet2.drivechain.dev" },
+                            "blockbook": { "url": "https://blockbook.drynet2.drivechain.dev" },
+                            "fast_withdrawal": [] },
+              "assumeutxo": { "url": "https://data.drivechain.dev/drynet2/utxo-957600.dat",
+                              "height": 957600, "sha256": "473ae7", "size_bytes": 9498111432 }
             }
           ]
         }
@@ -99,8 +118,8 @@ import WalletService
         #expect(config != nil)
         let backends = config?.resolvedPrimaryBackends() ?? []
         #expect(backends.count == 1)
-        #expect(backends.first?.network == WalletNetwork.ecash)          // family "ecash" → .ecash
-        #expect(backends.first?.kind == "esplora")                       // priority 1 wins
+        #expect(backends.first?.network == WalletNetwork.ecash)          // id "drynet2" → .ecash
+        #expect(backends.first?.kind == "esplora")                       // first in array (no priority)
         #expect(backends.first?.url == "https://esplora.drynet2.drivechain.dev")
         // coinnews present; faucet is null → not resolved.
         #expect(config?.resolvedCoinNews().first?.url == "https://coinnews.drynet2.drivechain.dev")
@@ -109,35 +128,56 @@ import WalletService
 
     // MARK: - Resolution
 
-    @Test func picksLowestPriorityBackendPerNetwork() {
+    @Test func picksFirstBackendInArrayOrderWhenNoPriority() {
         let config = RemoteEndpointConfig.parse(data(Self.validJSON))!
         let resolved = config.resolvedPrimaryBackends()
-        // Known networks only (bitcoin, ecash) — "futurenet" is skipped. Deterministic order.
-        #expect(resolved.count == 2)
+        // Known networks: bitcoin, signet, ecash — "futurenet" (unknown id) is skipped.
+        #expect(resolved.count == 3)
 
+        // No priorities → the FIRST backend in array order (esplora) wins for each.
         let ecash = resolved.first { $0.network == WalletNetwork.ecash }
-        // priority 1 esplora wins over priority 2 electrum — and the URL has NO /api suffix.
         #expect(ecash?.kind == "esplora")
         #expect(ecash?.url == "https://esplora.drynet2.drivechain.dev")
-        #expect(ecash?.url.hasSuffix("/api") == false)
-
-        let bitcoin = resolved.first { $0.network == WalletNetwork.bitcoin }
-        #expect(bitcoin?.kind == "electrum")
+        #expect(resolved.first { $0.network == WalletNetwork.bitcoin }?.kind == "esplora")
+        #expect(resolved.first { $0.network == WalletNetwork.signet }?.kind == "esplora")
     }
 
-    @Test func skipsUnknownNetworkKeys() {
+    /// The regression that motivated `id`-based mapping: Bitcoin and Signet BOTH carry
+    /// `family: "bitcoin"`, yet must resolve to DISTINCT networks (not collide / drop signet).
+    @Test func mapsSignetByIdNotFamilyDespiteSharedBitcoinFamily() {
+        let config = RemoteEndpointConfig.parse(data(Self.validJSON))!
+        let resolved = config.resolvedPrimaryBackends()
+        #expect(resolved.first { $0.network == WalletNetwork.bitcoin }?.url == "https://esplora.mainnet.example")
+        #expect(resolved.first { $0.network == WalletNetwork.signet }?.url == "https://esplora.signet.example")
+    }
+
+    @Test func explicitPriorityOverridesArrayOrder() {
+        // When priorities ARE present, they win over array position: electrum (priority 1) beats
+        // the first-listed esplora (priority 2).
+        let json = """
+        { "schema_version": 1, "networks": [ { "id": "drynet2", "backends": [
+            { "kind": "esplora",  "url": "https://esplora.example",  "priority": 2 },
+            { "kind": "electrum", "url": "ssl://electrum.example:50002", "priority": 1 }
+        ] } ] }
+        """
+        let resolved = RemoteEndpointConfig.parse(data(json))!.resolvedPrimaryBackends()
+        #expect(resolved.first?.kind == "electrum")
+    }
+
+    @Test func skipsUnknownNetworkIds() {
         let config = RemoteEndpointConfig.parse(data(Self.validJSON))!
         let networks = config.resolvedPrimaryBackends().map { $0.network }
         #expect(networks.contains(WalletNetwork.ecash))
         #expect(networks.contains(WalletNetwork.bitcoin))
-        // "futurenet" is not a known WalletNetwork → never resolved.
-        #expect(networks.count == 2)
+        #expect(networks.contains(WalletNetwork.signet))
+        // "futurenet" is not a known id → never resolved.
+        #expect(networks.count == 3)
     }
 
     @Test func ignoresBackendsWithInvalidKind() {
         let json = """
         { "schema_version": 1, "networks": [
-            { "family": "ecash", "backends": [
+            { "id": "drynet2", "backends": [
               { "kind": "bogus",   "url": "https://bad.example", "priority": 1 },
               { "kind": "esplora", "url": "https://good.example", "priority": 2 }
             ] } ] }
@@ -149,7 +189,7 @@ import WalletService
     }
 
     @Test func networkWithNoValidBackendIsOmitted() {
-        let json = #"{ "schema_version": 1, "networks": [ { "family": "ecash", "backends": [] } ] }"#
+        let json = #"{ "schema_version": 1, "networks": [ { "id": "drynet2", "backends": [] } ] }"#
         #expect(RemoteEndpointConfig.parse(data(json))!.resolvedPrimaryBackends().isEmpty)
     }
 
@@ -181,7 +221,7 @@ import WalletService
 
     @Test func blankServiceURLsAreIgnored() {
         let json = """
-        { "schema_version": 1, "networks": [ { "family": "ecash", "services": {
+        { "schema_version": 1, "networks": [ { "id": "drynet2", "services": {
             "faucet":   { "url": "  " },
             "coinnews": { "url": "" }
         } } ] }
@@ -227,15 +267,15 @@ import WalletService
     @Test func resolvesExplorerTemplates() {
         let config = RemoteEndpointConfig.parse(data(Self.validJSON))!
         let explorers = config.resolvedExplorers()
-        // bitcoin + ecash carry explorer templates in the fixture; signet does not.
-        #expect(explorers.count == 2)
+        // bitcoin, signet, and ecash all carry explorer templates in the fixture.
+        #expect(explorers.count == 3)
         #expect(explorers.first { $0.network == WalletNetwork.ecash }?.txTemplate
                 == "https://explorer.drynet2.drivechain.dev/tx/{txid}")
     }
 
     @Test func rejectsExplorerTemplateWithoutTxidPlaceholder() {
         let json = """
-        { "schema_version": 1, "networks": [ { "family": "ecash", "explorer_tx_template": "https://x.example/nope" } ] }
+        { "schema_version": 1, "networks": [ { "id": "drynet2", "explorer_tx_template": "https://x.example/nope" } ] }
         """
         #expect(RemoteEndpointConfig.parse(data(json))!.resolvedExplorers().isEmpty)
     }
@@ -300,7 +340,7 @@ import WalletService
         let config = await service.load()
         #expect(config != nil)
         let resolved = config?.resolvedPrimaryBackends() ?? []
-        #expect(resolved.count == 2)
+        #expect(resolved.count == 3)
         #expect(resolved.contains { $0.network == WalletNetwork.ecash && $0.kind == "esplora" })
     }
 
