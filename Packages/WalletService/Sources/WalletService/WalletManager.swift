@@ -229,19 +229,19 @@ public final class WalletManager: @unchecked Sendable {
     func resolvedBackend(for network: WalletNetwork) -> WalletBackend {
         let defaults = UserDefaults.standard
         let proxy = trimmedOrNil(defaults.string(forKey: Self.proxyKey))
-        // 1. User override.
+        // 1. User override. (`Kind.from`, not `Kind(rawValue:)` — see WalletBackend.Kind.from.)
         if let url = trimmedOrNil(defaults.string(forKey: urlKey(network))),
-           let kind = WalletBackend.Kind(rawValue: defaults.string(forKey: kindKey(network)) ?? "") {
+           let kind = WalletBackend.Kind.from(defaults.string(forKey: kindKey(network)) ?? "") {
             return WalletBackend(kind: kind, url: url, socks5: proxy)
         }
         // 2. Remote default (last-known-good).
         if let url = trimmedOrNil(defaults.string(forKey: remoteUrlKey(network))),
-           let kind = WalletBackend.Kind(rawValue: defaults.string(forKey: remoteKindKey(network)) ?? "") {
+           let kind = WalletBackend.Kind.from(defaults.string(forKey: remoteKindKey(network)) ?? "") {
             return WalletBackend(kind: kind, url: url, socks5: proxy)
         }
         // 3. Bundled default.
         let params = NetworkRegistry.params(for: network)
-        let defaultKind = WalletBackend.Kind(rawValue: params.defaultBackendKind) ?? .electrum
+        let defaultKind = WalletBackend.Kind.from(params.defaultBackendKind) ?? .electrum
         return WalletBackend(kind: defaultKind, url: params.defaultBackend, socks5: proxy)
     }
 
@@ -268,7 +268,7 @@ public final class WalletManager: @unchecked Sendable {
     /// are evicted ONLY when the value actually changes, so a routine re-fetch of unchanged config
     /// doesn't force a needless re-sync. Bridge-safe primitives (no `WalletBackend` on the JNI surface).
     public func setRemoteBackendDefault(network: WalletNetwork, kind: String, url: String) {
-        guard WalletBackend.Kind(rawValue: kind) != nil, let cleanURL = trimmedOrNil(url) else { return }
+        guard WalletBackend.Kind.from(kind) != nil, let cleanURL = trimmedOrNil(url) else { return }
         let defaults = UserDefaults.standard
         let changed = defaults.string(forKey: remoteUrlKey(network)) != cleanURL
             || defaults.string(forKey: remoteKindKey(network)) != kind

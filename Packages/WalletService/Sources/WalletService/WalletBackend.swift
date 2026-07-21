@@ -16,6 +16,19 @@ struct WalletBackend: Equatable, Sendable {
     enum Kind: String, Sendable {
         case electrum
         case esplora
+
+        /// Skip-safe parse of a raw kind string. Use this instead of the synthesized
+        /// `Kind(rawValue:)` from OTHER files: a *qualified* `WalletBackend.Kind(rawValue:)` gets
+        /// mistranspiled by Skip into an enum-constructor call (`WalletBackend.Kind(rawValue = …)`),
+        /// which Kotlin rejects ("Enum types cannot be instantiated"). An explicit switch on the
+        /// literal rawValues sidesteps that entirely.
+        static func from(_ raw: String) -> Kind? {
+            switch raw {
+            case "electrum": return .electrum
+            case "esplora": return .esplora
+            default: return nil
+            }
+        }
     }
 
     let kind: Kind
@@ -32,7 +45,7 @@ struct WalletBackend: Equatable, Sendable {
 
     /// Build from the primitive form the factory protocol/WalletManager pass around.
     init(kindRaw: String, url: String, socks5: String?) {
-        self.kind = Kind(rawValue: kindRaw) ?? .electrum
+        self.kind = Kind.from(kindRaw) ?? .electrum
         self.url = url
         self.socks5 = socks5
     }

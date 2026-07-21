@@ -106,7 +106,8 @@ public final class WalletEngine: WalletEngineProtocol {
     private let signPsbt: (Psbt) throws -> Bool
 
     /// Internal: only the factory (same module) builds this; the app sees `WalletEngineProtocol`.
-    /// Kept non-public so the bridge never sees the BDK-typed parameters.
+    /// Kept non-public so the bridge never sees the BDK-typed parameters. (Can't be `public` anyway —
+    /// its params use internal types like `WalletBackend`.)
     init(wallet: Wallet, persister: Persister, network: WalletNetwork, backend: WalletBackend,
          signPsbt: @escaping (Psbt) throws -> Bool) {
         self.wallet = wallet
