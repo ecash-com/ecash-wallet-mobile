@@ -13,6 +13,9 @@ import Foundation
 public enum WalletError: Error, Equatable, Sendable {
     case notImplemented
     case invalidMnemonic
+    /// A private key (WIF) failed to parse, or doesn't match the chosen network. Never echoes the
+    /// key itself (Golden Rule §2).
+    case invalidPrivateKey
     case invalidDescriptor
     case invalidAddress
     case networkMismatch(expected: WalletNetwork)
@@ -33,6 +36,7 @@ public enum WalletError: Error, Equatable, Sendable {
         switch self {
         case .notImplemented: return "This feature isn't available yet."
         case .invalidMnemonic: return "That recovery phrase isn't valid."
+        case .invalidPrivateKey: return "That private key isn't valid for this network."
         case .invalidDescriptor: return "That wallet descriptor isn't valid."
         case .invalidAddress: return "That address isn't valid for this network."
         case .networkMismatch(let expected):

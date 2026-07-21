@@ -17,6 +17,7 @@ struct ImportWalletView: View {
     @State var vm: ImportViewModel   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
     @State var walletName = ""
     @State var network: WalletNetwork = .signet   // default to a testnet-class net; mainnet is deliberate
+    @State var advancedExpanded = false           // Advanced: import type (+ later, derivation path)
 
     // iOS-only keyboard ergonomics (focus advance + scroll-to-dismiss). Guarded so the Android
     // (Compose) transpile is untouched; the Skip docs sanction inline `#if os(iOS)` in a view.
@@ -41,35 +42,18 @@ struct ImportWalletView: View {
             VStack(alignment: .leading, spacing: Theme.Space.x4) {
                 // Network is chosen up front (it fixes the address set) and unmistakable (Golden Rule §4/§6).
                 NetworkSelector(network: $network)
+                    .onChange(of: network) { _, newNet in vm.updatePreview(network: newNet) }
 
-                Text("Enter your 12 or 24 word phrase, separated by spaces. It never leaves this device.",
-                     bundle: .module, comment: "import wallet instructions")
-                    .textStyle(.body)
-                    .foregroundStyle(Theme.Colors.text1)
+                // Advanced: pick the import type. Collapsed by default so the common recovery-phrase
+                // path stays simple; the derivation-path option (phrase mode) will land here too.
+                advancedSection
 
-                TextEditor(text: $vm.phrase)
-                    .textFieldStyle(.plain)   // clears Compose's amber focused-border ring (Android)
-                    .font(.jbMono(16, .regular))
-                    .foregroundStyle(Theme.Colors.text0)
-                    .autocorrectionDisabled()
-                    .noAutocapitalization()
-                    .plainEditorBackground()
-                    .frame(minHeight: 140)
-                    .padding(Theme.Space.x2)
-                    .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
-                    .overlay(
-                        RoundedRectangle(cornerRadius: Theme.Radius.md)
-                            .stroke(Theme.Colors.border, lineWidth: 1)
-                    )
-                    .onChange(of: vm.phrase) { _, _ in vm.phraseEdited() }
-                    #if os(iOS)
-                    .focused($focusedField, equals: .phrase)
-                    #endif
-
-                // Live word count — quiet guidance, no judgment until submit.
-                Text(wordCountText, bundle: .module)
-                    .textStyle(.xs)
-                    .foregroundStyle(Theme.Colors.text2)
+                // Input depends on the chosen import type.
+                if vm.kind == .privateKey {
+                    privateKeyInput
+                } else {
+                    recoveryPhraseInput
+                }
 
                 // Optional name (labels are device-local; restoring a seed can't bring one back).
                 TextField("Wallet name (optional — \"\(defaultName)\")", text: $walletName)
@@ -93,7 +77,7 @@ struct ImportWalletView: View {
 
                 WalletButton(title: vm.isImporting
                                 ? "Importing…"
-                                : "Import wallet") {
+                                : (vm.kind == .privateKey ? "Import private key" : "Import wallet")) {
                     submitImport()
                 }
                 .disabled(!vm.canSubmit)
@@ -109,6 +93,101 @@ struct ImportWalletView: View {
         .navigationTitle(Text("Import wallet", bundle: .module, comment: "import wallet screen title"))
         // Screenshots intentionally allowed (the user's call); app-switcher snapshot still obscured.
         .obscuredWhenBackgrounded()
+    }
+
+    // MARK: - Advanced options + input variants
+
+    /// Collapsed by default. Holds the import-type toggle (recovery phrase vs private key); the
+    /// derivation-path option for phrase mode will live here too (a later slice).
+    private var advancedSection: some View {
+        DisclosureGroup(isExpanded: $advancedExpanded) {
+            Picker("Import type", selection: $vm.kind) {
+                Text("Recovery phrase", bundle: .module, comment: "import type: 12/24-word seed phrase")
+                    .tag(ImportViewModel.Kind.recoveryPhrase)
+                Text("Private key", bundle: .module, comment: "import type: single legacy WIF private key")
+                    .tag(ImportViewModel.Kind.privateKey)
+            }
+            .pickerStyle(.segmented)
+            .onChange(of: vm.kind) { _, _ in vm.updatePreview(network: network) }
+            .padding(.top, Theme.Space.x2)
+        } label: {
+            Text("Advanced", bundle: .module, comment: "advanced import options disclosure label")
+                .textStyle(.body)
+                .foregroundStyle(Theme.Colors.text1)
+        }
+        .tint(Theme.Colors.accent)
+    }
+
+    /// The 12/24-word recovery-phrase input (the default import path).
+    private var recoveryPhraseInput: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x4) {
+            Text("Enter your 12 or 24 word phrase, separated by spaces. It never leaves this device.",
+                 bundle: .module, comment: "import wallet instructions")
+                .textStyle(.body)
+                .foregroundStyle(Theme.Colors.text1)
+
+            TextEditor(text: $vm.phrase)
+                .textFieldStyle(.plain)   // clears Compose's amber focused-border ring (Android)
+                .font(.jbMono(16, .regular))
+                .foregroundStyle(Theme.Colors.text0)
+                .autocorrectionDisabled()
+                .noAutocapitalization()
+                .plainEditorBackground()
+                .frame(minHeight: 140)
+                .padding(Theme.Space.x2)
+                .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).stroke(Theme.Colors.border, lineWidth: 1))
+                .onChange(of: vm.phrase) { _, _ in vm.phraseEdited() }
+                #if os(iOS)
+                .focused($focusedField, equals: .phrase)
+                #endif
+
+            // Live word count — quiet guidance, no judgment until submit.
+            Text(wordCountText, bundle: .module)
+                .textStyle(.xs)
+                .foregroundStyle(Theme.Colors.text2)
+        }
+    }
+
+    /// The legacy single-key (WIF) input + live address preview (Advanced → Private key).
+    private var privateKeyInput: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x4) {
+            Text("Paste a legacy private key (WIF). It becomes a single-address wallet on this device.",
+                 bundle: .module, comment: "import private key instructions")
+                .textStyle(.body)
+                .foregroundStyle(Theme.Colors.text1)
+
+            TextField("Private key (WIF)", text: $vm.wif)
+                .textFieldStyle(.plain)
+                .font(.jbMono(15, .regular))
+                .foregroundStyle(Theme.Colors.text0)
+                .autocorrectionDisabled()
+                .noAutocapitalization()
+                .fieldBoxInset()
+                .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).stroke(Theme.Colors.border, lineWidth: 1))
+                .onChange(of: vm.wif) { _, _ in vm.updatePreview(network: network) }
+
+            // Live guardrail: show the address this key controls (or a hint once input is non-empty).
+            if let addr = vm.previewAddress {
+                VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                    Text("This key's address", bundle: .module, comment: "wif preview address label")
+                        .textStyle(.overline)
+                        .foregroundStyle(Theme.Colors.text2)
+                    // Show the FULL address (best guardrail — the user verifies the whole thing).
+                    // A legacy `1…` address is short and wraps cleanly. NOTE: `.truncationMode` is
+                    // unavailable on Android (Skip), so don't reintroduce it here.
+                    Text(verbatim: addr)
+                        .font(.jbMono(14, .regular))
+                        .foregroundStyle(Theme.Colors.text0)
+                }
+            } else if !vm.wif.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                Text("Not a valid private key for this network.",
+                     bundle: .module, comment: "wif preview invalid hint")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text2)
+            }
+        }
     }
 
     private func submitImport() {

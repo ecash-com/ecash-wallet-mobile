@@ -6,19 +6,22 @@
 
 import Foundation
 
-/// The keys produced when creating or restoring a wallet: the mnemonic (secret) plus the
-/// PUBLIC (xpub-based / watch) descriptors that get stored in the WalletStore.
+/// The keys produced when creating or restoring a wallet: the **secret** (a mnemonic for HD
+/// wallets, or a WIF private key for `.wif` single-key wallets) plus the PUBLIC (watch) descriptors
+/// that get stored in the WalletStore. The secret is what goes into the Keychain; the descriptors
+/// are public-only.
 ///
 /// `public` + `// SKIP @nobridge`: reachable from sibling files' transpiled Kotlin, but kept off
-/// the JNI bridge (it carries a mnemonic — never expose it across the bridge surface, §2).
+/// the JNI bridge (it carries a secret — never expose it across the bridge surface, §2).
 // SKIP @nobridge
 public struct WalletKeys: Equatable, Sendable {
-    public let mnemonic: String
+    /// The secret to persist in the Keychain — a mnemonic phrase, or a WIF for a `.wif` wallet.
+    public let secret: String
     public let externalDescriptor: String
     public let internalDescriptor: String
 
-    public init(mnemonic: String, externalDescriptor: String, internalDescriptor: String) {
-        self.mnemonic = mnemonic
+    public init(secret: String, externalDescriptor: String, internalDescriptor: String) {
+        self.secret = secret
         self.externalDescriptor = externalDescriptor
         self.internalDescriptor = internalDescriptor
     }
@@ -37,15 +40,24 @@ public protocol WalletEngineFactory: AnyObject {
     func create(network: WalletNetwork, wordCount: Int) throws -> WalletKeys
     /// Validate an imported mnemonic (throws `.invalidMnemonic` on bad checksum) + derive descriptors.
     func restore(network: WalletNetwork, mnemonic: String) throws -> WalletKeys
+    /// Validate an imported **WIF private key** (throws `.invalidPrivateKey` on bad key / wrong
+    /// network) and build the single-key PUBLIC descriptor `pkh(<pubkey>)`. The returned
+    /// `WalletKeys.secret` is the WIF (persisted to the Keychain like a mnemonic). No derivation —
+    /// a WIF is one key = one address (`docs/wif-import-and-sweep.md`).
+    func restorePrivateKey(network: WalletNetwork, wif: String) throws -> WalletKeys
+    /// The `1…` address a WIF maps to on `network`, for a live preview before import. Throws
+    /// `.invalidPrivateKey` on a bad key. No secret is persisted — this is watch-only derivation.
+    func previewAddress(forWIF wif: String, network: WalletNetwork) throws -> String
     /// Build the live WATCH-ONLY engine for a wallet from its PUBLIC descriptors — no private
-    /// keys are held. `loadMnemonic` is invoked ONLY when signing a send (sign-on-demand, §7 /
-    /// `docs/key-storage.md §3`); its result builds a transient signer that is dropped right after.
+    /// keys are held. `loadSecret` is invoked ONLY when signing a send (sign-on-demand, §7 /
+    /// `docs/key-storage.md §3`); its result (a mnemonic, or a WIF for `.wif` wallets — the factory
+    /// branches on `wallet.keyType`) builds a transient signer that is dropped right after.
     /// `backendKind` is `"electrum"`/`"esplora"`; `backendURL` the server; `backendProxy` an
     /// optional SOCKS5 `host:port`. (Primitives, not `WalletBackend`, so the public protocol stays
     /// off the bridge — see `WalletBackend`.)
     func engine(for wallet: ManagedWallet,
                 backendKind: String, backendURL: String, backendProxy: String?,
-                loadMnemonic: @escaping () throws -> String?) throws -> WalletEngineProtocol
+                loadSecret: @escaping () throws -> String?) throws -> WalletEngineProtocol
     /// True if `address` is valid for `network` — correct checksum AND matching network/prefix
     /// (BDK's `Address(address:network:)` parse). Synchronous, no network: safe to call on the main
     /// actor as the user types, to validate the Send recipient early (typos + wrong-network paste).
@@ -74,21 +86,39 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
     }
 
     public func create(network: WalletNetwork, wordCount: Int) throws -> WalletKeys {
-        WalletKeys(mnemonic: mnemonicToReturn,
+        WalletKeys(secret: mnemonicToReturn,
                    externalDescriptor: "wpkh(mock/0/*)",
                    internalDescriptor: "wpkh(mock/1/*)")
     }
 
     public func restore(network: WalletNetwork, mnemonic: String) throws -> WalletKeys {
         if rejectImport { throw WalletError.invalidMnemonic }
-        return WalletKeys(mnemonic: mnemonic,
+        return WalletKeys(secret: mnemonic,
                           externalDescriptor: "wpkh(mock/0/*)",
                           internalDescriptor: "wpkh(mock/1/*)")
     }
 
+    /// When true, `restorePrivateKey`/`previewAddress` reject as if the WIF were invalid.
+    public var rejectPrivateKey = false
+    /// The stubbed preview address returned by `previewAddress` (tests can override).
+    public var previewAddressToReturn = "1MockLegacyAddrXXXXXXXXXXXXXXXXXXXX"
+
+    public func restorePrivateKey(network: WalletNetwork, wif: String) throws -> WalletKeys {
+        if rejectPrivateKey { throw WalletError.invalidPrivateKey }
+        // Single-key wallet: external == internal (one address, no change branch).
+        return WalletKeys(secret: wif,
+                          externalDescriptor: "pkh(mock)",
+                          internalDescriptor: "pkh(mock)")
+    }
+
+    public func previewAddress(forWIF wif: String, network: WalletNetwork) throws -> String {
+        if rejectPrivateKey { throw WalletError.invalidPrivateKey }
+        return previewAddressToReturn
+    }
+
     public func engine(for wallet: ManagedWallet,
                        backendKind: String, backendURL: String, backendProxy: String?,
-                       loadMnemonic: @escaping () throws -> String?) throws -> WalletEngineProtocol {
+                       loadSecret: @escaping () throws -> String?) throws -> WalletEngineProtocol {
         MockWalletEngine(network: wallet.network)
     }
 

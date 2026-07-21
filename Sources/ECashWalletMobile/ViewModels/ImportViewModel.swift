@@ -25,21 +25,45 @@ final class ImportViewModel {
         case failed(String)   // user-safe message (already scrubbed by WalletError)
     }
 
-    /// Raw user input (TextEditor binding). Normalized only at submit.
+    /// What the user is importing — chosen under the "Advanced" section, defaults to a recovery
+    /// phrase. `.privateKey` is a single legacy WIF → a one-address wallet (`docs/wif-import-and-sweep.md`).
+    enum Kind: Equatable {
+        case recoveryPhrase
+        case privateKey
+    }
+
+    /// Raw phrase input (TextEditor binding). Normalized only at submit.
     var phrase = ""
+    /// Raw WIF input (private-key mode).
+    var wif = ""
+    var kind: Kind = .recoveryPhrase
+    /// The `1…` address the entered WIF derives to, live (nil = empty or not-yet-valid). Doubles as
+    /// the submit gate for `.privateKey`: a key that doesn't derive can't be imported. Never the WIF.
+    private(set) var previewAddress: String?
     private(set) var phase: Phase = .idle
 
     private let importWallet: @MainActor (_ label: String, _ network: WalletNetwork, _ mnemonic: String) throws -> Void
+    private let importPrivateKey: @MainActor (_ label: String, _ network: WalletNetwork, _ wif: String) throws -> Void
+    private let previewWIF: @MainActor (_ wif: String, _ network: WalletNetwork) -> String?
 
-    init(importWallet: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ mnemonic: String) throws -> Void) {
+    init(importWallet: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ mnemonic: String) throws -> Void,
+         importPrivateKey: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ wif: String) throws -> Void,
+         previewWIF: @escaping @MainActor (_ wif: String, _ network: WalletNetwork) -> String?) {
         self.importWallet = importWallet
+        self.importPrivateKey = importPrivateKey
+        self.previewWIF = previewWIF
     }
 
     var wordCount: Int { MnemonicInput.wordCount(phrase) }
 
-    /// 12 or 24 words and not already importing. Checksum validity is only known at submit (BDK).
+    /// Ready to import: for a phrase, 12/24 words; for a WIF, it must derive (previewAddress set).
+    /// Checksum/key validity is BDK's; not importing.
     var canSubmit: Bool {
-        MnemonicInput.hasValidWordCount(phrase) && phase != .importing
+        if phase == .importing { return false }
+        switch kind {
+        case .recoveryPhrase: return MnemonicInput.hasValidWordCount(phrase)
+        case .privateKey: return previewAddress != nil
+        }
     }
 
     var isImporting: Bool { phase == .importing }
@@ -49,15 +73,30 @@ final class ImportViewModel {
         return nil
     }
 
-    /// Validate via BDK and persist (mnemonic → Keychain, record → store, selected). Synchronous
-    /// key derivation — no network I/O; the first sync happens on Home after the app re-roots.
+    /// Recompute the live WIF → address preview (call on WIF or network change, and when switching
+    /// import kind). Also clears a stale error. Synchronous BDK derivation — no network I/O.
+    func updatePreview(network: WalletNetwork) {
+        let trimmed = wif.trimmingCharacters(in: .whitespacesAndNewlines)
+        previewAddress = trimmed.isEmpty ? nil : previewWIF(trimmed, network)
+        if case .failed = phase { phase = .idle }
+    }
+
+    /// Validate via BDK and persist (secret → Keychain, record → store, selected). Branches on
+    /// `kind`. Synchronous key work — no network I/O; the first sync happens on Home after re-root.
     func submit(label: String, network: WalletNetwork) {
         guard canSubmit else { return }
         phase = .importing
         do {
-            try importWallet(label, network, MnemonicInput.normalize(phrase))
-            // Success: drop the secret from UI state; AppState re-roots to Home.
+            switch kind {
+            case .recoveryPhrase:
+                try importWallet(label, network, MnemonicInput.normalize(phrase))
+            case .privateKey:
+                try importPrivateKey(label, network, wif.trimmingCharacters(in: .whitespacesAndNewlines))
+            }
+            // Success: drop the secret(s) from UI state; AppState re-roots to Home.
             phrase = ""
+            wif = ""
+            previewAddress = nil
             phase = .idle
         } catch let error as WalletError {
             phase = .failed(error.userMessage)

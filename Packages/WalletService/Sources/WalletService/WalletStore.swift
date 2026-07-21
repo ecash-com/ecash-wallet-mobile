@@ -75,18 +75,21 @@ public final class FileWalletStore: WalletStore {
         let network: WalletNetwork
         let externalDescriptor: String
         let internalDescriptor: String
+        /// Optional so records written before this field decode as nil → `.mnemonic` (below),
+        /// keeping older `wallets.json` files readable.
+        let keyType: WalletKeyType?
         let isBackedUp: Bool
         let sortIndex: Int
 
         init(_ w: ManagedWallet) {
             id = w.id; label = w.label; network = w.network
             externalDescriptor = w.externalDescriptor; internalDescriptor = w.internalDescriptor
-            isBackedUp = w.isBackedUp; sortIndex = w.sortIndex
+            keyType = w.keyType; isBackedUp = w.isBackedUp; sortIndex = w.sortIndex
         }
         var managed: ManagedWallet {
             ManagedWallet(id: id, label: label, network: network,
                           externalDescriptor: externalDescriptor, internalDescriptor: internalDescriptor,
-                          isBackedUp: isBackedUp, sortIndex: sortIndex)
+                          keyType: keyType ?? .mnemonic, isBackedUp: isBackedUp, sortIndex: sortIndex)
         }
     }
 

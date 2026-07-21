@@ -61,7 +61,7 @@ final class BDKWalletEngineTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = try factory.restore(network: network, mnemonic: Self.mnemonic)
         let wallet = managedWallet(id: "vec-\(network.rawValue)", network: network, keys: keys)
-        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: { Self.mnemonic })
+        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         let a0 = try engine.nextReceiveAddress()
         let a1 = try engine.nextReceiveAddress()
         XCTAssertEqual(a0.index, Int32(0))
@@ -140,7 +140,7 @@ final class BDKWalletEngineTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let a = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
         let b = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
-        XCTAssertEqual(a.mnemonic, Self.mnemonic)
+        XCTAssertEqual(a.secret, Self.mnemonic)
         XCTAssertEqual(a.externalDescriptor, b.externalDescriptor) // deterministic
         XCTAssertEqual(a.internalDescriptor, b.internalDescriptor)
         #endif
@@ -170,10 +170,10 @@ final class BDKWalletEngineTests: XCTestCase {
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = try factory.create(network: .signet, wordCount: 12)
-        XCTAssertEqual(keys.mnemonic.split(separator: " ").count, 12)
+        XCTAssertEqual(keys.secret.split(separator: " ").count, 12)
         XCTAssertTrue(keys.externalDescriptor.contains("84'/1'/0'"))
         // Round-trip: restoring the generated mnemonic reproduces the same descriptors.
-        let restored = try factory.restore(network: .signet, mnemonic: keys.mnemonic)
+        let restored = try factory.restore(network: .signet, mnemonic: keys.secret)
         XCTAssertEqual(restored.externalDescriptor, keys.externalDescriptor)
         #endif
     }
@@ -190,7 +190,7 @@ final class BDKWalletEngineTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
         let wallet = managedWallet(id: "cn-tn4", network: .signet, keys: keys)
-        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: { Self.mnemonic })
+        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         do {
             // A mainnet (bc1) address on a signet wallet must be rejected.
             _ = try engine.send(to: Self.mainnetExternal0,
@@ -218,7 +218,7 @@ final class BDKWalletEngineTests: XCTestCase {
         let wallet = managedWallet(id: "persist-rt", network: .signet, keys: keys)
 
         // First engine: reveal indices 0 and 1 (each call persists the advance).
-        let first = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: { Self.mnemonic })
+        let first = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         XCTAssertEqual(try first.nextReceiveAddress().index, Int32(0))
         XCTAssertEqual(try first.nextReceiveAddress().index, Int32(1))
         XCTAssertEqual(try first.balance(), Amount.zero) // unsynced/empty
@@ -226,7 +226,7 @@ final class BDKWalletEngineTests: XCTestCase {
         XCTAssertTrue(try first.listUtxos().isEmpty)
 
         // Second engine over the SAME chain-data dir: it must LOAD, not re-create.
-        let reloaded = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: { Self.mnemonic })
+        let reloaded = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         let next = try reloaded.nextReceiveAddress()
         XCTAssertEqual(next.index, Int32(2), "reload must continue the persisted reveal index")
         // And it derives the same address index 0 would have — i.e. the same descriptor/keychain.
@@ -248,7 +248,7 @@ final class BDKWalletEngineTests: XCTestCase {
         let walletId = "purge-me"
         let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
         let wallet = managedWallet(id: walletId, network: .signet, keys: keys)
-        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: { Self.mnemonic })
+        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         _ = try engine.nextReceiveAddress() // forces a persisted write
 
         // Chain data is namespaced per (walletId × network): <walletId>-<network>.sqlite.
@@ -278,7 +278,7 @@ final class BDKWalletEngineTests: XCTestCase {
 
         // First open creates the network-scoped store; rename it (and siblings) back to the legacy
         // un-namespaced path to simulate a wallet from before this change.
-        _ = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: { Self.mnemonic })
+        _ = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         let scoped = dir.appendingPathComponent("\(walletId)-signet.sqlite")
         let legacy = dir.appendingPathComponent("\(walletId).sqlite")
         for suffix in ["", "-wal", "-shm"] {
@@ -292,7 +292,7 @@ final class BDKWalletEngineTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: legacy.path))
 
         // Re-open: the factory migrates legacy → scoped and loads successfully.
-        _ = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: { Self.mnemonic })
+        _ = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         XCTAssertTrue(FileManager.default.fileExists(atPath: scoped.path), "legacy store should migrate to the network-scoped path")
         XCTAssertFalse(FileManager.default.fileExists(atPath: legacy.path), "legacy store should be moved, not left behind")
         #endif
@@ -310,7 +310,7 @@ final class BDKWalletEngineTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: dir) }
         let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
         let wallet = managedWallet(id: "empty-send", network: .signet, keys: keys)
-        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: { keys.mnemonic })
+        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { keys.secret })
         do {
             _ = try engine.send(to: Self.signetExternal0, // valid same-network address
                                 amount: Amount(sats: Int64(10_000)),
@@ -336,7 +336,7 @@ final class BDKWalletEngineTests: XCTestCase {
         let wallet = managedWallet(id: "watch-only", network: .signet, keys: keys)
 
         var mnemonicReads = 0
-        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadMnemonic: {
+        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: {
             mnemonicReads += 1
             return Self.mnemonic
         })
@@ -373,11 +373,94 @@ final class BDKWalletEngineTests: XCTestCase {
         // Hit the ACTUAL registry default (ssl://node.signet.drivechain.info:50002, TLS), so this
         // also verifies BDK's ElectrumClient against the real endpoint — not a placeholder URL.
         let backend = NetworkRegistry.params(for: .signet).defaultBackend
-        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: backend, backendProxy: nil, loadMnemonic: { keys.mnemonic })
+        let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: backend, backendProxy: nil, loadSecret: { keys.secret })
 
         try await engine.sync() // must not throw against the live signet endpoint
         XCTAssertEqual(try engine.balance(), Amount.zero) // fresh wallet → empty
         XCTAssertTrue(try engine.transactions().isEmpty)
+        #endif
+    }
+
+    // MARK: - Legacy WIF import (single-key)
+
+    /// A real WIF derives its expected legacy `1…` address, and the stored PUBLIC descriptor NEVER
+    /// contains the WIF (Golden Rule §2). Vector: the eCash distribution's
+    /// `Kzjzb4…` → `14kwDb3…` (`docs/wif-import-and-sweep.md`), valid on `.ecash`
+    /// (mainnet `bc`/base58 encoding = `Network.bitcoin`).
+    func testImportPrivateKeyDerivesExpectedLegacyAddress() throws {
+        #if SKIP
+        throw XCTSkip("real BDK — host only")
+        #else
+        let (factory, dir) = makeFactory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let wif = "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj"
+
+        // Live preview address.
+        XCTAssertEqual(try factory.previewAddress(forWIF: wif, network: .ecash),
+                       "14kwDb3YYj6cdhz9fxGftn1Uga5vdtfrxP")
+
+        let keys = try factory.restorePrivateKey(network: .ecash, wif: wif)
+        XCTAssertEqual(keys.secret, wif)                               // WIF is the secret to persist
+        XCTAssertEqual(keys.externalDescriptor, keys.internalDescriptor) // single key → one address
+        XCTAssertTrue(keys.externalDescriptor.hasPrefix("pkh("))      // P2PKH
+        XCTAssertFalse(keys.externalDescriptor.contains(wif))         // §2: WIF NEVER in the public descriptor
+        #endif
+    }
+
+    /// The watch-only `.wif` ENGINE (createSingle path) yields the same `1…` receive address —
+    /// proves `engine(for:)` builds a single-key wallet correctly from the stored public descriptor.
+    func testWifEngineReceiveAddressMatches() throws {
+        #if SKIP
+        throw XCTSkip("real BDK — host only")
+        #else
+        let (factory, dir) = makeFactory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let wif = "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj"
+        let keys = try factory.restorePrivateKey(network: .ecash, wif: wif)
+        let wallet = ManagedWallet(id: "wif-eng", label: "t", network: .ecash,
+                                   externalDescriptor: keys.externalDescriptor,
+                                   internalDescriptor: keys.internalDescriptor,
+                                   keyType: .wif)
+        let engine = try factory.engine(for: wallet, backendKind: "electrum",
+                                        backendURL: "ssl://example.invalid:50002", backendProxy: nil,
+                                        loadSecret: { wif })
+        XCTAssertEqual(try engine.nextReceiveAddress().address, "14kwDb3YYj6cdhz9fxGftn1Uga5vdtfrxP")
+        #endif
+    }
+
+    /// Both COMPRESSED (`K…`/`L…`) and UNCOMPRESSED (`5…`) WIFs derive their (distinct) legacy
+    /// addresses — the compression flag is intrinsic to the WIF and must be preserved. Canonical
+    /// secp256k1 k=1 vectors (private key = 0x…01), on `.ecash` (mainnet base58 = `Network.bitcoin`).
+    func testImportPrivateKeyHandlesCompressedAndUncompressedWIF() throws {
+        #if SKIP
+        throw XCTSkip("real BDK — host only")
+        #else
+        let (factory, dir) = makeFactory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        // k=1 COMPRESSED WIF → compressed-pubkey address.
+        XCTAssertEqual(try factory.previewAddress(forWIF: "KwDiBf89QgGbjEhKnhXJuH7LrciVrZi3qYjgd9M7rFU73sVHnoWn",
+                                                  network: .ecash),
+                       "1BgGZ9tcN4rm9KBzDn7KprQz87SZ26SAMH")
+
+        // k=1 UNCOMPRESSED WIF (same private key) → a DIFFERENT address.
+        XCTAssertEqual(try factory.previewAddress(forWIF: "5HpHagT65TZzG1PH3CSu63k8DbpvD8s5ip4nEB3kEsreAnchuDf",
+                                                  network: .ecash),
+                       "1EHNa6Q4Jz2uvNExL497mE43ikXhwF6kZm")
+        #endif
+    }
+
+    /// A malformed WIF is rejected as `.invalidPrivateKey` (not a crash, not a leak).
+    func testImportPrivateKeyRejectsBadWIF() throws {
+        #if SKIP
+        throw XCTSkip("real BDK — host only")
+        #else
+        let (factory, dir) = makeFactory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        var caught: WalletError?
+        do { _ = try factory.restorePrivateKey(network: .ecash, wif: "not-a-valid-wif") }
+        catch let e as WalletError { caught = e }
+        XCTAssertEqual(caught, WalletError.invalidPrivateKey)
         #endif
     }
 }

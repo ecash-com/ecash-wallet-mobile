@@ -92,16 +92,33 @@ public final class WalletManager: @unchecked Sendable {
         return try persistNewWallet(label: label, network: network, keys: keys, isBackedUp: true)
     }
 
+    /// Import a **legacy WIF private key** as a single-key wallet (throws `.invalidPrivateKey` on a
+    /// bad key / wrong network). The wallet is one `pkh(<pubkey>)` address (no derivation), and — like
+    /// a mnemonic import — is marked **already backed up** (the user holds the WIF). Send/receive/
+    /// history all work through the normal engine (`docs/wif-import-and-sweep.md`).
+    public func importPrivateKey(label: String, network: WalletNetwork, wif: String) throws -> ManagedWallet {
+        let keys = try factory.restorePrivateKey(network: network, wif: wif)
+        return try persistNewWallet(label: label, network: network, keys: keys,
+                                    keyType: .wif, isBackedUp: true)
+    }
+
+    /// The `1…` address a WIF maps to on `network`, for a live preview before import (no secret
+    /// persisted). Throws `.invalidPrivateKey` on a bad key. Bridge-safe (String in/out).
+    public func previewAddress(forWIF wif: String, network: WalletNetwork) throws -> String {
+        try factory.previewAddress(forWIF: wif, network: network)
+    }
+
     private func persistNewWallet(label: String, network: WalletNetwork, keys: WalletKeys,
+                                  keyType: WalletKeyType = .mnemonic,
                                   isBackedUp: Bool = false) throws -> ManagedWallet {
         let id = UUID().uuidString
         let wallet = ManagedWallet(id: id, label: label, network: network,
                                    externalDescriptor: keys.externalDescriptor,
                                    internalDescriptor: keys.internalDescriptor,
-                                   isBackedUp: isBackedUp, sortIndex: wallets.count)
+                                   keyType: keyType, isBackedUp: isBackedUp, sortIndex: wallets.count)
         // Secret first, then public metadata. Roll back the secret if metadata write fails so we
-        // never strand a mnemonic with no wallet record.
-        try keyStore.saveMnemonic(keys.mnemonic, walletId: id)
+        // never strand a secret (mnemonic or WIF) with no wallet record.
+        try keyStore.saveMnemonic(keys.secret, walletId: id)
         do {
             try walletStore.upsertWallet(wallet)
         } catch {
@@ -176,7 +193,7 @@ public final class WalletManager: @unchecked Sendable {
                                   backendKind: backend.kind.rawValue,
                                   backendURL: backend.url,
                                   backendProxy: backend.socks5,
-                                  loadMnemonic: { try keyStore.loadMnemonic(walletId: walletId) })
+                                  loadSecret: { try keyStore.loadMnemonic(walletId: walletId) })
     }
 
     // MARK: - Chain backend & custom endpoints (bridged primitive surface)

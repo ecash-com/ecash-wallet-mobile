@@ -126,6 +126,16 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     }
 }
 
+/// How a wallet's secret is expressed — drives how the engine derives descriptors and signs.
+/// `.mnemonic` = an HD seed (BIP84 templates, full derivation tree). `.wif` = a single legacy
+/// private key imported as a **one-address** wallet (`pkh(<key>)`, no derivation — the key IS the
+/// address; see `docs/wif-import-and-sweep.md`). Existing wallets predate this field and decode as
+/// `.mnemonic` (the default), so persistence stays backward-compatible.
+public enum WalletKeyType: String, Equatable, Hashable, Sendable, CaseIterable {
+    case mnemonic
+    case wif
+}
+
 // MARK: - Wallet & chain value types
 
 /// Metadata describing one managed wallet. Contains NO private key material
@@ -134,20 +144,26 @@ public struct ManagedWallet: Identifiable, Equatable, Hashable, Sendable {
     public let id: String
     public var label: String
     public let network: WalletNetwork
-    /// Public (xpub-based) descriptors — never the private variants.
+    /// Public (xpub-based) descriptors — never the private variants. For a `.wif` wallet these are
+    /// the single-key public descriptor `pkh(<pubkey>)` (external == internal — one address).
     public var externalDescriptor: String
     public var internalDescriptor: String
+    /// Whether this wallet is a mnemonic (HD) wallet or a single legacy private key (`.wif`).
+    /// Lets the engine pick the right construction/signing path. Defaults to `.mnemonic`.
+    public let keyType: WalletKeyType
     public var isBackedUp: Bool
     public var sortIndex: Int
 
     public init(id: String, label: String, network: WalletNetwork,
                 externalDescriptor: String, internalDescriptor: String,
+                keyType: WalletKeyType = .mnemonic,
                 isBackedUp: Bool = false, sortIndex: Int = 0) {
         self.id = id
         self.label = label
         self.network = network
         self.externalDescriptor = externalDescriptor
         self.internalDescriptor = internalDescriptor
+        self.keyType = keyType
         self.isBackedUp = isBackedUp
         self.sortIndex = sortIndex
     }
@@ -248,5 +264,6 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
 // synthesize it. So `ManagedWallet` stays non-Codable and `FileWalletStore` persists it through a
 // private Codable DTO instead (see WalletStore.swift).
 extension WalletNetwork: Codable {}
+extension WalletKeyType: Codable {}
 
 #endif // !SKIP_BRIDGE — bridged module: bodies excluded from the bridge compile

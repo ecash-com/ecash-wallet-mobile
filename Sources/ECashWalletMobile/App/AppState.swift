@@ -274,6 +274,16 @@ final class AppState {
         return wallet
     }
 
+    /// Import a legacy **WIF private key** as a single-key wallet (Advanced import). Throws
+    /// `WalletError.invalidPrivateKey` on a bad key — never echoes the input (`docs/wif-import-and-sweep.md`).
+    @discardableResult
+    func importPrivateKey(label: String, network: WalletNetwork, wif: String) throws -> ManagedWallet {
+        let wallet = try manager.importPrivateKey(label: label, network: network, wif: wif)
+        resetPerWalletState()   // the imported wallet is auto-selected
+        refresh()
+        return wallet
+    }
+
     /// A default label for the next wallet ("Wallet 1", "Wallet 2", …). Renameable later (Slice 7).
     var nextDefaultWalletName: String { "Wallet \(wallets.count + 1)" }
 
@@ -285,11 +295,20 @@ final class AppState {
         })
     }
 
-    /// Vend an `ImportViewModel` wired to this manager (used by the Import flow).
+    /// Vend an `ImportViewModel` wired to this manager (used by the Import flow) — recovery-phrase
+    /// import, plus the Advanced legacy-WIF path and its live address preview.
     func makeImportViewModel() -> ImportViewModel {
-        ImportViewModel(importWallet: { label, network, mnemonic in
-            _ = try self.importWallet(label: label, network: network, mnemonic: mnemonic)
-        })
+        ImportViewModel(
+            importWallet: { label, network, mnemonic in
+                _ = try self.importWallet(label: label, network: network, mnemonic: mnemonic)
+            },
+            importPrivateKey: { label, network, wif in
+                _ = try self.importPrivateKey(label: label, network: network, wif: wif)
+            },
+            previewWIF: { wif, network in
+                // Best-effort: nil on an invalid key (no error surfaced mid-typing).
+                try? self.manager.previewAddress(forWIF: wif, network: network)
+            })
     }
 
     /// Vend a `BackupViewModel` for the selected wallet, or nil if none is selected. The wallet

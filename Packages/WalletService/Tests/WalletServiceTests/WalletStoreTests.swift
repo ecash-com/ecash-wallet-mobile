@@ -80,4 +80,45 @@ final class WalletStoreTests: XCTestCase {
         try reopened.deleteWallet(id: "a")
         XCTAssertEqual(try FileWalletStore(fileURL: url).allWallets().map { $0.id }, ["b"])
     }
+
+    func testFileWalletStorePersistsKeyType() throws {
+        #if SKIP
+        throw XCTSkip("FileWalletStore does real file IO; verify on a device/emulator, not Robolectric.")
+        #endif
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("walletstore-\(UUID().uuidString).json")
+        let store = FileWalletStore(fileURL: url)
+        defer { try? store.deleteAll() }
+
+        let wif = ManagedWallet(id: "wif1", label: "Claimed", network: .ecash,
+                                externalDescriptor: "pkh(pub)", internalDescriptor: "pkh(pub)",
+                                keyType: .wif, isBackedUp: true, sortIndex: 0)
+        try store.upsertWallet(wif)                     // .wif
+        try store.upsertWallet(wallet(id: "hd1", sort: 1))  // defaults to .mnemonic
+
+        let all = try FileWalletStore(fileURL: url).allWallets()
+        XCTAssertEqual(all.first { $0.id == "wif1" }?.keyType, WalletKeyType.wif)
+        XCTAssertEqual(all.first { $0.id == "hd1" }?.keyType, WalletKeyType.mnemonic)
+    }
+
+    /// Backward compatibility: a `wallets.json` written before `keyType` existed (field absent)
+    /// must decode as `.mnemonic`, not fail.
+    func testFileWalletStoreDefaultsMissingKeyTypeToMnemonic() throws {
+        #if SKIP
+        throw XCTSkip("FileWalletStore does real file IO; verify on a device/emulator, not Robolectric.")
+        #endif
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("walletstore-\(UUID().uuidString).json")
+        // A record with NO keyType key (as older builds wrote).
+        let legacyJSON = """
+        [{"id":"old","label":"Old","network":"signet","externalDescriptor":"ext",
+          "internalDescriptor":"int","isBackedUp":true,"sortIndex":0}]
+        """
+        try Data(legacyJSON.utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let all = try FileWalletStore(fileURL: url).allWallets()
+        XCTAssertEqual(all.count, 1)
+        XCTAssertEqual(all.first?.keyType, WalletKeyType.mnemonic)
+    }
 }

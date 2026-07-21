@@ -38,7 +38,7 @@ final class WalletKeysDescriptorTests: XCTestCase {
     func testRestoreReproducesIdenticalDescriptors() throws {
         let factory = makeFactory()
         let created = try factory.create(network: .signet, wordCount: 12)
-        let restored = try factory.restore(network: .signet, mnemonic: created.mnemonic)
+        let restored = try factory.restore(network: .signet, mnemonic: created.secret)
         XCTAssertEqual(created.externalDescriptor, restored.externalDescriptor)
         XCTAssertEqual(created.internalDescriptor, restored.internalDescriptor)
     }

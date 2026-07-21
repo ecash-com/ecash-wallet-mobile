@@ -17,19 +17,31 @@ private let importValidPhrase = "abandon abandon abandon abandon abandon abandon
 
     private final class Recorder: @unchecked Sendable {
         var receivedMnemonic: String?
+        var receivedWIF: String?
         var receivedLabel: String?
         var callCount = 0
+        var wifCallCount = 0
         var errorToThrow: Error?
+        var wifErrorToThrow: Error?
+        var previewResult: String?   // what the injected previewWIF returns
     }
 
     private func makeVM() -> (ImportViewModel, Recorder) {
         let rec = Recorder()
-        let vm = ImportViewModel(importWallet: { label, _, mnemonic in
-            rec.callCount += 1
-            rec.receivedLabel = label
-            rec.receivedMnemonic = mnemonic
-            if let error = rec.errorToThrow { throw error }
-        })
+        let vm = ImportViewModel(
+            importWallet: { label, _, mnemonic in
+                rec.callCount += 1
+                rec.receivedLabel = label
+                rec.receivedMnemonic = mnemonic
+                if let error = rec.errorToThrow { throw error }
+            },
+            importPrivateKey: { label, _, wif in
+                rec.wifCallCount += 1
+                rec.receivedLabel = label
+                rec.receivedWIF = wif
+                if let error = rec.wifErrorToThrow { throw error }
+            },
+            previewWIF: { _, _ in rec.previewResult })
         return (vm, rec)
     }
 
@@ -100,5 +112,68 @@ private let importValidPhrase = "abandon abandon abandon abandon abandon abandon
         vm.phrase = "abandon abandon"   // 2 words
         vm.submit(label: "W", network: .signet)
         #expect(rec.callCount == 0)   // never hit the engine with an obviously-wrong phrase
+    }
+
+    // MARK: - Private key (WIF) mode
+
+    @Test func privateKeyModeGatesOnDerivablePreview() {
+        let (vm, rec) = makeVM()
+        vm.kind = .privateKey
+        vm.wif = "Kzjzb4…"
+
+        rec.previewResult = nil          // key doesn't derive
+        vm.updatePreview(network: .ecash)
+        #expect(vm.previewAddress == nil)
+        #expect(!vm.canSubmit)           // can't import a key that doesn't derive
+
+        rec.previewResult = "14kwDb3YYj6cdhz9fxGftn1Uga5vdtfrxP"
+        vm.updatePreview(network: .ecash)
+        #expect(vm.previewAddress == "14kwDb3YYj6cdhz9fxGftn1Uga5vdtfrxP")
+        #expect(vm.canSubmit)
+    }
+
+    @Test func submitInPrivateKeyModeCallsImportPrivateKeyWithTrimmedWIF() {
+        let (vm, rec) = makeVM()
+        vm.kind = .privateKey
+        vm.wif = "  Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj  "
+        rec.previewResult = "14kwDb3YYj6cdhz9fxGftn1Uga5vdtfrxP"
+        vm.updatePreview(network: .ecash)
+
+        vm.submit(label: "Claimed", network: .ecash)
+
+        #expect(rec.wifCallCount == 1)
+        #expect(rec.callCount == 0)        // did NOT go through the mnemonic path
+        #expect(rec.receivedWIF == "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj")  // trimmed
+        #expect(rec.receivedLabel == "Claimed")
+        #expect(vm.wif == "")              // secret cleared from UI on success
+        #expect(vm.previewAddress == nil)
+        #expect(vm.phase == .idle)
+    }
+
+    @Test func privateKeyErrorSurfacesScrubbedMessageAndKeepsInput() {
+        let (vm, rec) = makeVM()
+        vm.kind = .privateKey
+        vm.wif = "Kzjzb4…"
+        rec.previewResult = "14kwDb3…"
+        vm.updatePreview(network: .ecash)
+        rec.wifErrorToThrow = WalletError.invalidPrivateKey
+
+        vm.submit(label: "W", network: .ecash)
+
+        #expect(vm.errorMessage == WalletError.invalidPrivateKey.userMessage)
+        #expect(vm.wif == "Kzjzb4…")       // keep the input so the user can fix it
+    }
+
+    @Test func emptyWIFClearsPreview() {
+        let (vm, rec) = makeVM()
+        vm.kind = .privateKey
+        rec.previewResult = "14kwDb3…"
+        vm.wif = "Kzjzb4…"
+        vm.updatePreview(network: .ecash)
+        #expect(vm.previewAddress != nil)
+
+        vm.wif = "   "                     // whitespace only
+        vm.updatePreview(network: .ecash)
+        #expect(vm.previewAddress == nil)  // never calls preview on empty
     }
 }

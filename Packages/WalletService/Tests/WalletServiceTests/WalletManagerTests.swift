@@ -52,6 +52,49 @@ final class WalletManagerTests: XCTestCase {
         XCTAssertEqual(manager.wallets.count, 0)
     }
 
+    // MARK: - Import private key (WIF)
+
+    func testImportPrivateKeyCreatesWifWalletBackedUpAndStoresSecret() throws {
+        let ks = InMemoryKeyStore()
+        let ws = InMemoryWalletStore()
+        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
+        let wif = "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj"
+
+        let wallet = try manager.importPrivateKey(label: "Claimed", network: .ecash, wif: wif)
+
+        XCTAssertEqual(wallet.keyType, WalletKeyType.wif)      // single-key wallet
+        XCTAssertTrue(wallet.isBackedUp)                        // user holds the WIF → no nudge
+        XCTAssertEqual(wallet.network, WalletNetwork.ecash)
+        XCTAssertEqual(try ks.loadMnemonic(walletId: wallet.id), wif)  // the WIF is the stored secret
+        XCTAssertEqual(manager.selectedWalletId, wallet.id)
+        XCTAssertEqual(try ws.allWallets().count, 1)
+        // Single key → one address, external == internal.
+        XCTAssertEqual(wallet.externalDescriptor, wallet.internalDescriptor)
+    }
+
+    func testImportPrivateKeyRejectsBadKeyAndPersistsNothing() {
+        let factory = MockWalletEngineFactory()
+        factory.rejectPrivateKey = true
+        let ks = InMemoryKeyStore()
+        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: factory)
+
+        var threw = false
+        do { _ = try manager.importPrivateKey(label: "X", network: .ecash, wif: "not-a-wif") }
+        catch { threw = true }
+
+        XCTAssertTrue(threw)
+        XCTAssertEqual(manager.wallets.count, 0)
+    }
+
+    func testPreviewAddressForWIF() throws {
+        let factory = MockWalletEngineFactory()
+        factory.previewAddressToReturn = "14kwDb3YYj6cdhz9fxGftn1Uga5vdtfrxP"
+        let manager = WalletManager(keyStore: InMemoryKeyStore(),
+                                    walletStore: InMemoryWalletStore(), factory: factory)
+        let addr = try manager.previewAddress(forWIF: "Kzjzb4…", network: .ecash)
+        XCTAssertEqual(addr, "14kwDb3YYj6cdhz9fxGftn1Uga5vdtfrxP")
+    }
+
     func testRemovePurgesSecretAndMetadataAndReselects() throws {
         let ks = InMemoryKeyStore()
         let ws = InMemoryWalletStore()

@@ -61,49 +61,78 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
     /// `Wallet.load` throws and we fall through to the network-aware constructor; later opens reload.
     public func engine(for wallet: ManagedWallet,
                        backendKind: String, backendURL: String, backendProxy: String?,
-                       loadMnemonic: @escaping () throws -> String?) throws -> WalletEngineProtocol {
+                       loadSecret: @escaping () throws -> String?) throws -> WalletEngineProtocol {
         let net = BDKSeam.network(wallet.network)
         let backend = WalletBackend(kindRaw: backendKind, url: backendURL, socks5: backendProxy)
         do {
-            // WATCH-ONLY: build from the persisted PUBLIC descriptor strings (no secrets on the
-            // everyday wallet or its on-disk chain store).
-            let externalDescriptor = try Descriptor(descriptor: wallet.externalDescriptor, network: net)
-            let internalDescriptor = try Descriptor(descriptor: wallet.internalDescriptor, network: net)
             let persister = try makePersister(for: wallet.id, network: wallet.network)
-            // `var` (not deferred `let`): assigning in both do/catch transpiles to a reassigned
-            // Kotlin `val`, which Kotlin rejects.
+            // `var` (not deferred `let`): assigned in every branch below — a deferred `let`
+            // transpiles to a reassigned Kotlin `val`, which Kotlin rejects.
             var bdkWallet: Wallet
-            do {
-                bdkWallet = try Wallet.load(descriptor: externalDescriptor,
-                                            changeDescriptor: internalDescriptor,
-                                            persister: persister)
-            } catch {
-                bdkWallet = try Wallet(descriptor: externalDescriptor,
-                                       changeDescriptor: internalDescriptor,
-                                       network: net,
-                                       persister: persister)
-                _ = try bdkWallet.persist(persister: persister)
-            }
+            var signPsbt: (Psbt) throws -> Bool
 
-            // SIGN-ON-DEMAND: the only place private keys exist, and only for the duration of one
-            // signing. BDK derives the signing key from the PSBT's own BIP32 paths, so a fresh
-            // in-memory wallet from the secret descriptors signs a PSBT the watch-only wallet built.
-            let signPsbt: (Psbt) throws -> Bool = { psbt in
-                guard let phrase = try loadMnemonic() else { throw WalletError.signingFailed }
-                let mnemonic: Mnemonic
+            if wallet.keyType == .wif {
+                // SINGLE-KEY (legacy WIF): ONE public descriptor `pkh(<pubkey>)`, one address, no
+                // separate change branch. Watch-only; the WIF is loaded only to sign (below).
+                let descriptor = try Descriptor(descriptor: wallet.externalDescriptor, network: net)
                 do {
-                    mnemonic = try Mnemonic.fromString(mnemonic: phrase)
+                    bdkWallet = try Wallet.loadSingle(descriptor: descriptor, persister: persister)
                 } catch {
-                    throw WalletError.signingFailed
+                    bdkWallet = try Wallet.createSingle(descriptor: descriptor, network: net,
+                                                        persister: persister)
+                    _ = try bdkWallet.persist(persister: persister)
                 }
-                let secretKey = DescriptorSecretKey(network: net, mnemonic: mnemonic, password: nil)
-                let extPriv = Descriptor.newBip84(secretKey: secretKey,
-                                                  keychainKind: BDKSeam.externalKeychain(), network: net)
-                let intPriv = Descriptor.newBip84(secretKey: secretKey,
-                                                  keychainKind: BDKSeam.internalKeychain(), network: net)
-                let signer = try Wallet(descriptor: extPriv, changeDescriptor: intPriv,
-                                        network: net, persister: Persister.newInMemory())
-                return try signer.sign(psbt: psbt, signOptions: nil)
+                // SIGN-ON-DEMAND: load the WIF, build a transient private single-key wallet, sign,
+                // drop it. BDK re-derives the key from the PSBT, so `pkh(<WIF>)` signs a PSBT the
+                // watch-only `pkh(<pubkey>)` wallet built (same key → same address).
+                signPsbt = { psbt in
+                    guard let wif = try loadSecret() else { throw WalletError.signingFailed }
+                    let signerDesc: Descriptor
+                    do {
+                        signerDesc = try Descriptor(descriptor: "pkh(\(wif))", network: net)
+                    } catch {
+                        throw WalletError.signingFailed
+                    }
+                    let signer = try Wallet.createSingle(descriptor: signerDesc, network: net,
+                                                         persister: Persister.newInMemory())
+                    return try signer.sign(psbt: psbt, signOptions: nil)
+                }
+            } else {
+                // HD (mnemonic): WATCH-ONLY from the persisted PUBLIC descriptor strings (no secrets
+                // on the everyday wallet or its on-disk chain store).
+                let externalDescriptor = try Descriptor(descriptor: wallet.externalDescriptor, network: net)
+                let internalDescriptor = try Descriptor(descriptor: wallet.internalDescriptor, network: net)
+                do {
+                    bdkWallet = try Wallet.load(descriptor: externalDescriptor,
+                                                changeDescriptor: internalDescriptor,
+                                                persister: persister)
+                } catch {
+                    bdkWallet = try Wallet(descriptor: externalDescriptor,
+                                           changeDescriptor: internalDescriptor,
+                                           network: net,
+                                           persister: persister)
+                    _ = try bdkWallet.persist(persister: persister)
+                }
+                // SIGN-ON-DEMAND: the only place private keys exist, and only for the duration of one
+                // signing. BDK derives the signing key from the PSBT's own BIP32 paths, so a fresh
+                // in-memory wallet from the secret descriptors signs a PSBT the watch-only wallet built.
+                signPsbt = { psbt in
+                    guard let phrase = try loadSecret() else { throw WalletError.signingFailed }
+                    let mnemonic: Mnemonic
+                    do {
+                        mnemonic = try Mnemonic.fromString(mnemonic: phrase)
+                    } catch {
+                        throw WalletError.signingFailed
+                    }
+                    let secretKey = DescriptorSecretKey(network: net, mnemonic: mnemonic, password: nil)
+                    let extPriv = Descriptor.newBip84(secretKey: secretKey,
+                                                      keychainKind: BDKSeam.externalKeychain(), network: net)
+                    let intPriv = Descriptor.newBip84(secretKey: secretKey,
+                                                      keychainKind: BDKSeam.internalKeychain(), network: net)
+                    let signer = try Wallet(descriptor: extPriv, changeDescriptor: intPriv,
+                                            network: net, persister: Persister.newInMemory())
+                    return try signer.sign(psbt: psbt, signOptions: nil)
+                }
             }
 
             return WalletEngine(wallet: bdkWallet, persister: persister,
@@ -199,9 +228,45 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         let change = Descriptor.newBip84(secretKey: secretKey,
                                          keychainKind: BDKSeam.internalKeychain(), network: net)
         // String interpolation forces Display (`.toString()` on Kotlin) — portable across bindings.
-        return WalletKeys(mnemonic: "\(mnemonic)",
+        return WalletKeys(secret: "\(mnemonic)",
                           externalDescriptor: "\(external)",
                           internalDescriptor: "\(change)")
+    }
+
+    /// Validate a WIF private key and build the single-key PUBLIC descriptor `pkh(<pubkey>)`.
+    ///
+    /// We derive the public descriptor from the key's PUBLIC form (`asPublic()`) — NOT by
+    /// Display-ing a secret-bearing descriptor — so the stored descriptor can never contain the WIF
+    /// (Golden Rule §2). Building the `Descriptor` for `network` also rejects a key that can't be
+    /// used there. No BIP32 derivation: a WIF is one key = one address (`docs/wif-import-and-sweep.md`).
+    public func restorePrivateKey(network: WalletNetwork, wif: String) throws -> WalletKeys {
+        let net = BDKSeam.network(network)
+        let publicDescriptor: String
+        do {
+            let secretKey = try DescriptorSecretKey.fromString(privateKey: wif) // validates the WIF
+            let publicKey = secretKey.asPublic()                                // strips the secret
+            let descriptor = try Descriptor(descriptor: "pkh(\(publicKey))", network: net)
+            publicDescriptor = "\(descriptor)"                                  // pkh(<pubkey>) — public only
+        } catch {
+            throw WalletError.invalidPrivateKey
+        }
+        // Single key → external == internal (one address; change returns to it).
+        return WalletKeys(secret: wif, externalDescriptor: publicDescriptor, internalDescriptor: publicDescriptor)
+    }
+
+    /// The `1…` address a WIF maps to on `network`, derived watch-only (no secret persisted).
+    public func previewAddress(forWIF wif: String, network: WalletNetwork) throws -> String {
+        let net = BDKSeam.network(network)
+        let keys = try restorePrivateKey(network: network, wif: wif) // throws .invalidPrivateKey
+        do {
+            let descriptor = try Descriptor(descriptor: keys.externalDescriptor, network: net)
+            let wallet = try Wallet.createSingle(descriptor: descriptor, network: net,
+                                                 persister: Persister.newInMemory())
+            let info = wallet.peekAddress(keychain: BDKSeam.externalKeychain(), index: UInt32(0))
+            return "\(info.address)"
+        } catch {
+            throw WalletError.invalidPrivateKey
+        }
     }
 }
 
