@@ -142,6 +142,9 @@ struct SettingsScreen: View {
                     .textStyle(.xs)
                     .foregroundStyle(Theme.Colors.text2)
 
+                // TEMP (2026-07-21): push-notification dev controls hidden from Settings for now.
+                // Restore this block to re-enable the register / token-copy affordances.
+                /*
                 // Phase 1 push notifications: register the device + reveal the token so we can send a
                 // test push (Firebase console for Android; an APNs sender for iOS). Dev-only for now.
                 Button { Task { await app.push.register() } } label: {
@@ -167,6 +170,7 @@ struct SettingsScreen: View {
                         .foregroundStyle(Theme.Colors.text2)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
+                */
             }
         }
         .groupedListStyle()
@@ -208,6 +212,8 @@ struct SettingsScreen: View {
         }
     }
 
+    // TEMP (2026-07-21): unused while the push-notification dev controls above are commented out.
+    /*
     private var pushStatusText: Text {
         switch app.push.status {
         case .idle: return Text("Not registered", bundle: .module, comment: "push status: not registered")
@@ -216,6 +222,7 @@ struct SettingsScreen: View {
         case .failed(let message): return Text(verbatim: "Failed: \(message)")
         }
     }
+    */
 
     private var newWalletWordCountValueText: Text {
         app.newWalletWordCount == 24
