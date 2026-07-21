@@ -26,8 +26,9 @@ private let backupSpecPhrase = "abandon abandon abandon abandon abandon abandon 
         var markThrows = false
     }
 
-    private func makeVM(_ seams: Seams = Seams()) -> (BackupViewModel, Seams) {
+    private func makeVM(_ seams: Seams = Seams(), keyType: WalletKeyType = .mnemonic) -> (BackupViewModel, Seams) {
         let vm = BackupViewModel(
+            keyType: keyType,
             loadMnemonic: {
                 if seams.loadThrows { throw WalletError.persistenceFailed }
                 return seams.mnemonic
@@ -79,6 +80,49 @@ private let backupSpecPhrase = "abandon abandon abandon abandon abandon abandon 
         let (vm, _) = makeVM(seams)
         await vm.begin()
         if case .failed = vm.step {} else { Issue.record("expected .failed, got \(vm.step)") }
+    }
+
+    // MARK: - Private key (WIF) wallets
+
+    @Test func wifWalletRevealsPrivateKeyNotWords() async {
+        let seams = Seams()
+        seams.mnemonic = "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj"   // the "secret" is a WIF
+        let (vm, _) = makeVM(seams, keyType: .wif)
+        #expect(vm.isPrivateKey)
+        await vm.begin()
+        #expect(vm.step == .reveal)
+        #expect(vm.privateKey == "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj")
+        #expect(vm.words.isEmpty)          // no word split for a WIF
+    }
+
+    @Test func wifRevealStillGatedOnAuth() async {
+        let seams = Seams()
+        seams.authResult = false
+        seams.mnemonic = "Kzjzb4wif"
+        let (vm, _) = makeVM(seams, keyType: .wif)
+        await vm.begin()
+        #expect(vm.step == .intro)
+        #expect(vm.privateKey.isEmpty)     // never loads when auth fails
+    }
+
+    @Test func acknowledgePrivateKeyMarksBackedUpAndFinishes() async {
+        let seams = Seams()
+        seams.mnemonic = "Kzjzb4wif"
+        let (vm, _) = makeVM(seams, keyType: .wif)
+        await vm.begin()
+        #expect(vm.step == .reveal)
+        vm.acknowledgePrivateKey()
+        #expect(seams.markCallCount == 1)  // idempotent mark (WIF already backed up)
+        #expect(vm.step == .done)
+        #expect(vm.privateKey.isEmpty)     // secret wiped on finish
+    }
+
+    @Test func acknowledgePrivateKeyNoOpForMnemonicWallet() async {
+        let (vm, _) = makeVM()             // .mnemonic
+        await vm.begin()
+        #expect(vm.step == .reveal)
+        vm.acknowledgePrivateKey()         // wrong path for a mnemonic wallet — ignored
+        #expect(vm.step == .reveal)        // unchanged; mnemonic goes through verify
     }
 
     @Test func beginIsNoOpOutsideIntro() async {

@@ -25,8 +25,10 @@ struct BackupFlowView: View {
                 Theme.Colors.bg0.ignoresSafeArea()
                 content
             }
-            // Name the wallet being backed up — recovery phrases are per-wallet.
-            .navigationTitle(Text("\(vm.walletLabel) recovery phrase", bundle: .module, comment: "backup flow title; %@ is the wallet name"))
+            // Name the wallet being backed up — secrets are per-wallet.
+            .navigationTitle(vm.isPrivateKey
+                ? Text("\(vm.walletLabel) private key", bundle: .module, comment: "backup flow title (private key); %@ is the wallet name")
+                : Text("\(vm.walletLabel) recovery phrase", bundle: .module, comment: "backup flow title; %@ is the wallet name"))
             .inlineNavigationTitle()
             .toolbar {
                 ToolbarItem(placement: .primaryAction) {
@@ -49,7 +51,7 @@ struct BackupFlowView: View {
         case .intro, .authenticating:
             intro
         case .reveal:
-            reveal
+            if vm.isPrivateKey { privateKeyReveal } else { mnemonicReveal }
         case .verify:
             verify
         case .done:
@@ -67,7 +69,9 @@ struct BackupFlowView: View {
         VStack(spacing: 0) {
             ScrollView {
                 VStack(spacing: Theme.Space.x5) {
-                    Text("Keep your recovery phrase secret", bundle: .module, comment: "backup intro heading")
+                    (vm.isPrivateKey
+                        ? Text("Keep your private key secret", bundle: .module, comment: "backup intro heading (private key)")
+                        : Text("Keep your recovery phrase secret", bundle: .module, comment: "backup intro heading"))
                         .textStyle(.h1)
                         .foregroundStyle(Theme.Colors.text0)
                         .multilineTextAlignment(.center)
@@ -75,8 +79,11 @@ struct BackupFlowView: View {
 
                     VStack(alignment: .leading, spacing: Theme.Space.x4) {
                         infoBullet(Icon.key,
-                                   Text("These words are the only key to this wallet — whoever has them controls the coins.",
-                                        bundle: .module, comment: "backup intro point: master key"))
+                                   vm.isPrivateKey
+                                   ? Text("This private key is the only key to this wallet — whoever has it controls the coins.",
+                                          bundle: .module, comment: "backup intro point: master key (private key)")
+                                   : Text("These words are the only key to this wallet — whoever has them controls the coins.",
+                                          bundle: .module, comment: "backup intro point: master key"))
                         infoBullet(Icon.hide,
                                    Text("Anyone who sees them can drain the wallet, and no one can reverse it or get the coins back.",
                                         bundle: .module, comment: "backup intro point: theft is irreversible"))
@@ -178,9 +185,43 @@ struct BackupFlowView: View {
         }
     }
 
+    // MARK: - Reveal (private key / WIF)
+
+    /// A `.wif` wallet reveals a single private key for reference (no verify quiz — it's one opaque
+    /// string, and the wallet is already backed up). Mono, wrapping, with copy.
+    private var privateKeyReveal: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x4) {
+            Text("This is the private key for this wallet. Keep it secret and safe — anyone who has it controls the coins.",
+                 bundle: .module, comment: "backup: private key reveal instruction")
+                .textStyle(.body)
+                .foregroundStyle(Theme.Colors.text1)
+
+            Text(verbatim: vm.privateKey)
+                .font(.jbMono(15, .medium))
+                .foregroundStyle(Theme.Colors.text0)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(Theme.Space.x3)
+                .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+
+            Button { Clipboard.copy(vm.privateKey) } label: {
+                Text("Copy private key", bundle: .module, comment: "backup: copy private key button")
+                    .textStyle(.body)
+                    .foregroundStyle(Theme.Colors.accent)
+            }
+            .buttonStyle(.plain)
+
+            Spacer()
+
+            WalletButton(title: "I've saved it") {
+                vm.acknowledgePrivateKey()
+            }
+        }
+        .padding(Theme.Space.gutter)
+    }
+
     // MARK: - Reveal (word chips)
 
-    private var reveal: some View {
+    private var mnemonicReveal: some View {
         VStack(alignment: .leading, spacing: Theme.Space.x4) {
             if vm.verifyMissed {
                 Text("That wasn't quite right — check your copy against the words below.",
@@ -286,8 +327,11 @@ struct BackupFlowView: View {
             Text("Backed up", bundle: .module, comment: "backup done heading")
                 .textStyle(.h2)
                 .foregroundStyle(Theme.Colors.text0)
-            Text("Keep those words safe — they're the only way to restore this wallet.",
-                 bundle: .module, comment: "backup done note")
+            (vm.isPrivateKey
+                ? Text("Keep that key safe — it's the only way to restore this wallet.",
+                       bundle: .module, comment: "backup done note (private key)")
+                : Text("Keep those words safe — they're the only way to restore this wallet.",
+                       bundle: .module, comment: "backup done note"))
                 .textStyle(.sm)
                 .foregroundStyle(Theme.Colors.text1)
                 .multilineTextAlignment(.center)
