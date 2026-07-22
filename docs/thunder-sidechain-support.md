@@ -1,0 +1,266 @@
+# Thunder sidechain support — research + plan
+
+> Status: **RESEARCH / not started** (2026-07-22). Source-backed notes on how L2L's **Thunder**
+> sidechain (`github.com/LayerTwo-Labs/thunder-rust`) handles keys/addresses/signing/transactions,
+> and what it would take for this wallet to support it. **Bottom line: Thunder shares NOTHING with
+> Bitcoin's crypto — BDK cannot touch it. Supporting it is a second, parallel wallet engine. Leaning
+> to build the crypto with ONE cross-platform Swift lib (`swift-crypto` ed25519 + BLAKE3, both native
+> on iOS + Android via Skip Fuse) rather than Rust FFI — gated on a build spike (§5a).**
+
+## 1. What Thunder is
+
+A BIP300/301 **Drivechain sidechain** by Layer Two Labs — a simple, high-throughput UTXO chain that
+receives deposits from the Bitcoin mainchain and can withdraw back to it. It is its OWN chain with
+its own node + RPC; it is NOT a Bitcoin network variant like our `.bitcoin`/`.signet`/`.ecash`.
+
+## 2. Crypto model (verified against `thunder-rust` source)
+
+Every layer is different from Bitcoin:
+
+| Concern | Bitcoin (BDK) | **Thunder** | Source |
+|---|---|---|---|
+| Signature curve | secp256k1 (ECDSA/Schnorr) | **ed25519** (`ed25519-dalek`) | `lib/authorization.rs` |
+| HD derivation | BIP32/BIP44/84 (secp256k1) | **ed25519 BIP32 / SLIP-0010** (`ed25519-dalek-bip32`), path **`m/1'/0'/0'/index'`** (ALL hardened — ed25519 BIP32 only allows hardened) | `lib/wallet.rs` |
+| Seed | BIP39 mnemonic → seed | **same BIP39** mnemonic → 64-byte seed (`bip39`, empty passphrase) | `lib/wallet.rs` |
+| Hashing | SHA-256 / RIPEMD-160 | **BLAKE3** | `lib/authorization.rs` |
+| Address | P2PKH/P2SH/segwit/taproot, base58check / bech32 | **first 20 bytes of `BLAKE3(pubkey)`**, encoded as **plain base58** (NO checksum, NO version byte) | `lib/types/address.rs`, `authorization.rs::get_address` |
+| Tx serialization | Bitcoin consensus encoding | **Borsh** (canonical) | throughout `lib/types/` |
+| UTXO set | queryable (Electrum/Esplora) | **Utreexo accumulator** — inputs carry utreexo proofs; there is no address→UTXO query | `lib/types/transaction.rs` (`proof: Proof`) |
+
+### Keys
+- `SigningKey` (private, 32 B) / `VerifyingKey` (public, 32 B) / `Signature` (64 B) from `ed25519-dalek`.
+- Derivation (`wallet.rs::get_signing_key`): `ExtendedSigningKey::from_seed(seed)` →
+  `derive(m/1'/0'/0'/index')` → `signing_key`. New address = bump `index`, derive, store
+  `index → address`.
+
+### Address
+```rust
+// authorization.rs
+let mut reader = blake3::Hasher::new().update(vk.to_bytes()).finalize_xof();
+let mut out = [0u8; 20]; reader.fill(&mut out);
+Address(out)                          // base58(out) for display
+```
+Deposit-from-mainchain form is special: `s{sidechain}_{base58}_{sha256(prefix)[..3] hex}`.
+
+## 3. Transaction & signing model (the big departure)
+
+```rust
+struct Transaction { inputs: Vec<(OutPoint, Hash)>, proof: UtreexoProof, outputs: Vec<Output> }
+struct Output { address: Address, content: Content }
+enum   Content { Value(Amount), Withdrawal { value, main_fee, main_address }, /* deposit-related */ }
+enum   OutPoint { Regular{txid,vout}, Coinbase{..}, Deposit(bitcoin::OutPoint) }
+struct Authorized<T> { transaction: T, authorizations: Vec<Authorization> }  // authorizations == witnesses
+struct Authorization { verifying_key: VerifyingKey, signature: Signature }
+```
+
+**Signing is radically simpler than Bitcoin — and totally incompatible with it:**
+- **The signed message is `borsh::to_vec(&transaction)` — the ENTIRE canonical serialization of the
+  whole transaction.** There is **no sighash, no per-input message, no script, no sighash flags.**
+- **One `Authorization` per input.** To spend an output at `Address A`, attach an `Authorization`
+  whose `verifying_key` satisfies `BLAKE3(vk)[..20] == A` and whose `signature` is the ed25519
+  signature of that same whole-tx message. Verification = `ed25519_dalek::verify_batch(...)`.
+- Amounts are `bitcoin::Amount` (sats, 8-decimal) — the one thing that maps cleanly to our `Amount`.
+
+Deposits reference a mainchain `bitcoin::OutPoint`; withdrawals (`Content::Withdrawal`) bundle a
+mainchain payout address + main fee (BIP300/301 withdrawal semantics).
+
+## 4. Why BDK is out (confirming the hunch)
+
+BDK is secp256k1 + Bitcoin script + Bitcoin sighash + Bitcoin consensus serialization + a queryable
+UTXO set. Thunder is ed25519 + BLAKE3 addresses + whole-tx ed25519 signatures + Borsh + Utreexo.
+**There is zero overlap in the signing/derivation/address/serialization path.** BDK cannot generate a
+Thunder key, derive a Thunder address, build a Thunder tx, or sign one. This is not a "new network in
+`NetworkRegistry`" — it's a **second wallet engine**.
+
+## 5. What supporting Thunder requires
+
+Everything the user listed — generate keys, import keys, sign transactions — plus address derivation,
+balance/UTXO tracking (with utreexo), and deposit/withdrawal. Two big pieces:
+
+### 5a. Crypto/signing layer (ed25519 / BLAKE3 / Borsh)
+Needed: BIP39 mnemonic → seed → ed25519 BIP32 (`m/1'/0'/0'/i'`) key; `BLAKE3(pubkey)[..20]` base58
+address; Borsh-serialize a `Transaction` and ed25519-sign it into `Authorization`s; import (a BIP39
+mnemonic, or a raw ed25519 signing key). **The Borsh encoding must byte-match `thunder-rust` exactly**
+(custom `borsh_serialize` for amounts/keys/sigs, exact field order) or signatures won't verify — this
+is consensus-critical.
+
+**Recommended (per Jake, 2026-07-22): ONE cross-platform Swift crypto lib, no Rust FFI.** Because the
+app is Skip **Fuse** — native Swift compiled for BOTH iOS and Android (Swift Android SDK) — a pure
+Swift crypto package that builds on both platforms gives us the "one lib for Apple and Android" we
+want, and keeps the whole thing in the native-Swift world (no bdk-style transpiled/bridged island, no
+Rust toolchain/CI). Building blocks:
+- **ed25519 sign/verify → `swift-crypto`** (`github.com/apple/swift-crypto`, Apple's OPEN-SOURCE
+  implementation of the CryptoKit API — `Curve25519.Signing.PrivateKey/PublicKey`). It's the same API
+  as built-in CryptoKit on Apple, and compiles off-Apple (BoringSSL-backed), so it's the natural
+  cross-platform ed25519. **MUST verify it builds under the Swift Android SDK via `skip export`** —
+  that's the gating spike before committing to this path.
+- **BLAKE3** — NOT in CryptoKit/swift-crypto. Need a Swift BLAKE3 package (e.g. a C-backed or
+  pure-Swift `blake3`) that also compiles for Android/Fuse. Verify in the same spike.
+- **SLIP-0010 ed25519 BIP32 derivation** (`m/1'/0'/0'/i'`, all-hardened) — small; implement in Swift
+  on top of swift-crypto's HMAC-SHA512. (Or a Swift SLIP-0010 package.)
+- **Borsh** — hand-write a Swift Borsh codec that byte-matches thunder-rust's `Transaction`/`Output`/
+  `OutPoint`/`Content` layout (including the custom `borsh_serialize` for `bitcoin::Amount`,
+  `VerifyingKey`, `Signature`). Lock it down with cross-impl test vectors generated from thunder-rust.
+
+Host this as a **Fuse-native `ThunderService` module** (plain native Swift on both platforms — simpler
+than the WalletService BDK seam, which is transpiled only because bdk-android is Kotlin). **Fallback:**
+if any of swift-crypto / BLAKE3 / etc. won't build under the Android Swift SDK, wrap `thunder-rust`
+itself in a Rust FFI crate (UniFFI, like bdk-ffi) — reuses Thunder's audited code but re-adds a Rust
+toolchain + a transpiled/bridged island. Prefer the Swift path; keep FFI as the escape hatch.
+
+**The gating spike:** in a throwaway branch, add `swift-crypto` + a BLAKE3 package to a Fuse module,
+do a `Curve25519.Signing` sign + a BLAKE3 hash, and run `skip export --debug` to confirm BOTH compile
+for Android. Everything else (SLIP-0010, Borsh, RPC) follows only if that spike is green.
+
+### 5b. Node / backend layer — ⚠️ THE REAL BLOCKER (RPC read, 2026-07-22)
+
+Thunder has its own node + JSON-RPC (`rpc-api/lib.rs`). The full method set:
+`balance, connect_peer, create_deposit, format_deposit_address, forget_peer, generate_mnemonic,
+get_block, get_bmm_inclusions, get_best_mainchain_block_hash, get_best_sidechain_block_hash,
+get_new_address, get_transaction, get_wallet_addresses, get_wallet_utxos, getblockcount,
+latest_failed_withdrawal_bundle_height, list_peers, list_utxos, mine, openapi_schema,
+pending_withdrawal_bundle, remove_from_mempool, set_seed_from_mnemonic, sidechain_wealth, stop,
+transfer, withdraw`.
+
+**This is a NODE-HOLDS-THE-WALLET RPC (like bitcoind's wallet RPC), NOT a client-side-signing API:**
+- `set_seed_from_mnemonic(mnemonic)` / `generate_mnemonic()` — the **NODE holds the seed**.
+- `get_new_address()`, `get_wallet_addresses()`, `get_wallet_utxos()` — the node's own wallet.
+- `transfer(dest, value_sats, fee_sats) -> Txid`, `withdraw(mainchain_addr, amount, fee)`,
+  `create_deposit(addr, value, fee)` — the node **builds + ed25519-signs + submits** internally.
+- **There is NO RPC to submit a client-signed tx, and NO way to fetch an arbitrary address's UTXOs +
+  utreexo proofs.** So as-is, using Thunder = pushing your seed to a node and letting it sign.
+
+**Consequence — two paths, and only one fits our non-custodial model:**
+- **Path A — client-side signing (our model, Golden Rule §2).** Phone holds the ed25519 seed, builds +
+  signs the `AuthorizedTransaction` locally (§5a swift-crypto stack), node used ONLY for chain data +
+  broadcast. **BLOCKED on the RPC:** needs (1) a `submit_transaction(AuthorizedTransaction)` method and
+  (2) a fetch-my-UTXOs-with-utreexo-proofs method. **Good news: the node ALREADY has the capability —
+  `lib/node/mod.rs::Node::submit_transaction(AuthorizedTransaction)` exists internally; it's just not
+  exposed over RPC.** So this is a **modest addition to `thunder-rust`** (L2L owns it), not new
+  consensus code. Coordinate with L2L to add those two RPC methods.
+- **Path B — thin client to the node's wallet.** Call `set_seed_from_mnemonic` + `transfer`/`withdraw`.
+  Simplest, ships today — but the **seed lives on the node**, which is **custodial / trust-the-node**
+  and violates our "keys never leave the secure store" rule UNLESS the user runs their OWN Thunder node
+  they control (then it's self-custody, and the phone is just a remote control for that node). Pushing
+  the seed to a shared/L2L-hosted node is a non-starter for us.
+
+**DECIDED (Jake, 2026-07-22): Path A.** The **eCash wallet holds the one seed**, derives the Thunder
+ed25519 keys from it (same BIP39 mnemonic → ed25519 `m/1'/0'/0'/i'`), **signs the `AuthorizedTransaction`
+locally, and pushes the SIGNED tx to the Thunder RPC.** The Thunder node RPC is **"just another API,"
+treated like our existing backends** — i.e. a per-network endpoint (`kind: "thunder"`, a URL) carried in
+the same remote config (`drivechain.dev/config`) alongside electrum/esplora, and resolved the same way.
+The node is a dumb relay + chain-data source; it never sees the seed. **The ONLY gap is on the node
+side:** thunder-rust must expose (1) `submit_transaction(AuthorizedTransaction)` (its internal
+`Node::submit_transaction` already does exactly this) and (2) a fetch-my-UTXOs-with-utreexo-proofs
+method. Those two RPC additions are the gating dependency — not the crypto — and they're L2L's to add.
+
+### 5c. Thunder is a sidechain OF the eCash fork (Jake, 2026-07-22)
+Not a separate chain to bolt on — it's a **BIP300/301 sidechain of the eCash mainchain we already
+support** (`.ecash`). So:
+- **Deposits** (eCash-mainchain → Thunder) are an **eCash *mainchain* transaction** to a special
+  deposit address (`format_deposit_address`: `s{sidechain}_{base58}_{sha256[:3]}`). Our **existing
+  eCash BDK engine can build that mainchain tx** — the sidechain side just credits it. (`create_deposit`
+  RPC does it node-side today; client-side we'd build the mainchain tx ourselves via BDK.)
+- **Withdrawals** (Thunder → eCash-mainchain) are the `Content::Withdrawal { value, main_fee,
+  main_address }` output → a withdrawal bundle settled on the eCash mainchain (BIP300/301).
+- **Presentation (TBD — Jake unsure):** likely NOT a separate top-level "network" in the switcher, but
+  a **layer/tab within the eCash wallet** — an eCash wallet has a mainchain balance and a Thunder
+  (L2/sidechain) balance, with deposit/withdraw moving funds between them. Same seed could derive both
+  the eCash (secp256k1) and Thunder (ed25519) keys. Decide the UX model before building.
+
+## 6. Fit with our architecture
+
+Our design already abstracts networks behind `WalletManager` (vends an engine per network) and
+`WalletEngineProtocol` (balance/address/build/sign/broadcast). Thunder slots in as a **new engine that
+implements `WalletEngineProtocol` but is backed by `ThunderService` (ed25519 + Thunder RPC), NOT BDK.**
+Notes:
+- `WalletNetwork` today assumes Bitcoin-family semantics (coin-type, HRP, `Network.bitcoin`). Thunder
+  is a different *chain family* — likely a new `WalletNetwork` case whose engine factory returns the
+  Thunder engine instead of the BDK one, and whose address/unit/derivation come from Thunder, not
+  `NetworkRegistry`'s Bitcoin params. May want a `chainFamily` discriminator.
+- `Amount` (Int64 sats) is reusable as-is (Thunder uses `bitcoin::Amount`).
+- The mnemonic UX (generate/import 12/24 words) is reusable — same BIP39 — but the derivation +
+  addresses are Thunder's. A user's Bitcoin seed and Thunder seed can be the same phrase yet control
+  entirely different coins.
+- Send/receive/history/backup screens are largely engine-agnostic already; the WIF-style "import a raw
+  key" flow has a Thunder analog (import a raw ed25519 signing key).
+
+## 7. Open questions (before building)
+
+- **[#1 BLOCKER] thunder-rust RPC additions** (§5b) — needs `submit_transaction(AuthorizedTransaction)`
+  + a fetch-my-UTXOs-with-utreexo-proofs method to enable client-side signing. The node's internal
+  `Node::submit_transaction` already exists → coordinate with L2L to expose it over RPC. **Without
+  this, no non-custodial Thunder mobile wallet.**
+- **Utreexo on a phone** — does the wallet track its own utreexo proofs, or does the (extended) RPC
+  serve them per request? Shapes how "light" the wallet can be.
+- **Cross-platform Swift crypto vs Rust FFI** — decided 5a: **leaning pure-Swift (`swift-crypto` +
+  BLAKE3 + hand-written SLIP-0010/Borsh) in a Fuse-native `ThunderService`**, one lib for both
+  platforms. GATED on the spike proving swift-crypto + BLAKE3 build for the Android Swift SDK.
+- **Presentation UX** (§5c) — Thunder is a sidechain of eCash → likely a **layer/tab inside the eCash
+  wallet** (mainchain vs Thunder balance + deposit/withdraw), not a separate network. Jake TBD.
+- **Deposit/withdrawal flows** — deposit = an eCash *mainchain* tx our BDK engine can build (to the
+  special deposit address); withdrawal = a Thunder `Content::Withdrawal` → BIP300/301 bundle. Scope
+  separately (CLAUDE.md §12 "BIP300/301 deposits & withdrawals" — Thunder is the concrete instance).
+
+## 8b. Proposed client-signing RPC (the concrete spec for L2L)
+
+The wallet holds the seed, derives ed25519 addresses locally, and treats the Thunder node as a dumb
+relay + chain-data source. Split of work: **node does coin-selection + utreexo proof + change; client
+does ed25519 signing only.** This is possible precisely because `Transaction.proof` is `#[borsh(skip)]`
+— the signed message (`borsh(transaction)`) covers inputs + outputs but NOT the proof, so the node can
+attach (or even refresh) the proof without invalidating client signatures, sidestepping the classic
+"utreexo proof went stale between build and broadcast" problem.
+
+### Read (wallet passes its own addresses — it derives them locally)
+```
+get_balance(addresses: [Address])        -> { total_sats, available_sats }
+get_utxos(addresses: [Address])          -> [ { outpoint, address, value_sats, is_withdrawal, block_height? } ]
+get_transactions(addresses: [Address],
+                 limit?)                 -> [ { txid, net_sats, fee_sats?, block_height?, timestamp?, confirmations } ]
+```
+Sync state reuses existing `getblockcount` / `get_best_sidechain_block_hash`. Fee: a
+`suggested_fee_sats()` (or reuse whatever `transfer` uses).
+
+### Spend — build (node) → sign (client) → submit (node)
+```
+create_transaction(
+    spend_from:     [Address],          // wallet-owned addresses whose UTXOs may be spent
+    outputs:        [ Value{address, value_sats}  |  Withdrawal{main_address, value_sats, main_fee_sats} ],
+    fee_sats:       u64,
+    change_address: Address             // wallet-owned
+) -> Transaction                        // UNSIGNED: { inputs:[(OutPoint,Hash)], outputs:[Output], proof }
+                                        // node selected coins, added change, generated the utreexo proof
+
+# client: for each input, find which wallet address owns it -> derive its ed25519 key ->
+#         sig = sign(borsh(transaction))  (proof is borsh-skipped) -> Authorization{verifying_key, signature}
+
+submit_transaction(
+    authorized_tx: AuthorizedTransaction   // { transaction, authorizations:[{verifying_key, signature}] }
+) -> Txid                                  # wraps the EXISTING internal Node::submit_transaction
+```
+The **only genuinely new node capability is `submit_transaction`** — and the node already has it
+internally (`lib/node/mod.rs`). `create_transaction` is a refactor of what `transfer` already does
+(select + build + proof), minus the node-side authorize step. Withdrawals are just a `create_transaction`
+with a `Withdrawal` output (no separate method needed — replaces node-side `withdraw`).
+
+### Deposit (eCash mainchain → Thunder) — NOT a Thunder spend RPC
+`format_deposit_address(address) -> "s{n}_{base58}_{checksum}"` already exists. The wallet formats a
+Thunder receive address, then **builds the deposit as an eCash *mainchain* tx via our existing BDK
+engine** and broadcasts it on eCash; the sidechain credits it. No Thunder `submit_transaction` involved.
+
+### How it maps to our `WalletEngineProtocol` (the Thunder engine)
+`balance()`→`get_balance`; `nextReceiveAddress()`→derive ed25519 addr locally; `buildTx()`→
+`create_transaction` (unsigned); `sign()`→local ed25519 per input; `broadcast()`→`submit_transaction`;
+`transactions()`→`get_transactions`. Same protocol our BDK engine implements — the Thunder engine just
+swaps BDK for (swift-crypto + Thunder RPC).
+
+## 8. Bottom line
+
+Thunder is a genuinely separate chain: **ed25519 keys (BIP32 `m/1'/0'/0'/i'`), BLAKE3-hashed base58
+addresses, whole-tx ed25519 signatures, Borsh serialization, Utreexo UTXO set, own node RPC.** BDK is
+irrelevant to all of it. Leaning path: a **Fuse-native `ThunderService`** built on **one cross-platform
+Swift crypto stack** — `swift-crypto` (ed25519, same CryptoKit API on iOS + off-Apple) + a Swift BLAKE3
+package + hand-written SLIP-0010 derivation + a Borsh codec — plugged into our existing per-network
+engine abstraction as a non-BDK engine, talking to a Thunder node RPC. Rust FFI (wrap thunder-rust) is
+the fallback if the Swift crypto packages don't build for the Android Swift SDK. First concrete step is
+the §5a build spike. The wallet architecture is already shaped to absorb a second engine.
