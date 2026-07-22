@@ -14,9 +14,9 @@ SwiftUI codebase ships as a native SwiftUI app on iOS and native Jetpack Compose
 [Skip](https://skip.dev). All key material, signing, and consensus logic is handled by
 [BDK](https://bitcoindevkit.org) (`bdk-swift` / `bdk-android`).
 
-Multi-wallet and multi-network from day one. v1 bundles **Bitcoin mainnet** (`0'`) and
-**L2L Signet** (`1'`); eCash mainnet and L2L test networks slot in as `NetworkRegistry` entries
-later.
+Multi-wallet and multi-network from day one. Bundled networks: **Bitcoin mainnet** (`0'`),
+**L2L Signet** (`1'`), and the **eCash dry-run chain** (drynet2, unit ECX); further eCash / L2L
+networks slot in as `NetworkRegistry` entries.
 
 ## Contributing
 
@@ -104,10 +104,10 @@ scripts/run-ios-device.sh Release  # Release
 ## Testing
 
 ```bash
-# Fast: Swift host tests + transpiled JUnit on the JVM (Robolectric) — both platforms, one run.
+# Fast: host tests for the app view models + Thunder crypto (Swift Testing, on the Mac).
 swift test
 
-# Just the wallet engine package:
+# The wallet engine package — transpiled JUnit on the JVM (Robolectric), so both platforms in one run:
 swift test --package-path Packages/WalletService
 
 # Verify the Android build actually transpiles + compiles (the real Android gate):
@@ -129,8 +129,11 @@ Your keys stay on your device, and the app is built to keep them exposed as litt
   secure store — iOS **Keychain** (`WhenUnlockedThisDeviceOnly`, no iCloud sync) / Android
   **Keystore-backed encrypted storage** — keyed per wallet. Everything else (xpub descriptors,
   labels, the transaction cache) is public data.
-- **BDK owns all cryptography.** Key derivation, signing, PSBT building, and coin selection are
-  handled by the [Bitcoin Dev Kit](https://bitcoindevkit.org) — no hand-rolled crypto.
+- **BDK owns all cryptography** for the Bitcoin/eCash wallet. Key derivation, signing, PSBT building,
+  and coin selection are handled by the [Bitcoin Dev Kit](https://bitcoindevkit.org) — no hand-rolled
+  crypto. *(The one exception is the in-development [Thunder](https://github.com/LayerTwo-Labs/thunder-rust)
+  sidechain engine — a non-BDK chain, not yet user-facing — which uses swift-crypto + BLAKE3 with
+  derivation and serialization pinned to published test vectors. See the acknowledgements table.)*
 - **Watch-only + sign-on-demand.** Day-to-day the wallet runs **watch-only**: balance, address
   derivation, syncing, and even building a transaction use only the *public* descriptors — the
   secret store is never read. Your phrase is loaded for exactly one purpose, at one moment: to
