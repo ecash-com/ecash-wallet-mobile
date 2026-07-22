@@ -4,6 +4,7 @@
 
 import Foundation
 import Crypto   // Apple's swift-crypto — CryptoKit API on Apple, BoringSSL-backed off-Apple
+import Blake3   // SwiftBlake3 — official C BLAKE3, HashFunction-conforming (Thunder address hashing)
 
 /// SPIKE (docs/thunder-sidechain-support.md §5a): prove Apple's `swift-crypto` **ed25519**
 /// (`Curve25519.Signing`) compiles + runs on BOTH iOS and Android (Skip Fuse, Swift Android SDK).
@@ -21,5 +22,13 @@ enum ThunderCryptoSpike {
     /// The 32-byte ed25519 public key — what a Thunder address hashes via `BLAKE3(pubkey)[..20]`.
     static func newPublicKeyBytes() -> [UInt8] {
         Array(Curve25519.Signing.PrivateKey().publicKey.rawRepresentation)
+    }
+
+    /// A Thunder address digest: `BLAKE3(pubkey)` truncated to 20 bytes (`authorization.rs::get_address`).
+    /// (BLAKE3's XOF first 32 bytes == the default 32-byte digest, so the first 20 match Thunder's
+    /// `finalize_xof().fill(&mut [u8; 20])`.) Exercises SwiftBlake3 on both platforms.
+    static func thunderAddressDigest(pubKey: [UInt8]) -> [UInt8] {
+        let digest = Blake3.hash(data: pubKey)   // 32-byte BLAKE3 (HashFunction static API)
+        return Array(Array(digest).prefix(20))
     }
 }

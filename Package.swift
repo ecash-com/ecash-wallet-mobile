@@ -27,8 +27,12 @@ let package = Package(
         .package(url: "https://github.com/skiptools/skip-firebase.git", "0.0.0"..<"2.0.0"),
         // Apple's open-source Crypto (the CryptoKit API; BoringSSL-backed off-Apple) — ed25519 via
         // Curve25519.Signing, for the future Thunder sidechain (ed25519 keys/sigs; docs/thunder-*).
-        // SPIKE: verifying it builds for the Android Swift SDK under Fuse (the gating question).
-        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"5.0.0"),
+        // Builds for both platforms under Fuse (verified). (Range capped <4.0.0 to match SwiftBlake3.)
+        .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"4.0.0"),
+        // BLAKE3 (official C impl wrapped in Swift; x86 SIMD files are #if-guarded so aarch64 uses
+        // NEON) — Thunder hashes ed25519 pubkeys to addresses with it. Conforms to swift-crypto's
+        // HashFunction (reuses the same swift-crypto). SPIKE: verify it builds for Android/Fuse.
+        .package(url: "https://github.com/thecoolwinter/SwiftBlake3.git", from: "0.1.0"),
         // The BDK seam lives in its own transpiled+bridged package (the SkipSQL pattern);
         // it carries the bdk-swift / bdk-android dependencies internally.
         .package(path: "Packages/WalletService")
@@ -41,6 +45,7 @@ let package = Package(
             .product(name: "SkipFirebaseCore", package: "skip-firebase"),
             .product(name: "SkipFirebaseMessaging", package: "skip-firebase"),
             .product(name: "Crypto", package: "swift-crypto"),
+            .product(name: "Blake3", package: "SwiftBlake3"),
             .product(name: "WalletService", package: "WalletService")
         ], resources: [.process("Resources")], plugins: [.plugin(name: "skipstone", package: "skip")]),
         // View-model / pure-logic tests. XCTest so they run on the host (`SKIP_BRIDGE=1 swift test`)
