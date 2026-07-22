@@ -179,6 +179,8 @@ app screen and this table should be kept in sync.
 |---|---|---|
 | [Skip](https://skip.tools) | Swift→Kotlin cross-platform toolchain + frameworks | MPL-2.0 |
 | [Bitcoin Dev Kit](https://bitcoindevkit.org) (`bdk-swift` / `bdk-android`) | Wallet engine | Apache-2.0 / MIT |
+| [swift-crypto](https://github.com/apple/swift-crypto) | ed25519 signing (Thunder sidechain) | Apache-2.0 |
+| [SwiftBlake3](https://github.com/thecoolwinter/SwiftBlake3) | BLAKE3 hashing (Thunder addresses) | ISC (bundled BLAKE3 C: CC0-1.0 / Apache-2.0) |
 | [SkipKeychain](https://source.skip.tools/skip-keychain) | Secure mnemonic storage | LGPL-3.0 |
 | [swift-qrcode-generator](https://github.com/fwcd/swift-qrcode-generator) | Receive QR codes | MIT |
 | [SkipQRCode](https://source.skip.tools/skip-qrcode) | Send QR scanning (Android camera) | LGPL-3.0 |

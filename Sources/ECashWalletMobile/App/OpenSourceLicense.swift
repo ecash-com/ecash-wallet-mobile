@@ -33,6 +33,14 @@ extension OpenSourceLicense {
             license: "Apache-2.0 / MIT",
             url: "https://bitcoindevkit.org"),
         OpenSourceLicense(
+            name: "swift-crypto",
+            license: "Apache-2.0",
+            url: "https://github.com/apple/swift-crypto"),
+        OpenSourceLicense(
+            name: "SwiftBlake3",
+            license: "ISC (bundled BLAKE3 C: CC0-1.0 / Apache-2.0)",
+            url: "https://github.com/thecoolwinter/SwiftBlake3"),
+        OpenSourceLicense(
             name: "SkipKeychain",
             license: "LGPL-3.0",
             url: "https://source.skip.tools/skip-keychain"),
