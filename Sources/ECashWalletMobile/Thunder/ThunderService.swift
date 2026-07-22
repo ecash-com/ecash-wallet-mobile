@@ -31,30 +31,29 @@ final class ThunderService: WalletOps {
         self.loadMnemonic = loadMnemonic
     }
 
-    /// Load the mnemonic and build a transient `ThunderWallet`. Callers use it and let it go.
-    private func wallet(for walletId: String) throws -> ThunderWallet {
+    // MARK: - Local (works today, no RPC)
+
+    /// A receive address, derived OFF the main actor. `unused: true` → index 0 (the default shown when
+    /// Receive opens); `false` ("New address") → advance a local rotation index (deriving a fresh
+    /// address needs no RPC — only knowing which are *used* would). The mnemonic is read on the main
+    /// actor (a quick Keychain access, and reading it off-main would trip the same isolation assertion
+    /// that bit the facade), but the heavy work — PBKDF2 + SLIP-0010 + ed25519 + BLAKE3 — runs in a
+    /// detached task so the Receive sheet's present animation stays smooth.
+    func receiveAddress(walletId: String, unused: Bool) async throws -> AddressInfo {
         guard let mnemonic = try loadMnemonic(walletId), !mnemonic.isEmpty else {
             throw ThunderError.mnemonicUnavailable(walletId: walletId)
         }
-        return ThunderWallet(mnemonic: mnemonic)
-    }
-
-    // MARK: - Local (works today, no RPC)
-
-    /// "New address" — reveal a FRESH address by advancing the local index. Deriving a new address
-    /// needs no RPC (only knowing which are *used* would), so this genuinely rotates.
-    func nextReceiveAddress(walletId: String) throws -> AddressInfo {
-        let index = (revealedIndex[walletId] ?? 0) + 1
-        let address = try wallet(for: walletId).address(at: index)
-        revealedIndex[walletId] = index
-        return AddressInfo(address: address.base58, index: Int32(index))
-    }
-
-    /// The default address shown when Receive opens: index 0. Real gap-scan for the lowest *unused*
-    /// index needs the RPC history; until then it's the wallet's first address.
-    func nextUnusedAddress(walletId: String) throws -> AddressInfo {
-        let address = try wallet(for: walletId).address(at: 0)
-        return AddressInfo(address: address.base58, index: 0)
+        let index: UInt32
+        if unused {
+            index = 0
+        } else {
+            index = (revealedIndex[walletId] ?? 0) + 1
+            revealedIndex[walletId] = index
+        }
+        return try await Task.detached(priority: .userInitiated) {
+            let key = try ThunderKey.derive(mnemonic: mnemonic, index: index)
+            return AddressInfo(address: key.address.base58, index: Int32(index))
+        }.value
     }
 
     // MARK: - RPC-gated (throw until the Thunder node RPC is wired)

@@ -25,7 +25,7 @@ struct ReceiveScreen: View {
         // Show the current UNUSED address on appear — repeat opens do NOT advance the index
         // (every revealed index widens the address space sync must cover; advancing on each
         // open is how funds ended up beyond the scan gap). "New address" below advances.
-        .task { if address == nil { address = app.nextUnusedAddress() } }
+        .task { if address == nil { address = await app.nextUnusedAddress() } }
     }
 
     @ViewBuilder
@@ -79,7 +79,7 @@ struct ReceiveScreen: View {
                 }
 
                 Button {
-                    address = app.nextReceiveAddress()
+                    Task { address = await app.nextReceiveAddress() }
                     copied = false
                 } label: {
                     HStack(spacing: Theme.Space.x1) {

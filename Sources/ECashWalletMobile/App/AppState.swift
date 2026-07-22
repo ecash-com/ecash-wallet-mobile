@@ -482,7 +482,9 @@ final class AppState {
     func makeFaucetViewModel() -> FaucetViewModel? {
         guard let wallet = selectedWallet,
               let config = FaucetRegistry.config(for: wallet.network),
-              let addr = nextUnusedAddress() else { return nil }
+              // Faucets exist only on BDK networks (signet) — never Thunder — so the fast bridged
+              // lookup is fine here (no need for the async receive-address path).
+              let addr = try? manager.nextUnusedAddress(walletId: wallet.id) else { return nil }
         let network = wallet.network
         let params = NetworkRegistry.params(for: network)
         let client = FaucetClient(endpoint: config.endpoint)
@@ -656,16 +658,16 @@ final class AppState {
     /// Reveal the selected wallet's NEXT receive address (advances + persists the index) — for
     /// the explicit "New address" action. Local derivation only (no network), safe on the main
     /// actor. Returns nil if there's no selected wallet or derivation fails.
-    func nextReceiveAddress() -> AddressInfo? {
+    func nextReceiveAddress() async -> AddressInfo? {
         guard let id = selectedWalletId else { return nil }
-        return try? walletOps.nextReceiveAddress(walletId: id)
+        return try? await walletOps.receiveAddress(walletId: id, unused: false)
     }
 
     /// The selected wallet's lowest revealed-but-unused receive address — the Receive screen's
     /// default (doesn't advance on every open; see WalletManager.nextUnusedAddress).
-    func nextUnusedAddress() -> AddressInfo? {
+    func nextUnusedAddress() async -> AddressInfo? {
         guard let id = selectedWalletId else { return nil }
-        return try? walletOps.nextUnusedAddress(walletId: id)
+        return try? await walletOps.receiveAddress(walletId: id, unused: true)
     }
 
     /// TEMP (remove): sample transactions to verify the activity-row layout without on-chain funds.

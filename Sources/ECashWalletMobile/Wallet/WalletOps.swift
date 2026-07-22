@@ -22,8 +22,11 @@ protocol WalletOps {
     func balance(walletId: String) throws -> Amount
     func pendingBalance(walletId: String) throws -> Amount
     func sync(walletId: String) async throws -> Amount
-    func nextReceiveAddress(walletId: String) throws -> AddressInfo
-    func nextUnusedAddress(walletId: String) throws -> AddressInfo
+    /// A receive address: `unused: true` = the default (lowest unused, doesn't advance); `false` =
+    /// reveal a fresh one ("New address"). **Async** so an engine whose derivation is heavy (Thunder:
+    /// Keychain read + PBKDF2 + SLIP-0010 + BLAKE3) can run it OFF the main actor and not jank the
+    /// Receive sheet's present animation. BDK stays fast (a cached watch-only lookup).
+    func receiveAddress(walletId: String, unused: Bool) async throws -> AddressInfo
     func transactions(walletId: String) throws -> [WalletTx]
     func send(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> WalletTx
 }

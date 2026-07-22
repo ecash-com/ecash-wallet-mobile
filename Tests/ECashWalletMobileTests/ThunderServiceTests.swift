@@ -16,33 +16,33 @@ import WalletService
     private static let mnemonic = "abandon abandon abandon abandon abandon abandon "
         + "abandon abandon abandon abandon abandon about"
 
-    @Test func nextUnusedAddressIsIndexZeroGolden() throws {
+    @Test func unusedAddressIsIndexZeroGolden() async throws {
         let service = ThunderService(loadMnemonic: { _ in Self.mnemonic })
-        let info = try service.nextUnusedAddress(walletId: "w1")
+        let info = try await service.receiveAddress(walletId: "w1", unused: true)
         #expect(info.address == "38VvRdmcQREr1UAcZma98WLFVpAp")   // index-0 golden (ThunderWallet)
         #expect(info.index == 0)
     }
 
-    @Test func newAddressAdvancesAndDiffersFromDefault() throws {
+    @Test func newAddressAdvancesAndDiffersFromDefault() async throws {
         let service = ThunderService(loadMnemonic: { _ in Self.mnemonic })
-        let a = try service.nextReceiveAddress(walletId: "w1")   // first "New address" → index 1
-        let b = try service.nextReceiveAddress(walletId: "w1")   // → index 2
+        let a = try await service.receiveAddress(walletId: "w1", unused: false)   // first "New address" → index 1
+        let b = try await service.receiveAddress(walletId: "w1", unused: false)   // → index 2
         #expect(a.index == 1)
         #expect(b.index == 2)
         #expect(a.address != b.address)                          // it actually rotates
-        #expect(a.address != (try service.nextUnusedAddress(walletId: "w1")).address)   // ≠ the default (index 0)
+        #expect(a.address != (try await service.receiveAddress(walletId: "w1", unused: true)).address)   // ≠ the default
     }
 
-    @Test func revealIndexIsPerWallet() throws {
+    @Test func revealIndexIsPerWallet() async throws {
         let service = ThunderService(loadMnemonic: { _ in Self.mnemonic })
-        _ = try service.nextReceiveAddress(walletId: "w1")             // w1 → index 1
-        #expect(try service.nextReceiveAddress(walletId: "w2").index == 1)   // w2's counter is independent
+        _ = try await service.receiveAddress(walletId: "w1", unused: false)             // w1 → index 1
+        #expect(try await service.receiveAddress(walletId: "w2", unused: false).index == 1)   // w2's counter is independent
     }
 
-    @Test func missingMnemonicThrowsTyped() {
+    @Test func missingMnemonicThrowsTyped() async {
         let service = ThunderService(loadMnemonic: { _ in nil })
         do {
-            _ = try service.nextReceiveAddress(walletId: "w1")
+            _ = try await service.receiveAddress(walletId: "w1", unused: true)
             Issue.record("expected mnemonicUnavailable")
         } catch let error as ThunderError {
             #expect(error == .mnemonicUnavailable(walletId: "w1"))

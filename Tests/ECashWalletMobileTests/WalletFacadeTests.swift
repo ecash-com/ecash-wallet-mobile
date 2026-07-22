@@ -21,8 +21,9 @@ import WalletService
         func balance(walletId: String) throws -> Amount { calls.append("balance:\(walletId)"); return Amount(sats: tag == "thunder" ? 2 : 1) }
         func pendingBalance(walletId: String) throws -> Amount { calls.append("pending:\(walletId)"); return Amount(sats: 0) }
         func sync(walletId: String) async throws -> Amount { calls.append("sync:\(walletId)"); return Amount(sats: 0) }
-        func nextReceiveAddress(walletId: String) throws -> AddressInfo { calls.append("recv:\(walletId)"); return AddressInfo(address: tag, index: 0) }
-        func nextUnusedAddress(walletId: String) throws -> AddressInfo { calls.append("unused:\(walletId)"); return AddressInfo(address: tag, index: 0) }
+        func receiveAddress(walletId: String, unused: Bool) async throws -> AddressInfo {
+            calls.append("recv:\(walletId):\(unused)"); return AddressInfo(address: tag, index: 0)
+        }
         func transactions(walletId: String) throws -> [WalletTx] { calls.append("txs:\(walletId)"); return [] }
         func send(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> WalletTx {
             calls.append("send:\(walletId)")
@@ -58,8 +59,8 @@ import WalletService
         _ = try facade.balance(walletId: "thunder-id")
         _ = try facade.pendingBalance(walletId: "thunder-id")
         _ = try await facade.sync(walletId: "thunder-id")
-        _ = try facade.nextReceiveAddress(walletId: "thunder-id")
-        _ = try facade.nextUnusedAddress(walletId: "thunder-id")
+        _ = try await facade.receiveAddress(walletId: "thunder-id", unused: true)
+        _ = try await facade.receiveAddress(walletId: "thunder-id", unused: false)
         _ = try facade.transactions(walletId: "thunder-id")
         _ = try await facade.send(walletId: "thunder-id", to: "x", amount: Amount(sats: 1), feeRate: FeeRate(satPerVByte: 1))
         #expect(thunder.calls.count == 7)     // all seven ops routed to Thunder
