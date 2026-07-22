@@ -1,5 +1,5 @@
 {
-  "originHash" : "03946b7c2740e1daf15ff39211b7b7763c3649f9dd769406282372475755ce39",
+  "originHash" : "3f34a9af985568fbeccd033d8fb1e988b1fe26f7f5439cba6bab7bd1b344caa7",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -296,15 +296,6 @@
       "state" : {
         "revision" : "e70a10e036a55fffea31568f0af92d69b6d449cd",
         "version" : "0.23.2"
-      }
-    },
-    {
-      "identity" : "swiftblake3",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/thecoolwinter/SwiftBlake3.git",
-      "state" : {
-        "revision" : "d23ea81af1c42940e34022dadd732e642696100a",
-        "version" : "0.1.0"
       }
     }
   ],

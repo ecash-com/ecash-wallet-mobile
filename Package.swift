@@ -29,10 +29,12 @@ let package = Package(
         // Curve25519.Signing, for the future Thunder sidechain (ed25519 keys/sigs; docs/thunder-*).
         // Builds for both platforms under Fuse (verified). (Range capped <4.0.0 to match SwiftBlake3.)
         .package(url: "https://github.com/apple/swift-crypto.git", "3.0.0"..<"4.0.0"),
-        // BLAKE3 (official C impl wrapped in Swift; x86 SIMD files are #if-guarded so aarch64 uses
-        // NEON) — Thunder hashes ed25519 pubkeys to addresses with it. Conforms to swift-crypto's
-        // HashFunction (reuses the same swift-crypto). SPIKE: verify it builds for Android/Fuse.
-        .package(url: "https://github.com/thecoolwinter/SwiftBlake3.git", from: "0.1.0"),
+        // BLAKE3 (official C impl wrapped in Swift) — Thunder hashes ed25519 pubkeys to addresses with
+        // it. VENDORED (Packages/SwiftBlake3) rather than the upstream github package: upstream's
+        // `blake3_neon.c` gates on `__ARM_NEON__` (undefined on Android aarch64 clang) while the
+        // dispatcher calls `blake3_hash_many_neon` → undefined symbol → the Swift .so won't dlopen on
+        // Android (app crashed at launch on the Saga). Our vendored copy forces the portable C path.
+        .package(path: "Packages/SwiftBlake3"),
         // The BDK seam lives in its own transpiled+bridged package (the SkipSQL pattern);
         // it carries the bdk-swift / bdk-android dependencies internally.
         .package(path: "Packages/WalletService")
