@@ -33,10 +33,15 @@ struct ThunderAddress: Equatable {
     /// The everyday address string a user sees / pastes (plain base58, no checksum).
     var base58: String { Base58.encode(bytes) }
 
+    /// Thunder's sidechain number on the mainchain — `THIS_SIDECHAIN` in thunder-rust (`types/mod.rs`).
+    static let sidechainNumber = 9
+
+    /// The **mainchain** deposit form using Thunder's own sidechain number (`s9_…`). This is the
+    /// address the eCash BDK engine sends a deposit to (a future BIP300 workstream).
+    func depositString() -> String { depositString(sidechainNumber: Self.sidechainNumber) }
+
     /// The **mainchain** deposit form for sidechain `sidechainNumber`:
     /// `s{n}_{base58}_{hex(sha256("s{n}_{base58}_")[..3])}` (`address.rs::format_for_deposit`).
-    /// This is the address our eCash BDK engine sends a deposit to; `sidechainNumber` is Thunder's
-    /// `THIS_SIDECHAIN` (to be pinned when we wire deposits — see docs/thunder-sidechain-support.md).
     func depositString(sidechainNumber: Int) -> String {
         let prefix = "s\(sidechainNumber)_\(base58)_"
         let digest = Array(SHA256.hash(data: Data(prefix.utf8)))

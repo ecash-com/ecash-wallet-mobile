@@ -150,4 +150,17 @@ import Crypto
         let key = try ThunderKey.derive(mnemonic: Self.testMnemonic, index: 0)
         #expect(key.address.base58 == "38VvRdmcQREr1UAcZma98WLFVpAp")
     }
+
+    /// The mainchain deposit form: `s9_{base58}_{sha256("s9_{base58}_")[..3] hex}`
+    /// (`address.rs::format_for_deposit`, `THIS_SIDECHAIN == 9`). Checksum recomputed independently.
+    @Test func depositStringHasSidechain9PrefixAndSha256Checksum() throws {
+        let address = try ThunderKey.derive(mnemonic: Self.testMnemonic, index: 0).address
+        let deposit = address.depositString()
+        let prefix = "s9_\(address.base58)_"
+        #expect(deposit.hasPrefix(prefix))
+        let digest = Array(SHA256.hash(data: Data(prefix.utf8)))
+        let checksum = digest.prefix(3).map { String(format: "%02x", $0) }.joined()
+        #expect(deposit == prefix + checksum)   // 6 hex chars of the first 3 sha256 bytes
+        #expect(ThunderAddress.sidechainNumber == 9)
+    }
 }
