@@ -10,21 +10,33 @@ import WalletService
 /// The `ThunderService` skeleton: local address derivation works today; the RPC-gated ops fail loud
 /// with a typed error until the Thunder node RPC is wired. The mnemonic is loaded through an injected
 /// closure (the app-side sign-on-demand seam).
+@MainActor
 @Suite struct ThunderServiceTests {
 
     private static let mnemonic = "abandon abandon abandon abandon abandon abandon "
         + "abandon abandon abandon abandon abandon about"
 
-    @Test func nextReceiveAddressDerivesLocally() throws {
+    @Test func nextUnusedAddressIsIndexZeroGolden() throws {
         let service = ThunderService(loadMnemonic: { _ in Self.mnemonic })
-        let info = try service.nextReceiveAddress(walletId: "w1")
-        #expect(info.address == "38VvRdmcQREr1UAcZma98WLFVpAp")   // the index-0 golden (ThunderWallet)
+        let info = try service.nextUnusedAddress(walletId: "w1")
+        #expect(info.address == "38VvRdmcQREr1UAcZma98WLFVpAp")   // index-0 golden (ThunderWallet)
         #expect(info.index == 0)
     }
 
-    @Test func nextUnusedFallsBackToReceiveForNow() throws {
+    @Test func newAddressAdvancesAndDiffersFromDefault() throws {
         let service = ThunderService(loadMnemonic: { _ in Self.mnemonic })
-        #expect(try service.nextUnusedAddress(walletId: "w1") == service.nextReceiveAddress(walletId: "w1"))
+        let a = try service.nextReceiveAddress(walletId: "w1")   // first "New address" → index 1
+        let b = try service.nextReceiveAddress(walletId: "w1")   // → index 2
+        #expect(a.index == 1)
+        #expect(b.index == 2)
+        #expect(a.address != b.address)                          // it actually rotates
+        #expect(a.address != (try service.nextUnusedAddress(walletId: "w1")).address)   // ≠ the default (index 0)
+    }
+
+    @Test func revealIndexIsPerWallet() throws {
+        let service = ThunderService(loadMnemonic: { _ in Self.mnemonic })
+        _ = try service.nextReceiveAddress(walletId: "w1")             // w1 → index 1
+        #expect(try service.nextReceiveAddress(walletId: "w2").index == 1)   // w2's counter is independent
     }
 
     @Test func missingMnemonicThrowsTyped() {

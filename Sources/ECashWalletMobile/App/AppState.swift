@@ -17,6 +17,11 @@ import WalletService
 final class AppState {
     private let manager: WalletManager
 
+    /// Routes per-wallet ops to the right engine: `.thunder` wallets → the Fuse-native
+    /// `ThunderService`, everything else → the bridged BDK `WalletManager`. Constructed in `init`
+    /// once `manager` exists. See docs/thunder-sidechain-support.md.
+    private let walletOps: WalletFacade
+
     /// Mirrors of `WalletManager` state — the observable surface the UI binds to.
     private(set) var wallets: [ManagedWallet] = []
     private(set) var selectedWalletId: String?
@@ -132,6 +137,12 @@ final class AppState {
         // The public WalletManager() wires the real Keychain + JSON store + BDK factory internally
         // (those are WalletService implementation details — not part of the bridged surface).
         manager = WalletManager()
+        // Route Thunder wallets to the Fuse-native engine; the mnemonic is read app-side, transiently,
+        // only when Thunder needs to derive/sign (Golden Rule §2). Everything else stays on BDK.
+        walletOps = WalletFacade(
+            primary: WalletManagerOps(manager),
+            thunder: ThunderService(loadMnemonic: { [manager] id in try manager.mnemonic(for: id) }),
+            isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network == .thunder })
         balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
         // New-wallet seed length: 24 if explicitly chosen, otherwise 12 (covers unset → default 12).
         newWalletWordCount = (UserDefaults.standard.object(forKey: Self.newWalletWordCountKey) as? Int) == 24 ? 24 : 12
@@ -352,8 +363,9 @@ final class AppState {
             unitLabel: params.unitLabel,
             network: wallet.network,
             send: { address, amount, feeRate in
-                // `manager.send` is non-isolated async — broadcast runs off the main actor.
-                try await self.manager.send(walletId: id, to: address, amount: amount, feeRate: feeRate)
+                // Routed via the facade: BDK wallets broadcast off the main actor as before; a Thunder
+                // wallet gets `.backendUnavailable` until its RPC is wired.
+                try await self.walletOps.send(walletId: id, to: address, amount: amount, feeRate: feeRate)
             },
             onSent: { tx in self.insertPending(tx) },
             authorize: { reason in
@@ -362,7 +374,14 @@ final class AppState {
                 return await DeviceAuth.authenticate(reason: reason)
             },
             // Validate the recipient against THIS wallet's network (checksum + prefix), up front.
-            validateAddress: { address in self.manager.isValidAddress(address, network: wallet.network) })
+            validateAddress: { address in
+                // Thunder addresses are BLAKE3/base58, not BDK — validate them app-side; BDK would
+                // reject every one. (The send itself still errors with `.backendUnavailable` until the
+                // Thunder RPC lands.)
+                wallet.network == .thunder
+                    ? ThunderAddress(base58: address) != nil
+                    : self.manager.isValidAddress(address, network: wallet.network)
+            })
         activeSendVM = vm
         return vm
     }
@@ -561,10 +580,10 @@ final class AppState {
         do {
             // `manager.sync` is a non-isolated async method, so the BDK network work runs off the
             // main actor; execution resumes here on the main actor for the observable updates.
-            let updated = try await manager.sync(walletId: id)
+            let updated = try await walletOps.sync(walletId: id)
             balance = updated
-            pendingBalance = (try? manager.pendingBalance(walletId: id)) ?? .zero
-            transactions = sorted((try? manager.transactions(walletId: id)) ?? [])
+            pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
+            transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             syncState = .idle
             // Refresh fiat alongside the balance (no-op for networks without a price provider).
             Task { await refreshPrice() }
@@ -639,14 +658,14 @@ final class AppState {
     /// actor. Returns nil if there's no selected wallet or derivation fails.
     func nextReceiveAddress() -> AddressInfo? {
         guard let id = selectedWalletId else { return nil }
-        return try? manager.nextReceiveAddress(walletId: id)
+        return try? walletOps.nextReceiveAddress(walletId: id)
     }
 
     /// The selected wallet's lowest revealed-but-unused receive address — the Receive screen's
     /// default (doesn't advance on every open; see WalletManager.nextUnusedAddress).
     func nextUnusedAddress() -> AddressInfo? {
         guard let id = selectedWalletId else { return nil }
-        return try? manager.nextUnusedAddress(walletId: id)
+        return try? walletOps.nextUnusedAddress(walletId: id)
     }
 
     /// TEMP (remove): sample transactions to verify the activity-row layout without on-chain funds.

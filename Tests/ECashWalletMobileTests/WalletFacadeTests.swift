@@ -10,9 +10,10 @@ import WalletService
 /// `WalletFacade` routing — the seam that sends `.thunder` wallets to the Fuse-native engine and
 /// everything else to the bridged BDK path. Uses recording `WalletOps` on both sides so we can assert
 /// exactly which engine each op landed on, with no real BDK/Thunder/network.
+@MainActor
 @Suite struct WalletFacadeTests {
 
-    private final class RecordingOps: WalletOps, @unchecked Sendable {
+    private final class RecordingOps: WalletOps {
         let tag: String
         private(set) var calls: [String] = []
         init(_ tag: String) { self.tag = tag }

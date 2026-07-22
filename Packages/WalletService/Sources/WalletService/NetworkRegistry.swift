@@ -80,6 +80,19 @@ public enum NetworkRegistry {
                 defaultBackendKind: "esplora",
                 explorerTxTemplate: "https://explorer.drynet2.drivechain.dev/tx/{txid}",
                 displayName: "Drynet2")
+        case .thunder:
+            // Thunder sidechain — ed25519/BLAKE3, NOT BDK. `coinType`/`addressHRP` are unused fillers
+            // (the Thunder engine never derives via BDK). Backend is a PLACEHOLDER Thunder-node RPC
+            // until the real endpoint ships (docs/thunder-sidechain-support.md); `kind: "thunder"`
+            // marks it as neither Electrum nor Esplora. Unit label is a placeholder.
+            return NetworkParams(
+                coinType: Int32(1),
+                addressHRP: "",
+                unitLabel: "tECX",
+                defaultBackend: "https://thunder.drivechain.dev/rpc",
+                defaultBackendKind: "thunder",
+                explorerTxTemplate: "https://thunder.drivechain.dev/tx/{txid}",
+                displayName: "Thunder")
         }
     }
 

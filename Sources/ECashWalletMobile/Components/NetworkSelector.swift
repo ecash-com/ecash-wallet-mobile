@@ -20,7 +20,7 @@ struct NetworkSelector: View {
                 .foregroundStyle(Theme.Colors.text2)
 
             Picker("Network", selection: $network) {
-                ForEach(WalletNetwork.allCases, id: \.self) { net in
+                ForEach(WalletNetwork.selectable, id: \.self) { net in
                     Text(verbatim: NetworkRegistry.params(for: net).displayName).tag(net)
                 }
             }

@@ -20,6 +20,8 @@ enum PriceProviderRegistry {
             // eCash (drynet2) dry-run coins have no fiat value — no provider (no fiat line).
             // When real eCash has a market, add its provider here.
             return nil
+        case .thunder:
+            return nil   // Thunder (test) coins have no fiat price
         }
     }
 

@@ -42,6 +42,8 @@ enum FaucetRegistry {
             // eCash (drynet2): no faucet endpoint verified yet. Wire it here (endpoint + amount +
             // cooldown) once the drynet2 faucet is confirmed reachable.
             return nil
+        case .thunder:
+            return nil   // no Thunder faucet
         }
     }
 

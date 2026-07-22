@@ -17,6 +17,7 @@ import WalletService
 /// `network == .thunder` so this layer lands and is tested BEFORE the `WalletNetwork.thunder` case
 /// exists; wire it to the real network check (`manager.wallets.first { $0.id == id }?.network ==
 /// .thunder`) once that case is added.
+@MainActor
 final class WalletFacade: WalletOps {
     private let primary: WalletOps
     private let thunder: WalletOps

@@ -57,6 +57,8 @@ enum Theme {
         // eCash network chip = the eCash brand amber (== accent); dark text via accentText.
         static let netEcash = Color("netEcash", bundle: .module) // eCash amber #E8A84A
         static let netEcashTest = Color("netEcashTest", bundle: .module)
+        static let netThunder = Color("netThunder", bundle: .module) // Thunder crimson #DC143C
+        static let netThunderText = Color("netThunderText", bundle: .module) // white
     }
 
     /// 4-pt spacing grid (DESIGN.md §3).

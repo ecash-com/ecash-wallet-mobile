@@ -16,7 +16,7 @@ struct NetworkSettingsScreen: View {
 
     /// Registry-driven — every bundled network, in declaration order. Future eCash cases appear here
     /// automatically once added to the enum + registry.
-    private var networks: [WalletNetwork] { WalletNetwork.allCases }
+    private var networks: [WalletNetwork] { WalletNetwork.selectable }
 
     var body: some View {
         List {

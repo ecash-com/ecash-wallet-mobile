@@ -8,6 +8,7 @@ import WalletService
 /// Adapts the bridged `WalletManager` (the BDK path — Bitcoin/eCash) to `WalletOps` by forwarding each
 /// call unchanged. This is the `primary` route in `WalletFacade`: every non-Thunder wallet goes
 /// through here exactly as it does today.
+@MainActor
 final class WalletManagerOps: WalletOps {
     private let manager: WalletManager
 

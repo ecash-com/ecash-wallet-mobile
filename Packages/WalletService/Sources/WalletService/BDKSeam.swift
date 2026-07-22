@@ -39,12 +39,16 @@ public enum BDKSeam {
         // eCash (drynet2) is byte-identical to Bitcoin (mainnet `bc` HRP, coin-type 0');
         // separated from Bitcoin only by its backend, so BDK sees it as BITCOIN.
         case .ecash:    return Network.BITCOIN
+        // Thunder never touches BDK (the facade routes it to ThunderService) — unreachable; mapped
+        // to BITCOIN only to keep the switch exhaustive.
+        case .thunder:  return Network.BITCOIN
         }
         #else
         switch network {
         case .bitcoin:  return Network.bitcoin
         case .signet:   return Network.signet
         case .ecash:    return Network.bitcoin
+        case .thunder:  return Network.bitcoin   // unreachable — Thunder doesn't use BDK
         }
         #endif
     }

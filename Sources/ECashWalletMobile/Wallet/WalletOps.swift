@@ -13,6 +13,11 @@ import WalletService
 /// The method shapes mirror the bridged `WalletManager` ops exactly, so this is a drop-in for the
 /// app's existing call sites. CoinNews publish ops are intentionally absent — they're Bitcoin/eCash-
 /// only and stay on `WalletManager` directly (Thunder has no CoinNews).
+///
+/// `@MainActor`: routing (which reads `WalletManager` state) and the observable updates that follow
+/// must happen on the main actor — the async ops still hop off-main *inside* `WalletManager.sync/send`
+/// (those are non-isolated) for the actual network I/O, so the main thread isn't blocked.
+@MainActor
 protocol WalletOps {
     func balance(walletId: String) throws -> Amount
     func pendingBalance(walletId: String) throws -> Amount

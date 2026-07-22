@@ -115,6 +115,22 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     /// by its backend. Unit label is **ECX**. (See `docs/key-derivation.md`, memory
     /// `drynet2-ecash-network`.)
     case ecash
+    /// The **Thunder** sidechain of eCash (LayerTwo-Labs/thunder-rust). NOT a BDK/secp256k1 chain —
+    /// ed25519 keys, BLAKE3 base58 addresses, a Thunder-node RPC backend. Routed to the Fuse-native
+    /// `ThunderService` (never the BDK engine); the `coinType`/`addressHRP` in its registry entry are
+    /// unused fillers. Its rawValue `"thunder"` is persisted — don't rename the case.
+    case thunder
+
+    /// Networks offered in the create/import picker (`NetworkSelector`) — distinct from `allCases`
+    /// (which the backend/registry loops still walk for every case). **To hide Thunder as a creatable
+    /// option** (e.g. until its RPC ships), comment out the `.thunder` line below: the case still
+    /// exists so existing Thunder wallets keep resolving; users just can't create new ones.
+    public static let selectable: [WalletNetwork] = [
+        .bitcoin,
+        .signet,
+        .ecash,
+        .thunder,   // ← comment out this line to hide Thunder from create/import
+    ]
 
     /// True for everything that is NOT Bitcoin mainnet. Drives the persistent network
     /// badge (Golden Rule §6) — non-mainnet wallets must be unmistakable. `.ecash` is a

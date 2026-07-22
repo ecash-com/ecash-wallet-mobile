@@ -18,8 +18,14 @@ import WalletService
 /// The mnemonic is loaded APP-SIDE, transiently (Golden Rule §2): `loadMnemonic` reads the secure
 /// store for a walletId only when derivation/signing needs it, and the derived `ThunderWallet` is
 /// dropped right after — the same sign-on-demand shape as the BDK path, on this side of the bridge.
+@MainActor
 final class ThunderService: WalletOps {
     private let loadMnemonic: (String) throws -> String?
+
+    /// Per-wallet highest index handed out by "New address". In-memory only (resets on relaunch) —
+    /// proper gap management / used-address tracking needs the Thunder RPC history; until then this
+    /// just lets the Receive screen rotate through freshly-derived addresses.
+    private var revealedIndex: [String: UInt32] = [:]
 
     init(loadMnemonic: @escaping (String) throws -> String?) {
         self.loadMnemonic = loadMnemonic
@@ -35,16 +41,20 @@ final class ThunderService: WalletOps {
 
     // MARK: - Local (works today, no RPC)
 
-    /// A Thunder address to receive at. NOTE: without the RPC we can't gap-scan for the next *unused*
-    /// index, so this returns the index-0 address for now (a valid address to receive at). Real
-    /// rotation / gap management arrives with the RPC history reads.
+    /// "New address" — reveal a FRESH address by advancing the local index. Deriving a new address
+    /// needs no RPC (only knowing which are *used* would), so this genuinely rotates.
     func nextReceiveAddress(walletId: String) throws -> AddressInfo {
-        let address = try wallet(for: walletId).address(at: 0)
-        return AddressInfo(address: address.base58, index: 0)
+        let index = (revealedIndex[walletId] ?? 0) + 1
+        let address = try wallet(for: walletId).address(at: index)
+        revealedIndex[walletId] = index
+        return AddressInfo(address: address.base58, index: Int32(index))
     }
 
+    /// The default address shown when Receive opens: index 0. Real gap-scan for the lowest *unused*
+    /// index needs the RPC history; until then it's the wallet's first address.
     func nextUnusedAddress(walletId: String) throws -> AddressInfo {
-        try nextReceiveAddress(walletId: walletId)
+        let address = try wallet(for: walletId).address(at: 0)
+        return AddressInfo(address: address.base58, index: 0)
     }
 
     // MARK: - RPC-gated (throw until the Thunder node RPC is wired)

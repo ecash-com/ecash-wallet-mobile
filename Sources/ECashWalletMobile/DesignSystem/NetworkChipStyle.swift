@@ -31,6 +31,11 @@ struct NetworkChipStyle {
             // Rule §6). Dark `accentText` for legible contrast on the amber.
             return NetworkChipStyle(background: Theme.Colors.netEcash,
                                     foreground: Theme.Colors.accentText)
+        case .thunder:
+            // Thunder — crimson (#DC143C), white text. Deliberately distinct from the `negative`
+            // error red so a Thunder chip reads as brand, not danger (Golden Rule §6).
+            return NetworkChipStyle(background: Theme.Colors.netThunder,
+                                    foreground: Theme.Colors.netThunderText)
         }
     }
 }

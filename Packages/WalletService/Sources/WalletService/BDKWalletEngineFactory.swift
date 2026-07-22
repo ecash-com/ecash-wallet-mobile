@@ -37,6 +37,11 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
     /// Generate a brand-new wallet: random mnemonic → public BIP84 descriptors.
     public func create(network: WalletNetwork, wordCount: Int) throws -> WalletKeys {
         let mnemonic = Mnemonic(wordCount: BDKSeam.wordCount(wordCount))
+        // Thunder derives ed25519 keys from the SAME BIP39 mnemonic but has no BDK descriptors — the
+        // Fuse-native ThunderService derives from the seed. Persist the phrase, leave descriptors empty.
+        if network == .thunder {
+            return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
+        }
         return try walletKeys(network: network, mnemonic: mnemonic)
     }
 
@@ -48,6 +53,10 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
             mnemonic = try Mnemonic.fromString(mnemonic: mnemonicPhrase)
         } catch {
             throw WalletError.invalidMnemonic
+        }
+        // Thunder: same validated BIP39 phrase, no BDK descriptors (see `create`).
+        if network == .thunder {
+            return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
         return try walletKeys(network: network, mnemonic: mnemonic)
     }
