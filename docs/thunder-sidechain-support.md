@@ -254,6 +254,63 @@ engine** and broadcasts it on eCash; the sidechain credits it. No Thunder `submi
 `transactions()`→`get_transactions`. Same protocol our BDK engine implements — the Thunder engine just
 swaps BDK for (swift-crypto + Thunder RPC).
 
+## 8c. What shipped in 0.17.0 — and the remaining delta (2026-07-23)
+
+thunder-rust **0.17.0** (`c9831e83 "Update wallet API"`) landed the sign/submit split — real progress,
+but the wallet is still **node-holds-the-seed**, so it does not yet support our non-custodial (keys-only-
+on-phone) flow. Verified against `rpc-api/lib.rs` + `app/rpc_server.rs` + `lib/wallet.rs`.
+
+**Shipped and directly usable:**
+- ✅ **`submit_transaction(Authorized<Transaction>) -> Txid`** — exactly what we need; submits a
+  client-signed tx. Our Borsh + ed25519 + `AuthorizedThunderTransaction.authorize` already produces this.
+- ✅ **`create_transfer(dest, value_sats, fee_sats) -> Transaction`** and
+  **`create_withdrawal(...) -> Transaction`** — both return an **unsigned** `Transaction` (docstring:
+  "without signing it"); the node does coin-selection + change + utreexo proof.
+
+**Why it's still custodial as-is:** `create_transfer` → `wallet.create_transaction(value, fee)` →
+`select_coins` picks from the **node's own seed-derived wallet**, and change goes to a node
+`get_new_address()`. There is **no `spend_from` / `change_address` param** and **no watch-only path** —
+every read (`balance`, `get_wallet_utxos`, `get_addresses`) is scoped to the node's local wallet. So for
+the node to build a tx over **our** coins, it must hold **our** seed (`set_seed_from_mnemonic`) = custodial.
+
+**The delta we need — ADDITIVE (keep the local wallet, add a remote-wallet path).** Jake, 2026-07-23:
+the node should still support a **local wallet** (self-hosters) AND a **remote wallet** (our mobile app
+holds the keys; node holds no seed). The existing methods keep serving the local wallet unchanged; add
+address-scoped variants that serve a remote wallet by reading the node's **full chain STATE** (the
+Utreexo UTXO set + accumulator for proofs — `lib/state/`), NOT the local wallet DB:
+
+```
+# BUILD (node selects + proves over addresses WE pass; no seed, no signing)
+create_transfer_from(
+    spend_from:     [Address],     # our addresses whose UTXOs may be spent (node filters the
+                                   #   full-state UTXO set to these; it already indexes address->utxo)
+    dest:           Address,
+    value_sats:     u64,
+    fee_sats:       u64,
+    change_address: Address        # ours
+) -> Transaction                   # UNSIGNED; node built inputs+change and filled the utreexo `proof`
+# (create_withdrawal_from = same shape + mainchain_address/mainchain_fee_sats; withdrawals are v2)
+
+# READ (address-scoped, from full state — no seed)
+get_utxos(addresses: [Address])         -> [PointedOutput]     # already have PointedOutput{outpoint,output}
+balance_for(addresses: [Address])       -> Balance            # or client sums get_utxos
+get_transactions(addresses: [Address],
+                 limit: Option<u32>)    -> [ {txid, net_sats, fee_sats?, block_height?, confirmations} ]
+
+# SUBMIT — already shipped ✓
+submit_transaction(Authorized<Transaction>) -> Txid
+```
+
+**Proof round-trips fine over JSON-RPC:** `Transaction.proof` is `#[borsh(skip)]`, so it's excluded from
+the SIGNED bytes / txid but serde still serializes it in the JSON. So `create_transfer_from` returns the
+proof (JSON) → client signs `borsh(transaction)` (no proof) → `submit_transaction` carries the proof back
+(JSON). Client-side we just hold the proof blob opaquely between build and submit; we never decode it.
+
+**Client flow (unchanged from §8b):** `create_transfer_from` (unsigned) → for each input resolve our
+address→ed25519 key → `sign(borsh(transaction))` → `Authorized<Transaction>` → `submit_transaction`.
+Balance/history via the address-scoped reads. Deposit is still an eCash-mainchain tx via our BDK engine
+to `format_deposit_address(...)` (no Thunder spend RPC).
+
 ## 8. Bottom line
 
 Thunder is a genuinely separate chain: **ed25519 keys (BIP32 `m/1'/0'/0'/i'`), BLAKE3-hashed base58
