@@ -85,11 +85,13 @@ public enum NetworkRegistry {
             // Thunder sidechain — ed25519/BLAKE3, NOT BDK. `coinType`/`addressHRP` are unused fillers
             // (the Thunder engine never derives via BDK). Backend is a PLACEHOLDER Thunder-node RPC
             // until the real endpoint ships (docs/thunder-sidechain-support.md); `kind: "thunder"`
-            // marks it as neither Electrum nor Esplora. Unit label is a placeholder.
+            // marks it as neither Electrum nor Esplora. Unit is **ECX** — Thunder holds eCash value
+            // (deposited from the eCash mainchain); thunder-rust itself uses `bitcoin::Amount`/₿ (it's
+            // the generic sidechain template, no eCash branding), so the ECX label is ours.
             return NetworkParams(
                 coinType: Int32(1),
                 addressHRP: "",
-                unitLabel: "tECX",
+                unitLabel: "ECX",
                 defaultBackend: "https://thunder.drivechain.dev/rpc",
                 defaultBackendKind: "thunder",
                 explorerTxTemplate: "https://thunder.drivechain.dev/tx/{txid}",
