@@ -10,10 +10,12 @@ import WalletService
 /// that already exists (`ThunderKey` / `ThunderWallet` / Borsh / authorization).
 ///
 /// STATUS: skeleton. Address derivation is LOCAL and works now; balance / sync / history / send need
-/// the Thunder node RPC (`create_transaction` / `submit_transaction` / address-scoped reads — see
-/// docs/thunder-sidechain-support.md §8b, pending the Thunder dev) and currently throw
-/// `.backendUnavailable`. When the RPC lands, this is where the client stitches RPC reads together
-/// with local signing (`ThunderWallet.authorize`).
+/// the Thunder node RPC and currently throw `.backendUnavailable`. THIN-NODE FLOW (decided 2026-07-23,
+/// docs/thunder-sidechain-support.md §8b): the phone does everything except fetch UTXOs and relay —
+/// (1) derive addresses locally, (2) `get_utxos(addresses)` from the node, (3) select coins + build the
+/// tx + sign locally (our Borsh + `ThunderWallet.authorize`), (4) `submit_transaction`, which fills the
+/// utreexo proof node-side (so the phone never touches the accumulator). Pending: the node's
+/// `get_utxos` / balance / history RPCs (dev implementing) + our RPC client + coin-selector.
 ///
 /// The mnemonic is loaded APP-SIDE, transiently (Golden Rule §2): `loadMnemonic` reads the secure
 /// store for a walletId only when derivation/signing needs it, and the derived `ThunderWallet` is

@@ -50,10 +50,12 @@ struct ThunderWallet {
         return nil
     }
 
-    /// Build the submit-ready authorized transaction from a node-provided unsigned transaction and the
+    /// Build the submit-ready authorized transaction from a locally-constructed transaction and the
     /// address each input spends (`inputAddresses[i]` is the address of `transaction.inputs[i]`'s UTXO,
-    /// which the RPC reports). Resolves each input's key by address, then signs. This is the full local
-    /// half of a send: the node owns coin-selection + utreexo proof; we own only the ed25519 signing.
+    /// known from the `get_utxos` we selected from). Resolves each input's key by address, then signs.
+    /// The phone owns coin-selection + tx construction + signing; the node only fills the utreexo proof
+    /// at `submit_transaction` (decided 2026-07-23). We build the tx with an empty proof — it's
+    /// `#[borsh(skip)]`, so it's absent from the signed bytes regardless.
     func authorize(_ transaction: ThunderTransaction,
                    inputAddresses: [ThunderAddress],
                    searchLimit: Int = defaultAddressSearchLimit) throws -> AuthorizedThunderTransaction {

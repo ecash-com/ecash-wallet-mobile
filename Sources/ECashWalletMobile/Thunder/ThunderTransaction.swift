@@ -31,9 +31,10 @@ struct ThunderOutput: Equatable {
 
 /// A Thunder transaction — the exact value that is BLAKE3-hashed for its txid and ed25519-signed for
 /// authorization. Mirrors thunder-rust `types::Transaction` MINUS the utreexo `proof`, which is
-/// `#[borsh(skip)]` (the node owns coin-selection + proof; see docs/thunder-sidechain-support.md), so
-/// it never enters the signed bytes. That skip is precisely what lets the client sign without the
-/// accumulator. Each input pairs an `OutPoint` with the spent UTXO's 32-byte hash.
+/// `#[borsh(skip)]`, so it never enters the signed bytes. That skip is what lets the client sign
+/// without the accumulator: the phone builds inputs + outputs and signs; the node fills the proof in
+/// `submit_transaction` (decided 2026-07-23; docs/thunder-sidechain-support.md §8b). Each input pairs
+/// an `OutPoint` with the spent UTXO's 32-byte hash.
 struct ThunderTransaction: Equatable {
     struct Input: Equatable {
         let outPoint: ThunderOutPoint
