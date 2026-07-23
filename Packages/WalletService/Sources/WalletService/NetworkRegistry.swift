@@ -67,19 +67,20 @@ public enum NetworkRegistry {
                 explorerTxTemplate: "https://explorer.signet.drivechain.info/tx/{txid}",
                 displayName: "L2L Signet")
         case .ecash:
-            // The eCash fork, currently the **drynet2** dry-run chain. Byte-identical to Bitcoin
-            // (mainnet `bc` HRP, coin-type `0'`) → BDK `Network.bitcoin`; separated only by
-            // backend. Default backend is the public **Esplora** (mempool-electrs) — API served at
-            // the ROOT path, so NO `/api` suffix (verified live 2026-07-17; memory
-            // `drynet2-ecash-network`). Users can override to Electrum in Settings like any network.
+            // The eCash fork, currently the **drynet3** dry-run chain (drynet2 was decommissioned
+            // 2026-07-23). Byte-identical to Bitcoin (mainnet `bc` HRP, coin-type `0'`) → BDK
+            // `Network.bitcoin`; separated only by backend. Default backend is the public **Esplora**
+            // (mempool-electrs) at the ROOT path (NO `/api` suffix). This is only the OFFLINE/first-
+            // launch fallback — the live endpoint comes from the remote config (`drivechain.dev/config`,
+            // `family: ecash`), which rotates across drynet ids without an app update.
             return NetworkParams(
                 coinType: Int32(0),
                 addressHRP: "bc",
                 unitLabel: "ECX",
-                defaultBackend: "https://esplora.drynet2.drivechain.dev",
+                defaultBackend: "https://esplora.drynet3.drivechain.dev",
                 defaultBackendKind: "esplora",
-                explorerTxTemplate: "https://explorer.drynet2.drivechain.dev/tx/{txid}",
-                displayName: "Drynet2")
+                explorerTxTemplate: "https://explorer.drynet3.drivechain.dev/tx/{txid}",
+                displayName: "Drynet3")
         case .thunder:
             // Thunder sidechain — ed25519/BLAKE3, NOT BDK. `coinType`/`addressHRP` are unused fillers
             // (the Thunder engine never derives via BDK). Backend is a PLACEHOLDER Thunder-node RPC

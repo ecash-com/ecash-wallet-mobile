@@ -126,6 +126,32 @@ import WalletService
         #expect(config?.resolvedFaucets().isEmpty == true)
     }
 
+    /// The live config during the **drynet2 → drynet3 rollover**: BOTH carry `family: "ecash"`,
+    /// drynet2 has EMPTY backends (decommissioned), drynet3 has the real ones. `.ecash` must resolve
+    /// to **drynet3** — the empty drynet2 entry must not shadow it. (Regression for the 2026-07-23 bug:
+    /// the old id-only mapping recognized `drynet2` but not `drynet3`, so `.ecash` fell back to the
+    /// dead bundled endpoint.)
+    @Test func drynetRolloverResolvesToTheLiveEcashEntry() {
+        let json = """
+        {
+          "schema_version": 1,
+          "networks": [
+            { "id": "drynet2", "family": "ecash", "display_name": "Drynet 2", "backends": [] },
+            { "id": "drynet3", "family": "ecash", "display_name": "Drynet 3",
+              "backends": [
+                { "kind": "esplora",  "url": "https://esplora.drynet3.drivechain.dev", "tls": true },
+                { "kind": "electrum", "url": "ssl://drynet3.drivechain.dev:50012", "tls": true }
+              ] }
+          ]
+        }
+        """
+        let backends = RemoteEndpointConfig.parse(data(json))?.resolvedPrimaryBackends() ?? []
+        #expect(backends.count == 1)
+        #expect(backends.first?.network == WalletNetwork.ecash)
+        #expect(backends.first?.kind == "esplora")
+        #expect(backends.first?.url == "https://esplora.drynet3.drivechain.dev")   // drynet3, not the empty drynet2
+    }
+
     // MARK: - Resolution
 
     @Test func picksFirstBackendInArrayOrderWhenNoPriority() {
@@ -286,7 +312,7 @@ import WalletService
 
         // No overlay → bundled NetworkRegistry template.
         #expect(RemoteServiceOverrides.explorerURL(for: "abc", on: WalletNetwork.ecash)
-                == "https://explorer.drynet2.drivechain.dev/tx/abc")
+                == "https://explorer.drynet3.drivechain.dev/tx/abc")
 
         // Overlay wins and substitutes {txid}.
         RemoteServiceOverrides.setExplorerTemplate("https://scan.example/t/{txid}", for: WalletNetwork.ecash)
@@ -297,7 +323,7 @@ import WalletService
         RemoteServiceOverrides.clearAll()
         RemoteServiceOverrides.setExplorerTemplate("https://scan.example/no-placeholder", for: WalletNetwork.ecash)
         #expect(RemoteServiceOverrides.explorerURL(for: "abc", on: WalletNetwork.ecash)
-                == "https://explorer.drynet2.drivechain.dev/tx/abc")
+                == "https://explorer.drynet3.drivechain.dev/tx/abc")
     }
 
     // MARK: - Refresh throttle

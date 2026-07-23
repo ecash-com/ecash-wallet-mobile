@@ -17,12 +17,12 @@ import WalletService
 /// "keep the last-known-good / bundled endpoints" (graceful fallback).
 ///
 /// **Network identity:** `networks` is an ARRAY; each entry is mapped to one of our `WalletNetwork`
-/// cases by its **`id`** (`bitcoin`/`signet`/`drynet2`). We map by `id`, NOT `family`, because
-/// `family` is a chain *category*, not a network — both Bitcoin mainnet and Signet report
-/// `family: "bitcoin"` (changed server-side 2026-07-19), so it can't identify a network. `bitcoin`/
-/// `signet` ids match our rawValues directly; the eCash test net's id is `drynet2` today (aliased to
-/// `.ecash`) and will map straight through if it's ever renamed `ecash`. Unknown ids are skipped
-/// (forward-compat).
+/// cases (`RemoteNetwork.walletNetwork`): `bitcoin`/`signet` by **`id`** (both report
+/// `family: "bitcoin"`, so `family` can't tell them apart), and the eCash test net by
+/// **`family: "ecash"`** because it's served under rotating ids (`drynet2` → `drynet3` → …). Unknown
+/// entries are skipped (forward-compat). When two entries map to the same network during a rollover,
+/// the first one with a usable value wins — a decommissioned entry with empty backends never shadows
+/// the live one.
 struct RemoteEndpointConfig: Equatable, Sendable {
     /// The schema this app understands. A payload with a different `schemaVersion` is ignored.
     static let supportedSchemaVersion = 1
@@ -38,16 +38,21 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         let explorerTxTemplate: String?
         let services: RemoteServices?
 
-        /// The `WalletNetwork` this entry maps to (by `id`), or nil if unknown to this app.
-        /// `bitcoin`/`signet` ids match our rawValues; the eCash test net's id `drynet2` is aliased
-        /// to `.ecash` (a future `ecash` id would map straight through via rawValue).
+        /// The `WalletNetwork` this entry maps to, or nil if unknown to this app.
+        /// - `bitcoin` / `signet` (and a future literal `ecash`) match a `WalletNetwork` rawValue by
+        ///   **`id`** — `family` can't identify these because Bitcoin mainnet and Signet BOTH report
+        ///   `family: "bitcoin"` (server change 2026-07-19).
+        /// - The eCash test net is served under **rotating ids** (`drynet2` → `drynet3` → …) that all
+        ///   share `family: "ecash"`, which uniquely identifies OUR `.ecash` network. Mapping it by
+        ///   `family` (not a hardcoded id alias) means each drynet rollover Just Works with no app
+        ///   change — the old `drynet2`-only alias silently dropped `drynet3` (2026-07-23 bug).
         var walletNetwork: WalletNetwork? {
-            guard let id else { return nil }
-            if let known = WalletNetwork(rawValue: id) { return known }
-            switch id {
-            case "drynet2": return .ecash
-            default: return nil
-            }
+            if let id, let known = WalletNetwork(rawValue: id) { return known }
+            // The eCash dry-run net rotates ids (`drynet2` → `drynet3` → …), all `family: "ecash"`.
+            // Match either — `family` is the clean signal; the `drynet` id prefix is a belt-and-
+            // suspenders fallback so an entry that omits `family` still resolves.
+            if family == "ecash" || (id?.hasPrefix("drynet") ?? false) { return .ecash }
+            return nil
         }
     }
 
@@ -113,9 +118,11 @@ struct RemoteEndpointConfig: Equatable, Sendable {
 
     // MARK: - Resolution
     //
-    // Each resolver maps entries to a `WalletNetwork` by `family` (see type doc), skips unknown
-    // networks, and returns a deterministic order (by rawValue). If the same family ever appears
-    // twice, the FIRST entry in array order wins (a `seen` guard) — today there is one per family.
+    // Each resolver maps entries to a `WalletNetwork` (see `walletNetwork`), skips unknown networks,
+    // and returns a deterministic order (by rawValue). When two entries map to the SAME network — as
+    // `drynet2` and `drynet3` both do (`.ecash`) during a rollover — the first entry that actually
+    // yields a usable value wins: `seen` is claimed only AFTER a value is found, so a decommissioned
+    // entry with empty backends (drynet2 today) doesn't shadow the live one (drynet3).
 
     /// The primary backend per **known** `WalletNetwork`.
     /// - The preferred backend is the lowest `priority`; when `priority` is absent (the server
@@ -127,7 +134,7 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         var result: [ResolvedBackend] = []
         var seen: Set<String> = []
         for network in networks {
-            guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
+            guard let walletNetwork = network.walletNetwork, !seen.contains(walletNetwork.rawValue) else { continue }
             let best = network.backends.enumerated()
                 .filter { Self.isValidKind($0.element.kind) && !$0.element.url.trimmingCharacters(in: .whitespaces).isEmpty }
                 .min { lhs, rhs in
@@ -135,7 +142,8 @@ struct RemoteEndpointConfig: Equatable, Sendable {
                     let rp = rhs.element.priority ?? Int.max
                     return lp != rp ? lp < rp : lhs.offset < rhs.offset   // tie → array order
                 }?.element
-            guard let best else { continue }
+            guard let best else { continue }   // no usable backend (e.g. decommissioned drynet2) → don't claim
+            seen.insert(walletNetwork.rawValue)
             result.append(ResolvedBackend(network: walletNetwork,
                                           kind: best.kind,
                                           url: best.url.trimmingCharacters(in: .whitespaces)))
@@ -148,8 +156,9 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         var result: [ResolvedCoinNews] = []
         var seen: Set<String> = []
         for network in networks {
-            guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
+            guard let walletNetwork = network.walletNetwork, !seen.contains(walletNetwork.rawValue) else { continue }
             guard let url = Self.cleaned(network.services?.coinnews?.url) else { continue }
+            seen.insert(walletNetwork.rawValue)
             result.append(ResolvedCoinNews(network: walletNetwork, url: url))
         }
         return result.sorted { $0.network.rawValue < $1.network.rawValue }
@@ -160,8 +169,9 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         var result: [ResolvedFaucet] = []
         var seen: Set<String> = []
         for network in networks {
-            guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
+            guard let walletNetwork = network.walletNetwork, !seen.contains(walletNetwork.rawValue) else { continue }
             guard let url = Self.cleaned(network.services?.faucet?.url) else { continue }
+            seen.insert(walletNetwork.rawValue)
             result.append(ResolvedFaucet(network: walletNetwork,
                                          url: url,
                                          amount: network.services?.faucet?.amount,
@@ -176,8 +186,9 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         var result: [ResolvedExplorer] = []
         var seen: Set<String> = []
         for network in networks {
-            guard let walletNetwork = network.walletNetwork, seen.insert(walletNetwork.rawValue).inserted else { continue }
+            guard let walletNetwork = network.walletNetwork, !seen.contains(walletNetwork.rawValue) else { continue }
             guard let template = Self.cleaned(network.explorerTxTemplate), template.contains("{txid}") else { continue }
+            seen.insert(walletNetwork.rawValue)
             result.append(ResolvedExplorer(network: walletNetwork, txTemplate: template))
         }
         return result.sorted { $0.network.rawValue < $1.network.rawValue }
