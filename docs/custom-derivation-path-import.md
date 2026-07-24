@@ -1,8 +1,12 @@
 # Custom derivation on Import (Advanced) — plan
 
-> Status: **PLAN / not started** (2026-07-17). Design agreed at "Option A" (script-type picker +
-> account number). Not necessarily this milestone. This doc is the spec; keep it current if the
-> design shifts (per CLAUDE.md).
+> Status: **SCRIPT-TYPE TIER SHIPPED** (2026-07-24, commits fee87e1 + 91753cd). The Advanced section
+> now has the script-type picker (BIP44/49/84/86) + read-only derivation path + live first-address
+> preview, honored in BOTH the derive and sign seams (§4.2), persisted (§4.3), with per-type
+> derivation-vector tests (§6). **Remaining:** account index ≠ 0 (manual descriptor strings, §4.1 —
+> the field is already persisted, dormant), the multi-path recovery scan (§8 phase 2, before the
+> airdrop), a real-BDK import→sign→broadcast-per-type gate (§6, needs coins), and the read-only
+> derivation display in wallet detail (§9). Original design below (Option A); keep current per CLAUDE.md.
 
 ## 1. Why (this is recovery-correctness, not a power-user toy)
 
