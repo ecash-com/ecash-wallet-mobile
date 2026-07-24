@@ -31,20 +31,20 @@ struct SettingsScreen: View {
                         }
                     }
 
-                    // Split coins — eCash only (separates fork-airdrop coins from Bitcoin). Always
-                    // reachable here; the sheet handles "nothing to split" when there are no coins.
-                    if wallet.network == .ecash {
+                    // Split coins — eCash only, and only when the wallet actually holds pre-fork coins
+                    // (shared with Bitcoin). No row when there's nothing to split.
+                    if wallet.network == .ecash, let summary = app.splitSummary, summary.needsSplitCount > 0 {
                         Button { showSplit = true } label: {
                             HStack {
                                 Text("Split coins", bundle: .module, comment: "settings: split coins row")
                                     .textStyle(.body)
                                     .foregroundStyle(Theme.Colors.text0)
                                 Spacer()
-                                if let status = splitStatusText {
-                                    Text(verbatim: status)
-                                        .textStyle(.xs)
-                                        .foregroundStyle(Theme.Colors.text2)
-                                }
+                                Text(verbatim: summary.needsSplitCount == 1
+                                        ? "1 coin to split"
+                                        : "\(summary.needsSplitCount) coins to split")
+                                    .textStyle(.xs)
+                                    .foregroundStyle(Theme.Colors.text2)
                             }
                         }
                     }
@@ -203,18 +203,11 @@ struct SettingsScreen: View {
             if let vm = app.makeSplitViewModel() {
                 SplitCoinsView(viewModel: vm)
             } else {
-                // No spendable coins → nothing to drain.
+                // Coins swept between showing the row and tapping (rare) → nothing to drain.
                 PlaceholderScreen(heading: "Split coins",
                                   note: "This wallet has no spendable coins to split.")
             }
         }
-    }
-
-    /// Trailing status for the Split-coins row from the last-synced summary (nil = unknown/not synced).
-    private var splitStatusText: String? {
-        guard let s = app.splitSummary else { return nil }
-        if s.needsSplitCount == 0 { return "Nothing to split" }
-        return s.needsSplitCount == 1 ? "1 coin to split" : "\(s.needsSplitCount) coins to split"
     }
 
     /// A settings dropdown row: title + current value, both in our brand fonts. A plain `Picker`
