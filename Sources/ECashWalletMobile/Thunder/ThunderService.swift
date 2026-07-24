@@ -73,4 +73,11 @@ final class ThunderService: WalletOps {
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
         throw ThunderError.backendUnavailable
     }
+    func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
+        throw ThunderError.backendUnavailable
+    }
+    // No fork-airdrop replay concern for Thunder (its own chain, ed25519) — nothing to split.
+    func splitSummary(walletId: String) throws -> SplitSummary {
+        SplitSummary(spendableSats: 0, needsSplitSats: 0, needsSplitCount: 0)
+    }
 }

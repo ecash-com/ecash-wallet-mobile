@@ -29,4 +29,10 @@ final class WalletManagerOps: WalletOps {
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
         try await manager.sweep(walletId: walletId, to: address, feeRate: feeRate)
     }
+    func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
+        try await manager.splitToSelf(walletId: walletId, feeRate: feeRate)
+    }
+    func splitSummary(walletId: String) throws -> SplitSummary {
+        try manager.splitSummary(walletId: walletId)
+    }
 }

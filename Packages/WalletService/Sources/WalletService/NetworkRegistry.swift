@@ -121,6 +121,18 @@ public enum NetworkRegistry {
         case .bitcoin, .signet, .thunder: return nil
         }
     }
+
+    /// The **fork height** for coin-splitting: coins confirmed BELOW this block are pre-fork (shared
+    /// with the other chain → need splitting); at/above it, coins are chain-specific (post-fork, replay-
+    /// safe). `.ecash` is **drynet3 → 957_600** today; the real eCash mainnet fork is block **964_000**
+    /// (CLAUDE.md) — update this when `.ecash` moves from the dry-run to mainnet. nil where splitting
+    /// doesn't apply (Bitcoin/Signet/Thunder). Internal: used by `WalletEngine.splitSummary`.
+    static func forkHeight(for network: WalletNetwork) -> Int64? {
+        switch network {
+        case .ecash: return Int64(957_600)   // drynet3 (real eCash mainnet: 964_000)
+        case .bitcoin, .signet, .thunder: return nil
+        }
+    }
 }
 
 #endif // !SKIP_BRIDGE — bridged module: bodies excluded from the bridge compile

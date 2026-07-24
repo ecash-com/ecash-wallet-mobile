@@ -105,6 +105,23 @@ public final class MockWalletEngine: WalletEngineProtocol {
                         isRBF: true)
     }
 
+    public private(set) var splitCallCount = 0
+    /// Stubbed split status the mock returns (tests override).
+    public var splitSummaryToReturn = SplitSummary(spendableSats: 1_000_000, needsSplitSats: 1_000_000, needsSplitCount: 1)
+
+    public func splitToSelf(feeRate: FeeRate) throws -> WalletTx {
+        if let error = errorToThrow { throw error }
+        splitCallCount += 1
+        lastSendFeeRate = feeRate
+        return WalletTx(txid: "mocksplittxid", netSats: -1_000_000, feeSats: feeRate.satPerVByte,
+                        confirmations: 0, timestampEpochSeconds: nil, isRBF: true)
+    }
+
+    public func splitSummary() throws -> SplitSummary {
+        if let error = errorToThrow { throw error }
+        return splitSummaryToReturn
+    }
+
     public func publishData(_ data: Data, feeRate: FeeRate) throws -> WalletTx {
         if let error = errorToThrow { throw error }
         lastPublishedData = data

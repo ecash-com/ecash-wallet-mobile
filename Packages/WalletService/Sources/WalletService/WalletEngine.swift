@@ -72,6 +72,14 @@ public protocol WalletEngineProtocol: AnyObject {
     /// deducted). The correct "Max" and the coin-splitting primitive. Build → sign → broadcast inside.
     func sweep(to address: String, feeRate: FeeRate) throws -> WalletTx
 
+    /// Split coins: drain the whole spendable balance to a FRESH address of THIS wallet (destination
+    /// wallet-owned by construction — no external address). Separates fork-airdrop coins.
+    func splitToSelf(feeRate: FeeRate) throws -> WalletTx
+
+    /// Read-only split status (total spendable vs pre-fork amount needing a split). No I/O beyond the
+    /// local UTXO set; drives the split nudge + the amount shown in the flow.
+    func splitSummary() throws -> SplitSummary
+
     /// Publish an `OP_RETURN` data output (e.g. a CoinNews message). Funds the fee from the wallet's
     /// spendable coins, adds change, signs, and broadcasts. Returns the optimistic pending tx.
     func publishData(_ data: Data, feeRate: FeeRate) throws -> WalletTx
@@ -411,8 +419,26 @@ public final class WalletEngine: WalletEngineProtocol {
         } catch {
             throw WalletError.invalidAddress
         }
-        let script = bdkAddress.scriptPubkey()
-        let psbt: Psbt
+        return try finalizeAndBroadcast(try buildDrain(to: bdkAddress.scriptPubkey(), feeRate: feeRate))
+    }
+
+    /// **Split coins**: drain the wallet's entire spendable balance to a FRESH address of THIS wallet —
+    /// separating a fork-airdrop holder's eCash from their Bitcoin (the swept coins land on a post-fork,
+    /// replay-protected UTXO; the eCash `nLockTime` marker makes it un-replayable onto Bitcoin). The
+    /// destination is derived from the wallet itself (`revealNextAddress`), so it is **wallet-owned by
+    /// construction** — no app-supplied address, no chance of sending funds to the wrong place. On any
+    /// failure nothing is broadcast (funds untouched). Same drain + replay + sign/broadcast path as sweep.
+    public func splitToSelf(feeRate: FeeRate) throws -> WalletTx {
+        let info = wallet.revealNextAddress(keychain: BDKSeam.externalKeychain())
+        _ = try? wallet.persist(persister: persister)   // record the revealed index so future syncs track it
+        return try finalizeAndBroadcast(try buildDrain(to: info.address.scriptPubkey(), feeRate: feeRate))
+    }
+
+    /// Build a drain PSBT to `script`: every spendable UTXO in, no change, exact fee out — plus the
+    /// wallet's spend policy (excludes untrusted 0-conf) and eCash replay protection. Shared by
+    /// `sweep`/`splitToSelf`. Throws a classified `WalletError` (insufficient funds, dust, …); never
+    /// broadcasts.
+    private func buildDrain(to script: Script, feeRate: FeeRate) throws -> Psbt {
         do {
             #if SKIP
             let bdkFeeRate = try org.bitcoindevkit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
@@ -431,11 +457,44 @@ public final class WalletEngine: WalletEngineProtocol {
                 .feeRate(feeRate: bdkFeeRate)
                 .unspendable(unspendable: unspendable)
             builder = applyingReplayProtection(builder)
-            psbt = try builder.finish(wallet: wallet)
+            return try builder.finish(wallet: wallet)
         } catch {
             throw WalletError.mapping(rawDescription: "\(error)")
         }
-        return try finalizeAndBroadcast(psbt)
+    }
+
+    /// Read-only split status: total spendable vs how much is pre-fork (needs splitting). Classifies
+    /// each spendable UTXO by its confirmation height against `NetworkRegistry.forkHeight`. Excludes
+    /// untrusted 0-conf (not drainable), matching what `splitToSelf` would actually move.
+    public func splitSummary() throws -> SplitSummary {
+        let fork = NetworkRegistry.forkHeight(for: network)
+        var untrustedKeys = Set<String>()
+        for op in untrustedUnconfirmedOutpoints() { untrustedKeys.insert("\(op.txid):\(op.vout)") }
+        var spendable: [SplitUtxo] = []
+        for out in wallet.listUnspent() {
+            if untrustedKeys.contains("\(out.outpoint.txid):\(out.outpoint.vout)") { continue }
+            spendable.append(SplitUtxo(height: confirmationHeight(of: out),
+                                       sats: Int64(out.txout.value.toSat())))
+        }
+        return SplitSummary.classify(spendable, forkHeight: fork)
+    }
+
+    /// The confirmation block height of a UTXO, or nil if unconfirmed. ChainPosition diverges (Swift
+    /// enum with associated values vs Kotlin sealed class) — same split as `transactions()`.
+    private func confirmationHeight(of output: LocalOutput) -> Int64? {
+        #if SKIP
+        if let confirmed = output.chainPosition as? ChainPosition.Confirmed {
+            return Int64(confirmed.confirmationBlockTime.blockId.height)
+        }
+        return nil
+        #else
+        switch output.chainPosition {
+        case .confirmed(let confirmationBlockTime, _):
+            return Int64(confirmationBlockTime.blockId.height)
+        case .unconfirmed:
+            return nil
+        }
+        #endif
     }
 
     /// The shared tail of `send`/`sweep`: sign the built PSBT on demand, broadcast it, fold it into the

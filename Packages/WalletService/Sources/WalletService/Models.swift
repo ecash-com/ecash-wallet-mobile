@@ -255,6 +255,53 @@ public struct Utxo: Equatable, Hashable, Sendable {
     }
 }
 
+/// A read-only summary of a wallet's coin-split status: how much is drainable, and how much of that is
+/// **pre-fork** (confirmed below the network's fork height → shared with the other chain, so it needs
+/// splitting). Drives the split nudge + the amount shown in the flow. Bridge-safe (signed Int fields).
+public struct SplitSummary: Equatable, Sendable {
+    /// Total spendable sats — what a "Split" (drain) would move.
+    public let spendableSats: Int64
+    /// Sats in pre-fork coins — the amount that actually *needs* splitting (`< spendableSats` when the
+    /// wallet also holds post-fork, already-safe coins).
+    public let needsSplitSats: Int64
+    /// Number of pre-fork UTXOs that need splitting. `0` → nothing to split (don't nudge).
+    public let needsSplitCount: Int32
+
+    public init(spendableSats: Int64, needsSplitSats: Int64, needsSplitCount: Int32) {
+        self.spendableSats = spendableSats
+        self.needsSplitSats = needsSplitSats
+        self.needsSplitCount = needsSplitCount
+    }
+}
+
+extension SplitSummary {
+    /// Classify spendable UTXOs by confirmation height against the network's `forkHeight`: a UTXO
+    /// confirmed **below** `forkHeight` is pre-fork (shared with the other chain → needs splitting);
+    /// at/above it — or unconfirmed (recent, so post-fork) — it is chain-specific and already safe.
+    /// `forkHeight == nil` (networks where splitting doesn't apply) → nothing needs splitting. Pure +
+    /// deterministic so it's unit-tested without BDK; the engine feeds it real UTXOs.
+    static func classify(_ spendable: [SplitUtxo], forkHeight: Int64?) -> SplitSummary {
+        var total: Int64 = 0
+        var needSats: Int64 = 0
+        var needCount: Int32 = 0
+        for u in spendable {
+            total += u.sats
+            if let fork = forkHeight, let h = u.height, h < fork {
+                needSats += u.sats
+                needCount += Int32(1)
+            }
+        }
+        return SplitSummary(spendableSats: total, needsSplitSats: needSats, needsSplitCount: needCount)
+    }
+}
+
+/// One spendable UTXO reduced to what classification needs: its confirmation `height` (nil =
+/// unconfirmed) and value. Internal — the engine builds these from BDK's `LocalOutput`.
+struct SplitUtxo: Equatable {
+    let height: Int64?
+    let sats: Int64
+}
+
 /// A wallet transaction as surfaced to the UI. Positive `net` = received, negative = sent.
 public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
     public let txid: String

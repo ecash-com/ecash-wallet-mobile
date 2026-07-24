@@ -31,4 +31,8 @@ protocol WalletOps {
     func send(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> WalletTx
     /// Sweep the entire spendable balance to `address` (true drain — the correct "Max" + split-coins).
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx
+    /// Split coins: drain the whole balance to a fresh address of ITSELF (wallet-owned destination).
+    func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx
+    /// Read-only split status (total spendable vs pre-fork amount that needs splitting).
+    func splitSummary(walletId: String) throws -> SplitSummary
 }

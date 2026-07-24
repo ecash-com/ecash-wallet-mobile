@@ -413,6 +413,19 @@ public final class WalletManager: @unchecked Sendable {
         return try engine.sweep(to: address, feeRate: feeRate)
     }
 
+    /// Split coins: drain the wallet to a fresh address of ITSELF (wallet-owned destination). Separates
+    /// fork-airdrop eCash from Bitcoin. No external address — the engine derives the destination.
+    public func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.splitToSelf(feeRate: feeRate)
+    }
+
+    /// Read-only split status for a wallet (total spendable vs pre-fork amount that needs splitting).
+    public func splitSummary(walletId: String) throws -> SplitSummary {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.splitSummary()
+    }
+
     /// Publish a CoinNews (or any) `OP_RETURN` message. The payload crosses the bridge as a hex
     /// string (bridge-safe) and is decoded to bytes here; the app builds it with `CoinNewsCodec`.
     /// Funds the fee from spendable coins, signs, broadcasts. Returns the optimistic pending tx.

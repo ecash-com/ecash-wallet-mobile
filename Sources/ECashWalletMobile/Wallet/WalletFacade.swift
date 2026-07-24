@@ -44,4 +44,10 @@ final class WalletFacade: WalletOps {
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
         try await route(walletId).sweep(walletId: walletId, to: address, feeRate: feeRate)
     }
+    func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
+        try await route(walletId).splitToSelf(walletId: walletId, feeRate: feeRate)
+    }
+    func splitSummary(walletId: String) throws -> SplitSummary {
+        try route(walletId).splitSummary(walletId: walletId)
+    }
 }

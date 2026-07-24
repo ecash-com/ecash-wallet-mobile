@@ -33,6 +33,14 @@ import WalletService
             calls.append("sweep:\(walletId)")
             return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
         }
+        func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
+            calls.append("split:\(walletId)")
+            return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
+        }
+        func splitSummary(walletId: String) throws -> SplitSummary {
+            calls.append("summary:\(walletId)")
+            return SplitSummary(spendableSats: 0, needsSplitSats: 0, needsSplitCount: 0)
+        }
     }
 
     /// Facade with recording BDK + Thunder sides; only "thunder-id" routes to Thunder.
@@ -68,7 +76,9 @@ import WalletService
         _ = try facade.transactions(walletId: "thunder-id")
         _ = try await facade.send(walletId: "thunder-id", to: "x", amount: Amount(sats: 1), feeRate: FeeRate(satPerVByte: 1))
         _ = try await facade.sweep(walletId: "thunder-id", to: "x", feeRate: FeeRate(satPerVByte: 1))
-        #expect(thunder.calls.count == 8)     // all eight ops routed to Thunder
+        _ = try await facade.splitToSelf(walletId: "thunder-id", feeRate: FeeRate(satPerVByte: 1))
+        _ = try facade.splitSummary(walletId: "thunder-id")
+        #expect(thunder.calls.count == 10)    // all ten ops routed to Thunder
         #expect(primary.calls.isEmpty)
     }
 
