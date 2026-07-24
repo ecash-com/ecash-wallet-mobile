@@ -96,7 +96,9 @@ final class ImportViewModel {
     /// script-type, or network change). Only derives once the phrase is a full valid mnemonic; a bad
     /// checksum yields nil (the preview closure returns nil on throw). Synchronous — no network I/O.
     func updateSeedPreview(network: WalletNetwork) {
-        guard kind == .recoveryPhrase, MnemonicInput.hasValidWordCount(phrase) else {
+        // Thunder is ed25519 with a fixed derivation — no script-type preview (the BDK preview path
+        // would derive a misleading Bitcoin address). Only BDK/secp256k1 networks get a seed preview.
+        guard kind == .recoveryPhrase, network != .thunder, MnemonicInput.hasValidWordCount(phrase) else {
             seedPreviewAddress = nil
             return
         }

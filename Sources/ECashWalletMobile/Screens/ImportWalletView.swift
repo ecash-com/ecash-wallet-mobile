@@ -43,13 +43,17 @@ struct ImportWalletView: View {
                 // Network is chosen up front (it fixes the address set) and unmistakable (Golden Rule §4/§6).
                 NetworkSelector(network: $network)
                     .onChange(of: network) { _, newNet in
+                        // Thunder has a fixed ed25519 derivation and no WIF/script-type concept —
+                        // force the phrase path so a stale WIF/type selection can't carry over.
+                        if newNet == .thunder { vm.kind = .recoveryPhrase }
                         vm.updatePreview(network: newNet)
                         vm.updateSeedPreview(network: newNet)
                     }
 
-                // Advanced: pick the import type. Collapsed by default so the common recovery-phrase
-                // path stays simple; the derivation-path option (phrase mode) will land here too.
-                advancedSection
+                // Advanced (import type + BIP script-type derivation) applies only to BDK/secp256k1
+                // networks. Thunder is ed25519 with a fixed derivation (m/1'/0'/0'/i') — no choice to
+                // make — so hide Advanced entirely for it (recovery phrase only).
+                if network != .thunder { advancedSection }
 
                 // Input depends on the chosen import type.
                 if vm.kind == .privateKey {

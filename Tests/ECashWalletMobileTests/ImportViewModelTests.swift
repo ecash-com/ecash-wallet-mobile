@@ -93,6 +93,14 @@ private let importValidPhrase = "abandon abandon abandon abandon abandon abandon
         #expect(vm.seedPreviewAddress == "bc1qpreview")
     }
 
+    @Test func seedPreviewNotDerivedForThunder() {
+        let (vm, rec) = makeVM()
+        rec.seedPreviewResult = "bc1qwouldbewrong"   // BDK preview path would return a Bitcoin address
+        vm.phrase = importValidPhrase
+        vm.updateSeedPreview(network: .thunder)
+        #expect(vm.seedPreviewAddress == nil)         // Thunder = ed25519 fixed derivation, no preview
+    }
+
     @Test func seedPreviewNotShownForPrivateKeyKind() {
         let (vm, rec) = makeVM()
         rec.seedPreviewResult = "bc1qpreview"
