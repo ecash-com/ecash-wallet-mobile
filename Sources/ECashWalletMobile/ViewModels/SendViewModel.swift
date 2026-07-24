@@ -74,7 +74,13 @@ final class SendViewModel {
     private(set) var reviewAddress = ""
     private(set) var reviewAmount: Amount = .zero
 
+    /// True when the user tapped "Max" — the send drains the whole wallet (exact fee deducted by BDK)
+    /// instead of sending the literal `amountText`. Cleared the moment the user edits the amount.
+    private(set) var isMax = false
+
     private let send: (_ address: String, _ amount: Amount, _ feeRate: FeeRate) async throws -> WalletTx
+    /// True sweep of the whole spendable balance to `address` — the correct "Max" (BDK drain).
+    private let sweep: (_ address: String, _ feeRate: FeeRate) async throws -> WalletTx
     private let onSent: @MainActor (WalletTx) -> Void
     /// Device-auth gate before broadcasting (Golden Rule §7). AppState wires this to `DeviceAuth`
     /// when app-lock is on, or a pass-through when it's off. Returns true to proceed.
@@ -87,6 +93,7 @@ final class SendViewModel {
          unitLabel: String,
          network: WalletNetwork,
          send: @escaping (_ address: String, _ amount: Amount, _ feeRate: FeeRate) async throws -> WalletTx,
+         sweep: @escaping (_ address: String, _ feeRate: FeeRate) async throws -> WalletTx,
          onSent: @escaping @MainActor (WalletTx) -> Void,
          authorize: @escaping (String) async -> Bool,
          validateAddress: @escaping (String) -> Bool = { _ in true }) {
@@ -96,6 +103,7 @@ final class SendViewModel {
         self.networkDisplayName = NetworkRegistry.params(for: network).displayName
         self.isMainnet = network.isMainnet
         self.send = send
+        self.sweep = sweep
         self.onSent = onSent
         self.authorize = authorize
         self.validateAddress = validateAddress
@@ -104,21 +112,26 @@ final class SendViewModel {
     // MARK: - Keypad
 
     func tapDigit(_ digit: Int) {
+        isMax = false   // editing the amount cancels a pending Max
         amountText = AmountEntry.appendDigit(amountText, digit: digit)
     }
 
     func tapDot() {
+        isMax = false
         amountText = AmountEntry.appendDot(amountText)
     }
 
     func tapBackspace() {
+        isMax = false
         amountText = AmountEntry.backspace(amountText)
     }
 
-    /// Fill the full spendable balance. BDK subtracts the fee at build time, so a literal
-    /// max-send can fail with insufficient-funds — that error surfaces actionably on confirm.
-    /// TODO(send-v2): true max via TxBuilder drain.
+    /// Max: send the entire spendable balance. Sets `isMax`, so `confirmSend` uses a true BDK **drain**
+    /// (all UTXOs, no change, exact fee deducted) rather than the literal amount — which never fails on
+    /// a fee-estimate mismatch and leaves no dust. The field shows the full balance for reference; the
+    /// review notes the fee is deducted.
     func tapMax() {
+        isMax = true
         amountText = balance.formattedCoin()
     }
 
@@ -231,7 +244,10 @@ final class SendViewModel {
         step = .broadcasting
         authorizing = false
         do {
-            let tx = try await send(reviewAddress, reviewAmount, tier.feeRate)
+            // Max → true drain (exact fee deducted, no change); otherwise the literal reviewed amount.
+            let tx = isMax
+                ? try await sweep(reviewAddress, tier.feeRate)
+                : try await send(reviewAddress, reviewAmount, tier.feeRate)
             onSent(tx)
             step = .sent
         } catch let error as WalletError {

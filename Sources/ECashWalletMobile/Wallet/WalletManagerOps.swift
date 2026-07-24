@@ -26,4 +26,7 @@ final class WalletManagerOps: WalletOps {
     func send(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> WalletTx {
         try await manager.send(walletId: walletId, to: address, amount: amount, feeRate: feeRate)
     }
+    func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
+        try await manager.sweep(walletId: walletId, to: address, feeRate: feeRate)
+    }
 }

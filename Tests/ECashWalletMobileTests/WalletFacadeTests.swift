@@ -29,6 +29,10 @@ import WalletService
             calls.append("send:\(walletId)")
             return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
         }
+        func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
+            calls.append("sweep:\(walletId)")
+            return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
+        }
     }
 
     /// Facade with recording BDK + Thunder sides; only "thunder-id" routes to Thunder.
@@ -63,7 +67,8 @@ import WalletService
         _ = try await facade.receiveAddress(walletId: "thunder-id", unused: false)
         _ = try facade.transactions(walletId: "thunder-id")
         _ = try await facade.send(walletId: "thunder-id", to: "x", amount: Amount(sats: 1), feeRate: FeeRate(satPerVByte: 1))
-        #expect(thunder.calls.count == 7)     // all seven ops routed to Thunder
+        _ = try await facade.sweep(walletId: "thunder-id", to: "x", feeRate: FeeRate(satPerVByte: 1))
+        #expect(thunder.calls.count == 8)     // all eight ops routed to Thunder
         #expect(primary.calls.isEmpty)
     }
 

@@ -68,4 +68,9 @@ final class ThunderService: WalletOps {
               amount: Amount, feeRate: FeeRate) async throws -> WalletTx {
         throw ThunderError.backendUnavailable
     }
+    // Thunder sweep is a distinct construction (drain all ed25519 UTXOs client-side) — deferred with
+    // the rest of the RPC ops; for now it fails loud like the others.
+    func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
+        throw ThunderError.backendUnavailable
+    }
 }

@@ -41,4 +41,7 @@ final class WalletFacade: WalletOps {
     func send(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> WalletTx {
         try await route(walletId).send(walletId: walletId, to: address, amount: amount, feeRate: feeRate)
     }
+    func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
+        try await route(walletId).sweep(walletId: walletId, to: address, feeRate: feeRate)
+    }
 }

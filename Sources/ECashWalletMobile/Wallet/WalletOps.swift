@@ -29,4 +29,6 @@ protocol WalletOps {
     func receiveAddress(walletId: String, unused: Bool) async throws -> AddressInfo
     func transactions(walletId: String) throws -> [WalletTx]
     func send(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> WalletTx
+    /// Sweep the entire spendable balance to `address` (true drain — the correct "Max" + split-coins).
+    func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx
 }

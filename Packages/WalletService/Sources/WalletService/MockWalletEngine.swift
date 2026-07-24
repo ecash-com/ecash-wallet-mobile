@@ -90,6 +90,21 @@ public final class MockWalletEngine: WalletEngineProtocol {
                         isRBF: true)
     }
 
+    public private(set) var lastSweepAddress: String?
+
+    public func sweep(to address: String, feeRate: FeeRate) throws -> WalletTx {
+        if let error = errorToThrow { throw error }
+        lastSweepAddress = address
+        lastSendFeeRate = feeRate
+        // A deterministic pending drain (sends the whole mock balance minus a token fee).
+        return WalletTx(txid: "mocksweeptxid",
+                        netSats: -1_000_000,
+                        feeSats: feeRate.satPerVByte,
+                        confirmations: 0,
+                        timestampEpochSeconds: nil,
+                        isRBF: true)
+    }
+
     public func publishData(_ data: Data, feeRate: FeeRate) throws -> WalletTx {
         if let error = errorToThrow { throw error }
         lastPublishedData = data

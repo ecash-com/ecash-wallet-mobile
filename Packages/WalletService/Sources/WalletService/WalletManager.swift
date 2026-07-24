@@ -405,6 +405,14 @@ public final class WalletManager: @unchecked Sendable {
         return try engine.send(to: address, amount: amount, feeRate: feeRate)
     }
 
+    /// Sweep the wallet's entire spendable balance to `address` (true drain — all UTXOs, no change,
+    /// exact fee deducted). Powers the "Max" send and coin-splitting.
+    public func sweep(walletId: String, to address: String,
+                      feeRate: FeeRate) async throws -> WalletTx {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.sweep(to: address, feeRate: feeRate)
+    }
+
     /// Publish a CoinNews (or any) `OP_RETURN` message. The payload crosses the bridge as a hex
     /// string (bridge-safe) and is decoded to bytes here; the app builds it with `CoinNewsCodec`.
     /// Funds the fee from spendable coins, signs, broadcasts. Returns the optimistic pending tx.

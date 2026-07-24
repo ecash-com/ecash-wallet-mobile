@@ -68,6 +68,10 @@ public protocol WalletEngineProtocol: AnyObject {
     /// Build → sign → broadcast happens inside; returns the broadcast tx.
     func send(to address: String, amount: Amount, feeRate: FeeRate) throws -> WalletTx
 
+    /// Sweep the entire spendable balance to `address` (true drain — all UTXOs, no change, exact fee
+    /// deducted). The correct "Max" and the coin-splitting primitive. Build → sign → broadcast inside.
+    func sweep(to address: String, feeRate: FeeRate) throws -> WalletTx
+
     /// Publish an `OP_RETURN` data output (e.g. a CoinNews message). Funds the fee from the wallet's
     /// spendable coins, adds change, signs, and broadcasts. Returns the optimistic pending tx.
     func publishData(_ data: Data, feeRate: FeeRate) throws -> WalletTx
@@ -390,8 +394,55 @@ public final class WalletEngine: WalletEngineProtocol {
             throw WalletError.mapping(rawDescription: "\(error)")
         }
 
-        // 3. Sign ON DEMAND. The watch-only wallet can't sign; `signPsbt` transiently materializes
-        // the key, signs, and drops it (§7). A signing failure must never leak key/descriptor (§2/§8).
+        // 3-5. Sign on demand → broadcast → fold into the wallet graph → return the optimistic tx.
+        return try finalizeAndBroadcast(psbt)
+    }
+
+    /// Sweep the ENTIRE spendable balance to `address` — a true drain (all UTXOs, no change, the exact
+    /// fee deducted from the swept amount) via BDK `drainWallet()` + `drainTo()`. This is the correct
+    /// "Max" (balance-minus-estimate can under/over-shoot the fee → dust or insufficient-funds), and the
+    /// primitive behind coin-splitting (sweep to a fresh address; replay-safe via the eCash nLockTime
+    /// marker). Same spend policy, replay protection, and sign/broadcast path as `send`. Works for WIF
+    /// single-key wallets too (drainWallet spends every UTXO regardless of descriptor type).
+    public func sweep(to address: String, feeRate: FeeRate) throws -> WalletTx {
+        let bdkAddress: Address
+        do {
+            bdkAddress = try Address(address: address, network: BDKSeam.network(network))
+        } catch {
+            throw WalletError.invalidAddress
+        }
+        let script = bdkAddress.scriptPubkey()
+        let psbt: Psbt
+        do {
+            #if SKIP
+            let bdkFeeRate = try org.bitcoindevkit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
+            #else
+            let bdkFeeRate = try BitcoinDevKit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
+            #endif
+            let untrusted: [OutPoint] = untrustedUnconfirmedOutpoints()
+            #if SKIP
+            let unspendable = untrusted.kotlin() as! kotlin.collections.List<OutPoint>
+            #else
+            let unspendable = untrusted
+            #endif
+            var builder = TxBuilder()
+                .drainWallet()                 // spend every (spendable) UTXO
+                .drainTo(script: script)       // all value minus the exact fee → one output, no change
+                .feeRate(feeRate: bdkFeeRate)
+                .unspendable(unspendable: unspendable)
+            builder = applyingReplayProtection(builder)
+            psbt = try builder.finish(wallet: wallet)
+        } catch {
+            throw WalletError.mapping(rawDescription: "\(error)")
+        }
+        return try finalizeAndBroadcast(psbt)
+    }
+
+    /// The shared tail of `send`/`sweep`: sign the built PSBT on demand, broadcast it, fold it into the
+    /// wallet graph, and return the optimistic `WalletTx`.
+    private func finalizeAndBroadcast(_ psbt: Psbt) throws -> WalletTx {
+        // Sign ON DEMAND. The watch-only wallet can't sign; `signPsbt` transiently materializes the
+        // key, signs, and drops it (§7). A signing failure must never leak key/descriptor (§2/§8).
         do {
             let finalized = try signPsbt(psbt)
             guard finalized else { throw WalletError.signingFailed }
@@ -401,7 +452,7 @@ public final class WalletEngine: WalletEngineProtocol {
             throw WalletError.signingFailed
         }
 
-        // 4. Extract + broadcast over Electrum.
+        // Extract + broadcast over the wallet's backend.
         let tx: Transaction
         do {
             tx = try psbt.extractTx()
@@ -422,7 +473,7 @@ public final class WalletEngine: WalletEngineProtocol {
             throw WalletError.broadcastFailed
         }
 
-        // 5. Fold the broadcast tx into the wallet graph (spent inputs + new change) so a follow-up
+        // Fold the broadcast tx into the wallet graph (spent inputs + new change) so a follow-up
         // send BEFORE the next sync doesn't reselect now-spent UTXOs and fail (the "second send
         // fails until pull-to-refresh" bug). Then persist and return the optimistic tx for the UI.
         applyBroadcast(tx)

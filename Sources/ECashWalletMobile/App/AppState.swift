@@ -377,6 +377,10 @@ final class AppState {
                 // wallet gets `.backendUnavailable` until its RPC is wired.
                 try await self.walletOps.send(walletId: id, to: address, amount: amount, feeRate: feeRate)
             },
+            sweep: { address, feeRate in
+                // "Max" → true drain of the whole wallet (exact fee deducted).
+                try await self.walletOps.sweep(walletId: id, to: address, feeRate: feeRate)
+            },
             onSent: { tx in self.insertPending(tx) },
             authorize: { reason in
                 // Require device auth before sending when app-lock is on (§7); pass through if off.

@@ -21,6 +21,7 @@ import WalletService
 
     private final class SendRecorder: @unchecked Sendable {
         var callCount = 0
+        var sweepCallCount = 0
         var address: String?
         var amount: Amount?
         var feeRate: FeeRate?
@@ -52,10 +53,37 @@ import WalletService
                 if let error = rec.errorToThrow { throw error }
                 return rec.txToReturn
             },
+            sweep: { address, feeRate in
+                rec.sweepCallCount += 1
+                rec.address = address
+                rec.feeRate = feeRate
+                if let error = rec.errorToThrow { throw error }
+                return rec.txToReturn
+            },
             onSent: { tx in rec.onSentTx = tx },
             authorize: { _ in rec.authCallCount += 1; return rec.authResult },
             validateAddress: validate)
         return (vm, rec)
+    }
+
+    @Test func maxTapRoutesToSweepNotSend() async {
+        let (vm, rec) = makeVM()
+        toAmountStep(vm)
+        vm.tapMax()
+        #expect(vm.isMax)
+        vm.review()
+        await vm.confirmSend()
+        #expect(rec.sweepCallCount == 1)   // drain, not a literal-amount send
+        #expect(rec.callCount == 0)
+    }
+
+    @Test func editingAmountCancelsMax() {
+        let (vm, _) = makeVM()
+        toAmountStep(vm)
+        vm.tapMax()
+        #expect(vm.isMax)
+        vm.tapDigit(5)                     // user edits → back to a literal amount
+        #expect(!vm.isMax)
     }
 
     // Drives recipient → amount. `enterAmount` taps 0.01 on the keypad (== default 1_000_000 balance).
@@ -369,6 +397,7 @@ import WalletService
             unitLabel: "sBTC",
             network: .signet,
             send: { _, _, _ in rec.callCount += 1; return rec.txToReturn },
+            sweep: { _, _ in rec.sweepCallCount += 1; return rec.txToReturn },
             onSent: { _ in },
             authorize: { _ in await gate.wait(); return true },
             validateAddress: { _ in true })
