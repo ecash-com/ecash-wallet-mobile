@@ -78,18 +78,24 @@ public final class FileWalletStore: WalletStore {
         /// Optional so records written before this field decode as nil → `.mnemonic` (below),
         /// keeping older `wallets.json` files readable.
         let keyType: WalletKeyType?
+        /// Optional (older records → nil → `.bip84`/`0`), so the derivation choice is back-compat.
+        let scriptType: ScriptType?
+        let accountIndex: Int32?
         let isBackedUp: Bool
         let sortIndex: Int
 
         init(_ w: ManagedWallet) {
             id = w.id; label = w.label; network = w.network
             externalDescriptor = w.externalDescriptor; internalDescriptor = w.internalDescriptor
-            keyType = w.keyType; isBackedUp = w.isBackedUp; sortIndex = w.sortIndex
+            keyType = w.keyType; scriptType = w.scriptType; accountIndex = w.accountIndex
+            isBackedUp = w.isBackedUp; sortIndex = w.sortIndex
         }
         var managed: ManagedWallet {
             ManagedWallet(id: id, label: label, network: network,
                           externalDescriptor: externalDescriptor, internalDescriptor: internalDescriptor,
-                          keyType: keyType ?? .mnemonic, isBackedUp: isBackedUp, sortIndex: sortIndex)
+                          keyType: keyType ?? .mnemonic,
+                          scriptType: scriptType ?? .bip84, accountIndex: accountIndex ?? 0,
+                          isBackedUp: isBackedUp, sortIndex: sortIndex)
         }
     }
 

@@ -35,19 +35,21 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
     }
 
     /// Generate a brand-new wallet: random mnemonic → public BIP84 descriptors.
-    public func create(network: WalletNetwork, wordCount: Int) throws -> WalletKeys {
+    public func create(network: WalletNetwork, wordCount: Int, scriptType: ScriptType = .bip84) throws -> WalletKeys {
         let mnemonic = Mnemonic(wordCount: BDKSeam.wordCount(wordCount))
         // Thunder derives ed25519 keys from the SAME BIP39 mnemonic but has no BDK descriptors — the
         // Fuse-native ThunderService derives from the seed. Persist the phrase, leave descriptors empty.
         if network == .thunder {
             return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
-        return try walletKeys(network: network, mnemonic: mnemonic)
+        // New wallets always use the default (.bip84); only import exposes the script-type choice.
+        return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
     }
 
     /// Restore from a mnemonic phrase. `Mnemonic.fromString` validates the checksum/words and
     /// throws on bad input — mapped to `.invalidMnemonic` (no raw text leaks, §2).
-    public func restore(network: WalletNetwork, mnemonic mnemonicPhrase: String) throws -> WalletKeys {
+    public func restore(network: WalletNetwork, mnemonic mnemonicPhrase: String,
+                        scriptType: ScriptType = .bip84) throws -> WalletKeys {
         let mnemonic: Mnemonic
         do {
             mnemonic = try Mnemonic.fromString(mnemonic: mnemonicPhrase)
@@ -58,7 +60,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         if network == .thunder {
             return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
-        return try walletKeys(network: network, mnemonic: mnemonic)
+        return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
     }
 
     /// Build the live WATCH-ONLY engine for a wallet. The everyday `Wallet` is built from the
@@ -134,10 +136,12 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
                         throw WalletError.signingFailed
                     }
                     let secretKey = DescriptorSecretKey(network: net, mnemonic: mnemonic, password: nil)
-                    let extPriv = Descriptor.newBip84(secretKey: secretKey,
-                                                      keychainKind: BDKSeam.externalKeychain(), network: net)
-                    let intPriv = Descriptor.newBip84(secretKey: secretKey,
-                                                      keychainKind: BDKSeam.internalKeychain(), network: net)
+                    // MUST match the wallet's chosen script type, or BDK re-derives keys that don't
+                    // match the PSBT's BIP32 paths → signing silently fails (§4.2 seam #2).
+                    let extPriv = self.descriptorTemplate(wallet.scriptType, secretKey: secretKey,
+                                                          keychain: BDKSeam.externalKeychain(), network: net)
+                    let intPriv = self.descriptorTemplate(wallet.scriptType, secretKey: secretKey,
+                                                          keychain: BDKSeam.internalKeychain(), network: net)
                     let signer = try Wallet(descriptor: extPriv, changeDescriptor: intPriv,
                                             network: net, persister: Persister.newInMemory())
                     return try signer.sign(psbt: psbt, signOptions: nil)
@@ -229,17 +233,55 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
     /// public key to `newBip84Public` (which expects an account-level key), persisting a
     /// master-tpub descriptor whose derived addresses matched nothing the wallet actually used.
     /// Building both from one construction makes stored-vs-runtime divergence impossible.
-    private func walletKeys(network: WalletNetwork, mnemonic: Mnemonic) throws -> WalletKeys {
+    private func walletKeys(network: WalletNetwork, mnemonic: Mnemonic,
+                            scriptType: ScriptType) throws -> WalletKeys {
         let net = BDKSeam.network(network)
         let secretKey = DescriptorSecretKey(network: net, mnemonic: mnemonic, password: nil)
-        let external = Descriptor.newBip84(secretKey: secretKey,
-                                           keychainKind: BDKSeam.externalKeychain(), network: net)
-        let change = Descriptor.newBip84(secretKey: secretKey,
-                                         keychainKind: BDKSeam.internalKeychain(), network: net)
+        let external = descriptorTemplate(scriptType, secretKey: secretKey,
+                                          keychain: BDKSeam.externalKeychain(), network: net)
+        let change = descriptorTemplate(scriptType, secretKey: secretKey,
+                                        keychain: BDKSeam.internalKeychain(), network: net)
         // String interpolation forces Display (`.toString()` on Kotlin) — portable across bindings.
         return WalletKeys(secret: "\(mnemonic)",
                           externalDescriptor: "\(external)",
                           internalDescriptor: "\(change)")
+    }
+
+    /// The BDK descriptor for a script type at **account 0** (the templates fix account to `0'` and
+    /// take coin-type from `network` — correct for the airdrop: a BTC seed at `m/8x'/0'/0'` on
+    /// `.ecash` = `Network.bitcoin`). Non-zero accounts (manual descriptor strings) are a fast-follow.
+    /// Used by BOTH the public build (`walletKeys`) and the sign-on-demand rebuild (`signPsbt`) so
+    /// they never diverge (`docs/custom-derivation-path-import.md §4.2`).
+    private func descriptorTemplate(_ scriptType: ScriptType, secretKey: DescriptorSecretKey,
+                                    keychain: KeychainKind, network net: Network) -> Descriptor {
+        switch scriptType {
+        case .bip44: return Descriptor.newBip44(secretKey: secretKey, keychainKind: keychain, network: net)
+        case .bip49: return Descriptor.newBip49(secretKey: secretKey, keychainKind: keychain, network: net)
+        case .bip84: return Descriptor.newBip84(secretKey: secretKey, keychainKind: keychain, network: net)
+        case .bip86: return Descriptor.newBip86(secretKey: secretKey, keychainKind: keychain, network: net)
+        }
+    }
+
+    /// The first receive address a seed derives at `scriptType` on `network` — for the import
+    /// Advanced preview so the user can confirm it matches their old wallet before committing. Derived
+    /// watch-only in memory; no secret persisted. Throws `.invalidMnemonic` on a bad phrase.
+    public func previewAddress(forSeed mnemonicPhrase: String, scriptType: ScriptType,
+                               network: WalletNetwork) throws -> String {
+        let net = BDKSeam.network(network)
+        let mnemonic: Mnemonic
+        do { mnemonic = try Mnemonic.fromString(mnemonic: mnemonicPhrase) }
+        catch { throw WalletError.invalidMnemonic }
+        let keys = try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
+        do {
+            let extDesc = try Descriptor(descriptor: keys.externalDescriptor, network: net)
+            let intDesc = try Descriptor(descriptor: keys.internalDescriptor, network: net)
+            let wallet = try Wallet(descriptor: extDesc, changeDescriptor: intDesc,
+                                    network: net, persister: Persister.newInMemory())
+            let info = wallet.peekAddress(keychain: BDKSeam.externalKeychain(), index: UInt32(0))
+            return "\(info.address)"
+        } catch {
+            throw WalletError.invalidMnemonic
+        }
     }
 
     /// Validate a WIF private key and build the single-key PUBLIC descriptor `pkh(<pubkey>)`.

@@ -78,7 +78,9 @@ public final class WalletManager: @unchecked Sendable {
 
     /// Create a brand-new wallet on the chosen network, persist it, and select it.
     public func createWallet(label: String, network: WalletNetwork, wordCount: Int = 12) throws -> ManagedWallet {
-        let keys = try factory.create(network: network, wordCount: wordCount)
+        // New wallets always use the default script type (.bip84) — a fresh seed has no legacy coins
+        // to match. Only IMPORT exposes the script-type choice (recovery-correctness).
+        let keys = try factory.create(network: network, wordCount: wordCount, scriptType: .bip84)
         return try persistNewWallet(label: label, network: network, keys: keys)
     }
 
@@ -87,9 +89,13 @@ public final class WalletManager: @unchecked Sendable {
     /// the user supplied the seed, so it exists outside the app; prompting them to "back up" would be
     /// noise (no nudge, no "not backed up" banner, no remove-warning). They can still reveal it via
     /// Backup. (Contrast create, which generates a fresh seed the user has never seen → not backed up.)
-    public func importWallet(label: String, network: WalletNetwork, mnemonic: String) throws -> ManagedWallet {
-        let keys = try factory.restore(network: network, mnemonic: mnemonic)
-        return try persistNewWallet(label: label, network: network, keys: keys, isBackedUp: true)
+    /// `scriptType` (default `.bip84`) picks the derivation, so a user restoring a seed from another
+    /// wallet can match the address kind their coins live at (`docs/custom-derivation-path-import.md`).
+    public func importWallet(label: String, network: WalletNetwork, mnemonic: String,
+                             scriptType: ScriptType = .bip84) throws -> ManagedWallet {
+        let keys = try factory.restore(network: network, mnemonic: mnemonic, scriptType: scriptType)
+        return try persistNewWallet(label: label, network: network, keys: keys,
+                                    scriptType: scriptType, isBackedUp: true)
     }
 
     /// Import a **legacy WIF private key** as a single-key wallet (throws `.invalidPrivateKey` on a
@@ -108,14 +114,23 @@ public final class WalletManager: @unchecked Sendable {
         try factory.previewAddress(forWIF: wif, network: network)
     }
 
+    /// The first receive address a seed derives at `scriptType` on `network`, for the import Advanced
+    /// preview (no secret persisted). Throws `.invalidMnemonic` on a bad phrase.
+    public func previewAddress(forSeed mnemonic: String, scriptType: ScriptType,
+                               network: WalletNetwork) throws -> String {
+        try factory.previewAddress(forSeed: mnemonic, scriptType: scriptType, network: network)
+    }
+
     private func persistNewWallet(label: String, network: WalletNetwork, keys: WalletKeys,
                                   keyType: WalletKeyType = .mnemonic,
+                                  scriptType: ScriptType = .bip84, accountIndex: Int32 = 0,
                                   isBackedUp: Bool = false) throws -> ManagedWallet {
         let id = UUID().uuidString
         let wallet = ManagedWallet(id: id, label: label, network: network,
                                    externalDescriptor: keys.externalDescriptor,
                                    internalDescriptor: keys.internalDescriptor,
-                                   keyType: keyType, isBackedUp: isBackedUp, sortIndex: wallets.count)
+                                   keyType: keyType, scriptType: scriptType, accountIndex: accountIndex,
+                                   isBackedUp: isBackedUp, sortIndex: wallets.count)
         // Secret first, then public metadata. Roll back the secret if metadata write fails so we
         // never strand a secret (mnemonic or WIF) with no wallet record.
         try keyStore.saveMnemonic(keys.secret, walletId: id)

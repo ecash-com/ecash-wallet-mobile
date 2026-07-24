@@ -37,9 +37,11 @@ public struct WalletKeys: Equatable, Sendable {
 // SKIP @nobridge
 public protocol WalletEngineFactory: AnyObject {
     /// Generate a brand-new wallet (random mnemonic) + its public descriptors for the network.
-    func create(network: WalletNetwork, wordCount: Int) throws -> WalletKeys
-    /// Validate an imported mnemonic (throws `.invalidMnemonic` on bad checksum) + derive descriptors.
-    func restore(network: WalletNetwork, mnemonic: String) throws -> WalletKeys
+    /// `scriptType` is `.bip84` for new wallets (only import exposes the choice).
+    func create(network: WalletNetwork, wordCount: Int, scriptType: ScriptType) throws -> WalletKeys
+    /// Validate an imported mnemonic (throws `.invalidMnemonic` on bad checksum) + derive descriptors
+    /// at the chosen `scriptType` (so a restored seed matches its original wallet's address kind).
+    func restore(network: WalletNetwork, mnemonic: String, scriptType: ScriptType) throws -> WalletKeys
     /// Validate an imported **WIF private key** (throws `.invalidPrivateKey` on bad key / wrong
     /// network) and build the single-key PUBLIC descriptor `pkh(<pubkey>)`. The returned
     /// `WalletKeys.secret` is the WIF (persisted to the Keychain like a mnemonic). No derivation —
@@ -48,6 +50,9 @@ public protocol WalletEngineFactory: AnyObject {
     /// The `1…` address a WIF maps to on `network`, for a live preview before import. Throws
     /// `.invalidPrivateKey` on a bad key. No secret is persisted — this is watch-only derivation.
     func previewAddress(forWIF wif: String, network: WalletNetwork) throws -> String
+    /// The first receive address a seed derives at `scriptType` on `network`, for the import Advanced
+    /// preview. Throws `.invalidMnemonic` on a bad phrase. No secret persisted (watch-only derivation).
+    func previewAddress(forSeed mnemonic: String, scriptType: ScriptType, network: WalletNetwork) throws -> String
     /// Build the live WATCH-ONLY engine for a wallet from its PUBLIC descriptors — no private
     /// keys are held. `loadSecret` is invoked ONLY when signing a send (sign-on-demand, §7 /
     /// `docs/key-storage.md §3`); its result (a mnemonic, or a WIF for `.wif` wallets — the factory
@@ -85,17 +90,25 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
         self.mnemonicToReturn = mnemonic
     }
 
-    public func create(network: WalletNetwork, wordCount: Int) throws -> WalletKeys {
+    public func create(network: WalletNetwork, wordCount: Int, scriptType: ScriptType = .bip84) throws -> WalletKeys {
         WalletKeys(secret: mnemonicToReturn,
                    externalDescriptor: "wpkh(mock/0/*)",
                    internalDescriptor: "wpkh(mock/1/*)")
     }
 
-    public func restore(network: WalletNetwork, mnemonic: String) throws -> WalletKeys {
+    public func restore(network: WalletNetwork, mnemonic: String, scriptType: ScriptType = .bip84) throws -> WalletKeys {
         if rejectImport { throw WalletError.invalidMnemonic }
         return WalletKeys(secret: mnemonic,
                           externalDescriptor: "wpkh(mock/0/*)",
                           internalDescriptor: "wpkh(mock/1/*)")
+    }
+
+    /// The stubbed seed preview address (tests can override). Distinct per script type is not modeled.
+    public var previewSeedAddressToReturn = "bc1qmockseedaddrxxxxxxxxxxxxxxxxxxxxxxx"
+
+    public func previewAddress(forSeed mnemonic: String, scriptType: ScriptType, network: WalletNetwork) throws -> String {
+        if rejectImport { throw WalletError.invalidMnemonic }
+        return previewSeedAddressToReturn
     }
 
     /// When true, `restorePrivateKey`/`previewAddress` reject as if the WIF were invalid.

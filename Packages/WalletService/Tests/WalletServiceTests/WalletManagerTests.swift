@@ -171,15 +171,15 @@ final class WalletManagerTests: XCTestCase {
             manager.clearRemoteBackendDefaults()
         }
 
-        // 3. Bundled default: eCash → Esplora at the drynet2 root URL.
+        // 3. Bundled default: eCash → Esplora at the drynet3 root URL.
         var resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
         XCTAssertEqual(resolved.kind, WalletBackend.Kind.esplora)
-        XCTAssertEqual(resolved.url, "https://esplora.drynet2.drivechain.dev")
+        XCTAssertEqual(resolved.url, "https://esplora.drynet3.drivechain.dev")
 
         // A malformed remote entry (bad kind) must NOT change resolution.
         manager.setRemoteBackendDefault(network: WalletNetwork.ecash, kind: "bogus", url: "https://x")
         resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
-        XCTAssertEqual(resolved.url, "https://esplora.drynet2.drivechain.dev")
+        XCTAssertEqual(resolved.url, "https://esplora.drynet3.drivechain.dev")
 
         // 2. Remote default now wins over bundled.
         manager.setRemoteBackendDefault(network: WalletNetwork.ecash,
@@ -205,6 +205,6 @@ final class WalletManagerTests: XCTestCase {
         // Clearing remote defaults returns to the bundled default.
         manager.clearRemoteBackendDefaults()
         resolved = manager.resolvedBackend(for: WalletNetwork.ecash)
-        XCTAssertEqual(resolved.url, "https://esplora.drynet2.drivechain.dev")
+        XCTAssertEqual(resolved.url, "https://esplora.drynet3.drivechain.dev")
     }
 }

@@ -152,6 +152,38 @@ public enum WalletKeyType: String, Equatable, Hashable, Sendable, CaseIterable {
     case wif
 }
 
+/// The BIP script type (address kind) a mnemonic wallet derives — chosen on import so a user
+/// restoring a seed from another wallet can match the derivation their coins actually live at
+/// (recovery-correctness for the eCash airdrop; `docs/custom-derivation-path-import.md`). Each maps
+/// to a BIP purpose + a BDK descriptor template. `.bip84` (native segwit) is the default and
+/// reproduces the app's original behavior, so existing wallets decode as `.bip84` (back-compat).
+public enum ScriptType: String, Codable, Equatable, Hashable, Sendable, CaseIterable {
+    case bip44   // legacy P2PKH        m/44'/…   → 1…
+    case bip49   // nested segwit       m/49'/…   → 3…
+    case bip84   // native segwit       m/84'/…   → bc1q…   (default)
+    case bip86   // taproot             m/86'/…   → bc1p…
+
+    /// The BIP-standard purpose index for this script type (44/49/84/86).
+    public var purpose: Int32 {
+        switch self {
+        case .bip44: return Int32(44)
+        case .bip49: return Int32(49)
+        case .bip84: return Int32(84)
+        case .bip86: return Int32(86)
+        }
+    }
+
+    /// Short human label for UI (wallet detail / import picker).
+    public var displayName: String {
+        switch self {
+        case .bip44: return "Legacy"
+        case .bip49: return "Nested SegWit"
+        case .bip84: return "Native SegWit"
+        case .bip86: return "Taproot"
+        }
+    }
+}
+
 // MARK: - Wallet & chain value types
 
 /// Metadata describing one managed wallet. Contains NO private key material
@@ -167,12 +199,21 @@ public struct ManagedWallet: Identifiable, Equatable, Hashable, Sendable {
     /// Whether this wallet is a mnemonic (HD) wallet or a single legacy private key (`.wif`).
     /// Lets the engine pick the right construction/signing path. Defaults to `.mnemonic`.
     public let keyType: WalletKeyType
+    /// The mnemonic wallet's derivation script type (`.bip84` default). Chosen at import so a restored
+    /// seed matches its original wallet's address kind. Ignored for `.wif` wallets. Persisted; existing
+    /// wallets default to `.bip84` (zero behavior change). Signing rebuilds the private descriptor from
+    /// this, so it MUST be honored in the sign path too (`docs/custom-derivation-path-import.md §4.2`).
+    public let scriptType: ScriptType
+    /// The BIP account index (`…/account'`). `0` default; non-zero is a fast-follow (dormant today —
+    /// the derivation seams currently assume account 0). Persisted now to avoid a second migration.
+    public let accountIndex: Int32
     public var isBackedUp: Bool
     public var sortIndex: Int
 
     public init(id: String, label: String, network: WalletNetwork,
                 externalDescriptor: String, internalDescriptor: String,
                 keyType: WalletKeyType = .mnemonic,
+                scriptType: ScriptType = .bip84, accountIndex: Int32 = 0,
                 isBackedUp: Bool = false, sortIndex: Int = 0) {
         self.id = id
         self.label = label
@@ -180,6 +221,8 @@ public struct ManagedWallet: Identifiable, Equatable, Hashable, Sendable {
         self.externalDescriptor = externalDescriptor
         self.internalDescriptor = internalDescriptor
         self.keyType = keyType
+        self.scriptType = scriptType
+        self.accountIndex = accountIndex
         self.isBackedUp = isBackedUp
         self.sortIndex = sortIndex
     }

@@ -59,7 +59,7 @@ final class BDKWalletEngineTests: XCTestCase {
     private func firstTwoExternalAddresses(_ network: WalletNetwork) throws -> (String, String) {
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keys = try factory.restore(network: network, mnemonic: Self.mnemonic)
+        let keys = try factory.restore(network: network, mnemonic: Self.mnemonic, scriptType: .bip84)
         let wallet = managedWallet(id: "vec-\(network.rawValue)", network: network, keys: keys)
         let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         let a0 = try engine.nextReceiveAddress()
@@ -113,11 +113,11 @@ final class BDKWalletEngineTests: XCTestCase {
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
 
-        let mainnet = try factory.restore(network: .bitcoin, mnemonic: Self.mnemonic)
+        let mainnet = try factory.restore(network: .bitcoin, mnemonic: Self.mnemonic, scriptType: .bip84)
         XCTAssertTrue(mainnet.externalDescriptor.contains("84'/0'/0'"), mainnet.externalDescriptor)
         XCTAssertTrue(mainnet.internalDescriptor.contains("84'/0'/0'"))
 
-        let signet = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
+        let signet = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
         XCTAssertTrue(signet.externalDescriptor.contains("84'/1'/0'"), signet.externalDescriptor)
         XCTAssertTrue(signet.internalDescriptor.contains("84'/1'/0'"))
 
@@ -138,8 +138,8 @@ final class BDKWalletEngineTests: XCTestCase {
         #else
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let a = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
-        let b = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
+        let a = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
+        let b = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
         XCTAssertEqual(a.secret, Self.mnemonic)
         XCTAssertEqual(a.externalDescriptor, b.externalDescriptor) // deterministic
         XCTAssertEqual(a.internalDescriptor, b.internalDescriptor)
@@ -154,7 +154,7 @@ final class BDKWalletEngineTests: XCTestCase {
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
         do {
-            _ = try factory.restore(network: .signet, mnemonic: "not a valid bip39 phrase at all")
+            _ = try factory.restore(network: .signet, mnemonic: "not a valid bip39 phrase at all", scriptType: .bip84)
             XCTFail("expected restore to throw on an invalid mnemonic")
         } catch let error as WalletError {
             XCTAssertEqual(error, WalletError.invalidMnemonic)
@@ -169,11 +169,11 @@ final class BDKWalletEngineTests: XCTestCase {
         #else
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keys = try factory.create(network: .signet, wordCount: 12)
+        let keys = try factory.create(network: .signet, wordCount: 12, scriptType: .bip84)
         XCTAssertEqual(keys.secret.split(separator: " ").count, 12)
         XCTAssertTrue(keys.externalDescriptor.contains("84'/1'/0'"))
         // Round-trip: restoring the generated mnemonic reproduces the same descriptors.
-        let restored = try factory.restore(network: .signet, mnemonic: keys.secret)
+        let restored = try factory.restore(network: .signet, mnemonic: keys.secret, scriptType: .bip84)
         XCTAssertEqual(restored.externalDescriptor, keys.externalDescriptor)
         #endif
     }
@@ -188,7 +188,7 @@ final class BDKWalletEngineTests: XCTestCase {
         #else
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
+        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
         let wallet = managedWallet(id: "cn-tn4", network: .signet, keys: keys)
         let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         do {
@@ -214,7 +214,7 @@ final class BDKWalletEngineTests: XCTestCase {
         #else
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
+        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
         let wallet = managedWallet(id: "persist-rt", network: .signet, keys: keys)
 
         // First engine: reveal indices 0 and 1 (each call persists the advance).
@@ -246,7 +246,7 @@ final class BDKWalletEngineTests: XCTestCase {
         let factory = BDKWalletEngineFactory(chainDataDirectory: dir)
 
         let walletId = "purge-me"
-        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
+        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
         let wallet = managedWallet(id: walletId, network: .signet, keys: keys)
         let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { Self.mnemonic })
         _ = try engine.nextReceiveAddress() // forces a persisted write
@@ -273,7 +273,7 @@ final class BDKWalletEngineTests: XCTestCase {
         let factory = BDKWalletEngineFactory(chainDataDirectory: dir)
 
         let walletId = "legacy-wallet"
-        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
+        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
         let wallet = managedWallet(id: walletId, network: .signet, keys: keys)
 
         // First open creates the network-scoped store; rename it (and siblings) back to the legacy
@@ -308,7 +308,7 @@ final class BDKWalletEngineTests: XCTestCase {
         #else
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
+        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
         let wallet = managedWallet(id: "empty-send", network: .signet, keys: keys)
         let engine = try factory.engine(for: wallet, backendKind: "electrum", backendURL: "ssl://example.invalid:50002", backendProxy: nil, loadSecret: { keys.secret })
         do {
@@ -332,7 +332,7 @@ final class BDKWalletEngineTests: XCTestCase {
         #else
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic)
+        let keys = try factory.restore(network: .signet, mnemonic: Self.mnemonic, scriptType: .bip84)
         let wallet = managedWallet(id: "watch-only", network: .signet, keys: keys)
 
         var mnemonicReads = 0
@@ -368,7 +368,7 @@ final class BDKWalletEngineTests: XCTestCase {
         }
         let (factory, dir) = makeFactory()
         defer { try? FileManager.default.removeItem(at: dir) }
-        let keys = try factory.create(network: .signet, wordCount: 12) // fresh, empty
+        let keys = try factory.create(network: .signet, wordCount: 12, scriptType: .bip84) // fresh, empty
         let wallet = managedWallet(id: "live-signet", network: .signet, keys: keys)
         // Hit the ACTUAL registry default (ssl://node.signet.drivechain.info:50002, TLS), so this
         // also verifies BDK's ElectrumClient against the real endpoint — not a placeholder URL.
