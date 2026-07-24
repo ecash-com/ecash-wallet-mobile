@@ -18,16 +18,18 @@ import WalletService
         var label: String?
         var network: WalletNetwork?
         var wordCount: Int?
+        var scriptType: ScriptType?
         var errorToThrow: Error?
     }
 
     private func makeVM() -> (CreateViewModel, Recorder) {
         let rec = Recorder()
-        let vm = CreateViewModel(create: { label, network, wordCount in
+        let vm = CreateViewModel(create: { label, network, wordCount, scriptType in
             rec.callCount += 1
             rec.label = label
             rec.network = network
             rec.wordCount = wordCount
+            rec.scriptType = scriptType
             if let error = rec.errorToThrow { throw error }
         })
         return (vm, rec)
@@ -47,6 +49,19 @@ import WalletService
         let (vm, rec) = makeVM()
         vm.submit(label: "W", network: .signet, wordCount: 24)
         #expect(rec.wordCount == 24)
+    }
+
+    @Test func defaultsToNativeSegwit() {
+        let (vm, rec) = makeVM()
+        vm.submit(label: "W", network: .ecash)
+        #expect(rec.scriptType == .bip84)          // default = native segwit
+    }
+
+    @Test func passesChosenScriptType() {
+        let (vm, rec) = makeVM()
+        vm.scriptType = .bip86                      // user picks Taproot in Advanced
+        vm.submit(label: "W", network: .ecash)
+        #expect(rec.scriptType == .bip86)
     }
 
     @Test func walletErrorMapsToUserMessage() {

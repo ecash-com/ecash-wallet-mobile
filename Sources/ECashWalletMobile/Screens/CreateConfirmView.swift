@@ -15,6 +15,7 @@ struct CreateConfirmView: View {
     @Environment(AppState.self) var app
     @State var vm: CreateViewModel   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
     @State var network: WalletNetwork = .signet   // default to a testnet-class net; mainnet is deliberate
+    @State var advancedExpanded = false           // Advanced: derivation script type
 
     init(viewModel: CreateViewModel, defaultName: String) {
         self.defaultName = defaultName
@@ -30,6 +31,10 @@ struct CreateConfirmView: View {
 
                 // Network is chosen up front (it fixes the address set) and unmistakable (Golden Rule §4/§6).
                 NetworkSelector(network: $network)
+
+                // Advanced: pick the address type for the NEW wallet (a preference — a fresh seed has
+                // no coins to match). Native segwit default. Hidden for Thunder (fixed ed25519 path).
+                if network != .thunder { advancedSection }
 
                 Text("Your keys, your coins", bundle: .module, comment: "create wallet heading")
                     .textStyle(.h1)
@@ -61,5 +66,42 @@ struct CreateConfirmView: View {
             .padding(Theme.Space.gutter)
         }
         .navigationTitle(Text("New wallet", bundle: .module, comment: "create wallet screen title"))
+    }
+
+    /// Collapsed by default. The address-type picker for the new wallet — most users never touch it
+    /// (native segwit); power users can pick Taproot etc. No live preview (the seed is generated at
+    /// submit), just the derivation path.
+    private var advancedSection: some View {
+        DisclosureGroup(isExpanded: $advancedExpanded) {
+            VStack(alignment: .leading, spacing: Theme.Space.x2) {
+                Picker("Address type", selection: $vm.scriptType) {
+                    ForEach(ScriptType.allCases, id: \.self) { type in
+                        Text(verbatim: type.displayName).tag(type)
+                    }
+                }
+                .pickerStyle(.menu)
+                .tint(Theme.Colors.accent)
+
+                HStack {
+                    Text("Derivation", bundle: .module, comment: "derivation path label")
+                        .textStyle(.overline).foregroundStyle(Theme.Colors.text2)
+                    Spacer()
+                    Text(verbatim: derivationPath)
+                        .font(.jbMono(13, .regular)).foregroundStyle(Theme.Colors.text1)
+                }
+            }
+            .padding(.top, Theme.Space.x2)
+        } label: {
+            Text("Advanced", bundle: .module, comment: "advanced create options disclosure label")
+                .textStyle(.body)
+                .foregroundStyle(Theme.Colors.text1)
+        }
+        .tint(Theme.Colors.accent)
+    }
+
+    /// The account-level derivation path for the selected script type + network, e.g. `m/86'/0'/0'`.
+    private var derivationPath: String {
+        let coinType = NetworkRegistry.params(for: network).coinType
+        return "m/\(vm.scriptType.purpose)'/\(coinType)'/0'"
     }
 }

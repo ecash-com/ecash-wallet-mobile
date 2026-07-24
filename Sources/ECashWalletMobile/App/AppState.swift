@@ -268,8 +268,10 @@ final class AppState {
 
     /// Create a new wallet on `network`, persist it, select it. Throws `WalletError` on failure.
     @discardableResult
-    func createWallet(label: String, network: WalletNetwork, wordCount: Int = 12) throws -> ManagedWallet {
-        let wallet = try manager.createWallet(label: label, network: network, wordCount: wordCount)
+    func createWallet(label: String, network: WalletNetwork, wordCount: Int = 12,
+                      scriptType: ScriptType = .bip84) throws -> ManagedWallet {
+        let wallet = try manager.createWallet(label: label, network: network, wordCount: wordCount,
+                                              scriptType: scriptType)
         resetPerWalletState()   // the new wallet is auto-selected; don't show the old one's numbers
         refresh()
         return wallet
@@ -303,8 +305,9 @@ final class AppState {
     /// Vend a `CreateViewModel` wired to this manager (used by the Create flow). The VM is owned by
     /// the view; capturing `self` here is safe (no retain cycle — AppState doesn't hold the VM).
     func makeCreateViewModel() -> CreateViewModel {
-        CreateViewModel(create: { label, network, wordCount in
-            _ = try self.createWallet(label: label, network: network, wordCount: wordCount)
+        CreateViewModel(create: { label, network, wordCount, scriptType in
+            _ = try self.createWallet(label: label, network: network, wordCount: wordCount,
+                                      scriptType: scriptType)
         })
     }
 

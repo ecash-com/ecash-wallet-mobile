@@ -77,11 +77,13 @@ public final class WalletManager: @unchecked Sendable {
     // MARK: - Create / import
 
     /// Create a brand-new wallet on the chosen network, persist it, and select it.
-    public func createWallet(label: String, network: WalletNetwork, wordCount: Int = 12) throws -> ManagedWallet {
-        // New wallets always use the default script type (.bip84) — a fresh seed has no legacy coins
-        // to match. Only IMPORT exposes the script-type choice (recovery-correctness).
-        let keys = try factory.create(network: network, wordCount: wordCount, scriptType: .bip84)
-        return try persistNewWallet(label: label, network: network, keys: keys)
+    /// `scriptType` (default `.bip84` native segwit) lets a user create e.g. a Taproot wallet. A fresh
+    /// seed has no legacy coins to match, so this is a preference, not recovery — the default stays
+    /// native segwit (broadest compatibility). Ignored for Thunder (fixed ed25519 derivation).
+    public func createWallet(label: String, network: WalletNetwork, wordCount: Int = 12,
+                             scriptType: ScriptType = .bip84) throws -> ManagedWallet {
+        let keys = try factory.create(network: network, wordCount: wordCount, scriptType: scriptType)
+        return try persistNewWallet(label: label, network: network, keys: keys, scriptType: scriptType)
     }
 
     /// Import a wallet from a mnemonic (validated by the factory; throws `.invalidMnemonic` on a

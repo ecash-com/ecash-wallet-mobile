@@ -22,10 +22,15 @@ final class CreateViewModel {
         case failed(String)   // user-safe message (already scrubbed by WalletError)
     }
 
-    private let create: @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int) throws -> Void
+    /// The derivation script type for the new wallet (Advanced; default `.bip84` native segwit). A
+    /// fresh seed has no coins to match, so this is a preference (e.g. create a Taproot wallet), not
+    /// recovery. Ignored for Thunder (fixed ed25519 derivation).
+    var scriptType: ScriptType = .bip84
+
+    private let create: @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void
     private(set) var phase: Phase = .idle
 
-    init(create: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int) throws -> Void) {
+    init(create: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void) {
         self.create = create
     }
 
@@ -42,7 +47,7 @@ final class CreateViewModel {
         guard phase != .creating else { return }
         phase = .creating
         do {
-            try create(label, network, wordCount)
+            try create(label, network, wordCount, scriptType)
             // Success: AppState re-roots to Home; nothing else to do here.
         } catch let error as WalletError {
             phase = .failed(error.userMessage)
