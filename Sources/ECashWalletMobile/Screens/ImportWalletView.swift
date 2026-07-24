@@ -42,7 +42,10 @@ struct ImportWalletView: View {
             VStack(alignment: .leading, spacing: Theme.Space.x4) {
                 // Network is chosen up front (it fixes the address set) and unmistakable (Golden Rule §4/§6).
                 NetworkSelector(network: $network)
-                    .onChange(of: network) { _, newNet in vm.updatePreview(network: newNet) }
+                    .onChange(of: network) { _, newNet in
+                        vm.updatePreview(network: newNet)
+                        vm.updateSeedPreview(network: newNet)
+                    }
 
                 // Advanced: pick the import type. Collapsed by default so the common recovery-phrase
                 // path stays simple; the derivation-path option (phrase mode) will land here too.
@@ -97,18 +100,26 @@ struct ImportWalletView: View {
 
     // MARK: - Advanced options + input variants
 
-    /// Collapsed by default. Holds the import-type toggle (recovery phrase vs private key); the
-    /// derivation-path option for phrase mode will live here too (a later slice).
+    /// Collapsed by default. Holds the import-type toggle (recovery phrase vs private key) and, for a
+    /// recovery phrase, the derivation script-type picker + live address preview (recovery-correctness
+    /// for the airdrop — match the address kind the seed's coins live at).
     private var advancedSection: some View {
         DisclosureGroup(isExpanded: $advancedExpanded) {
-            Picker("Import type", selection: $vm.kind) {
-                Text("Recovery phrase", bundle: .module, comment: "import type: 12/24-word seed phrase")
-                    .tag(ImportViewModel.Kind.recoveryPhrase)
-                Text("Private key", bundle: .module, comment: "import type: single legacy WIF private key")
-                    .tag(ImportViewModel.Kind.privateKey)
+            VStack(alignment: .leading, spacing: Theme.Space.x3) {
+                Picker("Import type", selection: $vm.kind) {
+                    Text("Recovery phrase", bundle: .module, comment: "import type: 12/24-word seed phrase")
+                        .tag(ImportViewModel.Kind.recoveryPhrase)
+                    Text("Private key", bundle: .module, comment: "import type: single legacy WIF private key")
+                        .tag(ImportViewModel.Kind.privateKey)
+                }
+                .pickerStyle(.segmented)
+                .onChange(of: vm.kind) { _, _ in
+                    vm.updatePreview(network: network)
+                    vm.updateSeedPreview(network: network)
+                }
+
+                if vm.kind == .recoveryPhrase { derivationOptions }
             }
-            .pickerStyle(.segmented)
-            .onChange(of: vm.kind) { _, _ in vm.updatePreview(network: network) }
             .padding(.top, Theme.Space.x2)
         } label: {
             Text("Advanced", bundle: .module, comment: "advanced import options disclosure label")
@@ -116,6 +127,54 @@ struct ImportWalletView: View {
                 .foregroundStyle(Theme.Colors.text1)
         }
         .tint(Theme.Colors.accent)
+    }
+
+    /// Script-type picker + the resulting derivation path and first address — the guardrail for
+    /// restoring a seed from another wallet ("match its address type"). Live preview updates as the
+    /// user changes the script type, phrase, or network.
+    private var derivationOptions: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x2) {
+            Text("Restoring from another wallet? Match its address type.",
+                 bundle: .module, comment: "custom derivation help")
+                .textStyle(.xs)
+                .foregroundStyle(Theme.Colors.text2)
+
+            Picker("Address type", selection: $vm.scriptType) {
+                ForEach(ScriptType.allCases, id: \.self) { type in
+                    Text(verbatim: type.displayName).tag(type)
+                }
+            }
+            .pickerStyle(.menu)
+            .tint(Theme.Colors.accent)
+            .onChange(of: vm.scriptType) { _, _ in vm.updateSeedPreview(network: network) }
+
+            // Read-only derivation path (e.g. m/84'/0'/0') — the computed account path.
+            HStack {
+                Text("Derivation", bundle: .module, comment: "derivation path label")
+                    .textStyle(.overline).foregroundStyle(Theme.Colors.text2)
+                Spacer()
+                Text(verbatim: derivationPath)
+                    .font(.jbMono(13, .regular)).foregroundStyle(Theme.Colors.text1)
+            }
+
+            // Live first-address preview — appears once the phrase is a full valid mnemonic.
+            if let addr = vm.seedPreviewAddress {
+                VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                    Text("First address", bundle: .module, comment: "derivation preview first address label")
+                        .textStyle(.overline).foregroundStyle(Theme.Colors.text2)
+                    Text(verbatim: addr)
+                        .font(.jbMono(13, .regular)).foregroundStyle(Theme.Colors.text0)
+                }
+            }
+        }
+        .padding(Theme.Space.x3)
+        .background(Theme.Colors.bg1, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+    }
+
+    /// The account-level derivation path for the selected script type + network, e.g. `m/84'/0'/0'`.
+    private var derivationPath: String {
+        let coinType = NetworkRegistry.params(for: network).coinType
+        return "m/\(vm.scriptType.purpose)'/\(coinType)'/0'"
     }
 
     /// The 12/24-word recovery-phrase input (the default import path).
@@ -137,7 +196,10 @@ struct ImportWalletView: View {
                 .padding(Theme.Space.x2)
                 .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
                 .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).stroke(Theme.Colors.border, lineWidth: 1))
-                .onChange(of: vm.phrase) { _, _ in vm.phraseEdited() }
+                .onChange(of: vm.phrase) { _, _ in
+                    vm.phraseEdited()
+                    vm.updateSeedPreview(network: network)
+                }
                 #if os(iOS)
                 .focused($focusedField, equals: .phrase)
                 #endif

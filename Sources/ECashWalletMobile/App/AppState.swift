@@ -278,8 +278,10 @@ final class AppState {
     /// Import a wallet from a recovery phrase (validated by BDK in the factory), persist it,
     /// select it. Throws `WalletError.invalidMnemonic` on a bad phrase — never echoes the input.
     @discardableResult
-    func importWallet(label: String, network: WalletNetwork, mnemonic: String) throws -> ManagedWallet {
-        let wallet = try manager.importWallet(label: label, network: network, mnemonic: mnemonic)
+    func importWallet(label: String, network: WalletNetwork, mnemonic: String,
+                      scriptType: ScriptType = .bip84) throws -> ManagedWallet {
+        let wallet = try manager.importWallet(label: label, network: network, mnemonic: mnemonic,
+                                              scriptType: scriptType)
         resetPerWalletState()   // the imported wallet is auto-selected
         refresh()
         return wallet
@@ -310,8 +312,9 @@ final class AppState {
     /// import, plus the Advanced legacy-WIF path and its live address preview.
     func makeImportViewModel() -> ImportViewModel {
         ImportViewModel(
-            importWallet: { label, network, mnemonic in
-                _ = try self.importWallet(label: label, network: network, mnemonic: mnemonic)
+            importWallet: { label, network, mnemonic, scriptType in
+                _ = try self.importWallet(label: label, network: network, mnemonic: mnemonic,
+                                          scriptType: scriptType)
             },
             importPrivateKey: { label, network, wif in
                 _ = try self.importPrivateKey(label: label, network: network, wif: wif)
@@ -319,6 +322,10 @@ final class AppState {
             previewWIF: { wif, network in
                 // Best-effort: nil on an invalid key (no error surfaced mid-typing).
                 try? self.manager.previewAddress(forWIF: wif, network: network)
+            },
+            previewSeed: { mnemonic, scriptType, network in
+                // Best-effort: nil on a bad checksum (no error surfaced mid-typing).
+                try? self.manager.previewAddress(forSeed: mnemonic, scriptType: scriptType, network: network)
             })
     }
 

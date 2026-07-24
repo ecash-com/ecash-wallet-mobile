@@ -24,15 +24,18 @@ private let importValidPhrase = "abandon abandon abandon abandon abandon abandon
         var errorToThrow: Error?
         var wifErrorToThrow: Error?
         var previewResult: String?   // what the injected previewWIF returns
+        var receivedScriptType: ScriptType?   // what importWallet received
+        var seedPreviewResult: String?        // what the injected previewSeed returns
     }
 
     private func makeVM() -> (ImportViewModel, Recorder) {
         let rec = Recorder()
         let vm = ImportViewModel(
-            importWallet: { label, _, mnemonic in
+            importWallet: { label, _, mnemonic, scriptType in
                 rec.callCount += 1
                 rec.receivedLabel = label
                 rec.receivedMnemonic = mnemonic
+                rec.receivedScriptType = scriptType
                 if let error = rec.errorToThrow { throw error }
             },
             importPrivateKey: { label, _, wif in
@@ -41,7 +44,8 @@ private let importValidPhrase = "abandon abandon abandon abandon abandon abandon
                 rec.receivedWIF = wif
                 if let error = rec.wifErrorToThrow { throw error }
             },
-            previewWIF: { _, _ in rec.previewResult })
+            previewWIF: { _, _ in rec.previewResult },
+            previewSeed: { _, _, _ in rec.seedPreviewResult })
         return (vm, rec)
     }
 
@@ -60,6 +64,42 @@ private let importValidPhrase = "abandon abandon abandon abandon abandon abandon
         // 11 words — one short.
         vm.phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon"
         #expect(!vm.canSubmit)
+    }
+
+    @Test func submitPassesSelectedScriptType() {
+        let (vm, rec) = makeVM()
+        vm.phrase = importValidPhrase
+        vm.scriptType = .bip44          // user picks Legacy in Advanced
+        vm.submit(label: "Imported", network: .ecash)
+        #expect(rec.callCount == 1)
+        #expect(rec.receivedScriptType == .bip44)   // the choice reaches the engine seam
+    }
+
+    @Test func defaultScriptTypeIsBip84() {
+        let (vm, rec) = makeVM()
+        vm.phrase = importValidPhrase
+        vm.submit(label: "W", network: .ecash)
+        #expect(rec.receivedScriptType == .bip84)   // unchanged common case
+    }
+
+    @Test func seedPreviewOnlyDerivesForValidWordCount() {
+        let (vm, rec) = makeVM()
+        rec.seedPreviewResult = "bc1qpreview"
+        vm.phrase = "abandon abandon abandon"       // 3 words — not a full mnemonic
+        vm.updateSeedPreview(network: .ecash)
+        #expect(vm.seedPreviewAddress == nil)       // no derivation attempted
+        vm.phrase = importValidPhrase               // 12 words
+        vm.updateSeedPreview(network: .ecash)
+        #expect(vm.seedPreviewAddress == "bc1qpreview")
+    }
+
+    @Test func seedPreviewNotShownForPrivateKeyKind() {
+        let (vm, rec) = makeVM()
+        rec.seedPreviewResult = "bc1qpreview"
+        vm.kind = .privateKey
+        vm.phrase = importValidPhrase
+        vm.updateSeedPreview(network: .ecash)
+        #expect(vm.seedPreviewAddress == nil)       // seed preview is a recovery-phrase-only guardrail
     }
 
     @Test func submitNormalizesPhraseBeforeImport() {

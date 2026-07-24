@@ -37,21 +37,32 @@ final class ImportViewModel {
     /// Raw WIF input (private-key mode).
     var wif = ""
     var kind: Kind = .recoveryPhrase
+    /// The derivation script type for a recovery-phrase import (Advanced). Defaults to `.bip84` so the
+    /// common case is unchanged; a user restoring from another wallet picks the type their coins live
+    /// at (`docs/custom-derivation-path-import.md`). Ignored for `.privateKey`.
+    var scriptType: ScriptType = .bip84
     /// The `1…` address the entered WIF derives to, live (nil = empty or not-yet-valid). Doubles as
     /// the submit gate for `.privateKey`: a key that doesn't derive can't be imported. Never the WIF.
     private(set) var previewAddress: String?
+    /// The first receive address the entered PHRASE derives at the selected script type, live — the
+    /// Advanced guardrail so the user can confirm it matches their old wallet before importing. Nil
+    /// until the phrase is a full valid mnemonic. Informational only (doesn't gate submit).
+    private(set) var seedPreviewAddress: String?
     private(set) var phase: Phase = .idle
 
-    private let importWallet: @MainActor (_ label: String, _ network: WalletNetwork, _ mnemonic: String) throws -> Void
+    private let importWallet: @MainActor (_ label: String, _ network: WalletNetwork, _ mnemonic: String, _ scriptType: ScriptType) throws -> Void
     private let importPrivateKey: @MainActor (_ label: String, _ network: WalletNetwork, _ wif: String) throws -> Void
     private let previewWIF: @MainActor (_ wif: String, _ network: WalletNetwork) -> String?
+    private let previewSeed: @MainActor (_ mnemonic: String, _ scriptType: ScriptType, _ network: WalletNetwork) -> String?
 
-    init(importWallet: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ mnemonic: String) throws -> Void,
+    init(importWallet: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ mnemonic: String, _ scriptType: ScriptType) throws -> Void,
          importPrivateKey: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ wif: String) throws -> Void,
-         previewWIF: @escaping @MainActor (_ wif: String, _ network: WalletNetwork) -> String?) {
+         previewWIF: @escaping @MainActor (_ wif: String, _ network: WalletNetwork) -> String?,
+         previewSeed: @escaping @MainActor (_ mnemonic: String, _ scriptType: ScriptType, _ network: WalletNetwork) -> String?) {
         self.importWallet = importWallet
         self.importPrivateKey = importPrivateKey
         self.previewWIF = previewWIF
+        self.previewSeed = previewSeed
     }
 
     var wordCount: Int { MnemonicInput.wordCount(phrase) }
@@ -81,6 +92,17 @@ final class ImportViewModel {
         if case .failed = phase { phase = .idle }
     }
 
+    /// Recompute the live phrase → first-address preview at the selected script type (call on phrase,
+    /// script-type, or network change). Only derives once the phrase is a full valid mnemonic; a bad
+    /// checksum yields nil (the preview closure returns nil on throw). Synchronous — no network I/O.
+    func updateSeedPreview(network: WalletNetwork) {
+        guard kind == .recoveryPhrase, MnemonicInput.hasValidWordCount(phrase) else {
+            seedPreviewAddress = nil
+            return
+        }
+        seedPreviewAddress = previewSeed(MnemonicInput.normalize(phrase), scriptType, network)
+    }
+
     /// Validate via BDK and persist (secret → Keychain, record → store, selected). Branches on
     /// `kind`. Synchronous key work — no network I/O; the first sync happens on Home after re-root.
     func submit(label: String, network: WalletNetwork) {
@@ -89,7 +111,7 @@ final class ImportViewModel {
         do {
             switch kind {
             case .recoveryPhrase:
-                try importWallet(label, network, MnemonicInput.normalize(phrase))
+                try importWallet(label, network, MnemonicInput.normalize(phrase), scriptType)
             case .privateKey:
                 try importPrivateKey(label, network, wif.trimmingCharacters(in: .whitespacesAndNewlines))
             }
@@ -97,6 +119,7 @@ final class ImportViewModel {
             phrase = ""
             wif = ""
             previewAddress = nil
+            seedPreviewAddress = nil
             phase = .idle
         } catch let error as WalletError {
             phase = .failed(error.userMessage)
