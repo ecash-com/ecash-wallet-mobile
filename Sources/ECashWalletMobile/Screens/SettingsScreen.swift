@@ -11,6 +11,7 @@ struct SettingsScreen: View {
     @AppStorage("appearance") var appearance = ""
     @Environment(AppState.self) var app
     @State var showBackup = false   // not `private` — Fuse bridges @State (skip-fuse rule)
+    @State var showSplit = false
 
     var body: some View {
         List {
@@ -27,6 +28,24 @@ struct SettingsScreen: View {
                                 : Text("Not backed up", bundle: .module, comment: "wallet backup status"))
                                 .textStyle(.xs)
                                 .foregroundStyle(wallet.isBackedUp ? Theme.Colors.positive : Theme.Colors.warning)
+                        }
+                    }
+
+                    // Split coins — eCash only (separates fork-airdrop coins from Bitcoin). Always
+                    // reachable here; the sheet handles "nothing to split" when there are no coins.
+                    if wallet.network == .ecash {
+                        Button { showSplit = true } label: {
+                            HStack {
+                                Text("Split coins", bundle: .module, comment: "settings: split coins row")
+                                    .textStyle(.body)
+                                    .foregroundStyle(Theme.Colors.text0)
+                                Spacer()
+                                if let status = splitStatusText {
+                                    Text(verbatim: status)
+                                        .textStyle(.xs)
+                                        .foregroundStyle(Theme.Colors.text2)
+                                }
+                            }
                         }
                     }
                 }
@@ -180,6 +199,22 @@ struct SettingsScreen: View {
                 BackupFlowView(viewModel: vm)
             }
         }
+        .sheet(isPresented: $showSplit) {
+            if let vm = app.makeSplitViewModel() {
+                SplitCoinsView(viewModel: vm)
+            } else {
+                // No spendable coins → nothing to drain.
+                PlaceholderScreen(heading: "Split coins",
+                                  note: "This wallet has no spendable coins to split.")
+            }
+        }
+    }
+
+    /// Trailing status for the Split-coins row from the last-synced summary (nil = unknown/not synced).
+    private var splitStatusText: String? {
+        guard let s = app.splitSummary else { return nil }
+        if s.needsSplitCount == 0 { return "Nothing to split" }
+        return s.needsSplitCount == 1 ? "1 coin to split" : "\(s.needsSplitCount) coins to split"
     }
 
     /// A settings dropdown row: title + current value, both in our brand fonts. A plain `Picker`
