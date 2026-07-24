@@ -34,6 +34,9 @@ final class AppState {
     private(set) var syncState: SyncState = .idle
     /// The selected wallet's transactions, newest first (pending at the top). Cached, then refreshed.
     private(set) var transactions: [WalletTx] = []
+    /// The selected wallet's coin-split status (eCash only; nil elsewhere). Recomputed each sync.
+    /// Drives the Home "split your coins" nudge (`needsSplitCount > 0`).
+    private(set) var splitSummary: SplitSummary?
 
     /// Which main tab is showing — owned here so "See all" on Home can switch to Activity.
     var selectedTab: MainTab = .wallet
@@ -332,6 +335,34 @@ final class AppState {
             })
     }
 
+    /// Vend a `SplitViewModel` for the selected eCash wallet, or nil if none is selected / nothing to
+    /// split. The wallet id + summary are captured at present-time (a switch mid-flow can't redirect
+    /// which wallet is drained). The `split` seam derives its own destination — no address is passed.
+    func makeSplitViewModel() -> SplitViewModel? {
+        guard let id = selectedWalletId, let wallet = selectedWallet else { return nil }
+        let summary = splitSummary ?? (try? walletOps.splitSummary(walletId: id))
+        guard let summary, summary.spendableSats > 0 else { return nil }
+        let params = NetworkRegistry.params(for: wallet.network)
+        return SplitViewModel(
+            summary: summary,
+            unitLabel: params.unitLabel,
+            networkDisplayName: params.displayName,
+            split: { feeRate in
+                try await self.walletOps.splitToSelf(walletId: id, feeRate: feeRate)
+            },
+            onDone: { tx in
+                self.insertPending(tx)
+                // Re-sync so the split's effect (old pre-fork UTXOs spent) recomputes the summary →
+                // the nudge clears on its own.
+                Task { await self.sync() }
+            },
+            authorize: { reason in
+                // Require device auth before draining when app-lock is on (§7); pass through if off.
+                guard self.appLock.enabled else { return true }
+                return await DeviceAuth.authenticate(reason: reason)
+            })
+    }
+
     /// Vend a `BackupViewModel` for the selected wallet, or nil if none is selected. The wallet
     /// id is captured at presentation time (same rule as Send — a switch mid-flow can't
     /// redirect which wallet's phrase is shown or marked backed up).
@@ -573,6 +604,7 @@ final class AppState {
         balance = .zero
         pendingBalance = .zero
         transactions = []
+        splitSummary = nil
         syncState = .idle
     }
 
@@ -600,6 +632,8 @@ final class AppState {
             balance = updated
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
+            // Coin-split status (local, no I/O) — drives the Home nudge. eCash only; nil elsewhere.
+            splitSummary = (selectedWallet?.network == .ecash) ? (try? walletOps.splitSummary(walletId: id)) : nil
             syncState = .idle
             // Refresh fiat alongside the balance (no-op for networks without a price provider).
             Task { await refreshPrice() }

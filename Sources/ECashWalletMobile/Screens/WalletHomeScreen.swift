@@ -19,6 +19,8 @@ struct WalletHomeScreen: View {
     @State var showBackup = false
     @State var showWalletManager = false
     @State var showFaucet = false
+    @State var showSplit = false           // "Split coins" sheet
+    @State var splitDismissed = false      // per-session: dismiss the split nudge without splitting
     @State var detailTx: WalletTx? = nil
 
     var body: some View {
@@ -68,6 +70,44 @@ struct WalletHomeScreen: View {
                 TxDetailSheet(tx: tx, unitLabel: app.unitLabel, network: wallet.network)
             }
         }
+        // Split coins: separate eCash from Bitcoin (a self-drain to a fresh address).
+        .sheet(isPresented: $showSplit) {
+            if let vm = app.makeSplitViewModel() {
+                SplitCoinsView(viewModel: vm)
+            }
+        }
+    }
+
+    /// eCash-only nudge shown when the wallet holds pre-fork coins (shared with Bitcoin). Tapping
+    /// opens the split flow; the ✕ dismisses it for this session (it also clears itself once split,
+    /// since the summary recomputes `needsSplitCount == 0`).
+    private var splitNudge: some View {
+        HStack(alignment: .top, spacing: Theme.Space.x2) {
+            Button {
+                showSplit = true
+            } label: {
+                VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                    Text("Separate your eCash from your Bitcoin", bundle: .module, comment: "home split nudge title")
+                        .textStyle(.sm)
+                        .foregroundStyle(Theme.Colors.text0)
+                    Text("You hold coins that exist on both chains. Split them so spending your eCash can't move your Bitcoin. Tap to split.",
+                         bundle: .module, comment: "home split nudge body")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.text1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .buttonStyle(.plain)
+
+            Button { splitDismissed = true } label: {
+                Image(icon: Icon.close).resizable().scaledToFit().frame(width: 14, height: 14)
+                    .foregroundStyle(Theme.Colors.text2)
+            }
+            .buttonStyle(.plain)
+        }
+        .padding(Theme.Space.x4)
+        .background(Theme.Colors.accentTint, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).stroke(Theme.Colors.accent.opacity(0.4), lineWidth: 1))
     }
 
     @ViewBuilder
@@ -126,6 +166,11 @@ struct WalletHomeScreen: View {
 
             if !wallet.isBackedUp {
                 backupNudge
+            }
+
+            // Split-coins nudge: eCash wallet holding pre-fork (shared-with-Bitcoin) coins.
+            if let s = app.splitSummary, s.needsSplitCount > 0, !splitDismissed {
+                splitNudge
             }
 
             recentActivity
