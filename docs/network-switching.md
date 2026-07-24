@@ -94,17 +94,20 @@ Define explicit **switch groups**; a wallet may only switch *within* its group. 
 | Bitcoin mainnet | `bitcoin` | ❌ singleton | real money |
 | eCash mainnet | `ecashMainnet` (future) | ❌ singleton | real money |
 
-**Critical:** Bitcoin mainnet and eCash mainnet are **both coin-type `0'` with identical addresses**
-and eCash has **no replay protection**, yet they must **never** share a switch group — same coin can
-exist on both chains and a signed tx can be valid on both (§6). "Same coin-type" is necessary but
-**not sufficient** for grouping; the table is the allowlist, not a coin-type check.
+**Critical:** Bitcoin mainnet and eCash mainnet are **both coin-type `0'` with identical addresses**,
+and eCash's replay protection is **opt-in + directional** (an eCash tx we stamp with the `nLockTime`
+marker can't replay onto BTC, but a plain BTC tx *can* replay onto eCash, and the addresses are
+indistinguishable). So they must **never** share a switch group — the same coin exists on both chains
+and an unstamped signed tx can be valid on both (§6). "Same coin-type" is necessary but **not
+sufficient** for grouping; the table is the allowlist, not a coin-type check.
 
 ## 6. Risks & mitigations
 
 - **Local UTXO/cache collision (high, likely):** shared chain store across networks → merged/
   corrupted UTXO accounting. → **Per-`(walletId × network)` store** (§4.2). Primary mitigation.
-- **Cross-chain replay (high, mainnet only):** identical-address chains with no replay protection
-  (BTC ⇄ eCash mainnet). → **Never group them** (§5); they stay create-time-pinned singletons. Revisit
+- **Cross-chain replay (high, mainnet only):** identical-address chains with only opt-in/directional
+  replay protection (BTC ⇄ eCash mainnet; we stamp the eCash `nLockTime` marker on eCash sends, but BTC
+  txs still replay onto eCash). → **Never group them** (§5); they stay create-time-pinned singletons. Revisit
   with a full threat model before eCash mainnet ships.
 - **Wrong-network broadcast (high):** sending while the UI/engine disagree on the active network. →
   Network badge everywhere (already), **send review states the network** (already), `check_network`

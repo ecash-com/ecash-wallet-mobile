@@ -103,6 +103,24 @@ public enum NetworkRegistry {
     public static func explorerURL(for txid: String, on network: WalletNetwork) -> String {
         params(for: network).explorerTxTemplate.replacingOccurrences(of: "{txid}", with: txid)
     }
+
+    /// The replay-protection `nLockTime` a network stamps on every tx it builds, or nil if none.
+    ///
+    /// **eCash** uses the reserved marker **`LOCKTIME_THRESHOLD - 1` = 499_999_999**
+    /// (LayerTwo-Labs/bitcoin-patched#24): its patched consensus treats this value as *final* (like
+    /// `nLockTime == 0`), while stock Bitcoin Core reads it as a block height ~500M blocks (~9,500
+    /// years) out and rejects the tx as **non-final** — so an eCash tx carrying it confirms on eCash
+    /// but can never replay onto Bitcoin. This is what makes an eCash spend safe for a holder who also
+    /// has BTC at the same (byte-identical) addresses. NOTE: the marker only bites when at least one
+    /// input is non-final (`nSequence < 0xFFFFFFFF`) — BDK's default RBF (`0xFFFFFFFD`) guarantees
+    /// that. Bitcoin/Signet get nil (never stamp it — it would make their txs unminable). Internal:
+    /// consumed only by `WalletEngine` at build time, never bridged.
+    static func replayProtectionLockHeight(for network: WalletNetwork) -> UInt32? {
+        switch network {
+        case .ecash: return UInt32(499_999_999)   // LOCKTIME_THRESHOLD - 1
+        case .bitcoin, .signet, .thunder: return nil
+        }
+    }
 }
 
 #endif // !SKIP_BRIDGE — bridged module: bodies excluded from the bridge compile

@@ -71,18 +71,29 @@ So coin-type / HRP are **not** in the BIP specs. They live in the **eCash chain 
 (L2L's Bitcoin Core fork — the `LayerTwo-Labs/mainchain` repo and successors define `chainparams`:
 bech32 HRP, address version bytes, network magic). **That's where to look to close items 2 & 3.**
 
-### The decisive wrinkle: it's a 1:1 fork with weak replay protection
+### The decisive wrinkle: 1:1 fork, identical addresses, opt-in replay protection
 
-eCash is a straight Bitcoin hardfork with a 1:1 airdrop, and reporting notes **incomplete replay
-protection** between BTC and eCash (a BTC tx can affect eCash funds and vice-versa). Implications:
+eCash is a straight Bitcoin hardfork with a 1:1 airdrop. Implications:
 
 - A forked chain + 1:1 airdrop ⇒ a holder's **existing Bitcoin keys already control their eCash at
-  the same addresses**. To let users access airdropped coins, the eCash wallet almost certainly must
-  derive at **Bitcoin's path (coin-type `0'`)**, and/or support importing a BTC-derivation seed.
-- eCash addresses are likely **Bitcoin-format** (same bech32), which is *dangerous*: it makes a
-  testnet/eCash/BTC address easy to confuse and makes the weak replay protection a real
-  loss-of-funds risk. This raises the stakes on Golden Rule §6 (network must be unmistakable) and on
-  how/whether we ever expose anything that could touch BTC mainnet.
+  the same addresses**. To let users access airdropped coins, the eCash wallet derives at **Bitcoin's
+  path (coin-type `0'`)** and supports importing a BTC seed. (Done.)
+- eCash addresses are **Bitcoin-format** (same bech32) — an eCash address *is* a Bitcoin address, and
+  a signed tx is structurally valid on both chains. So the network is unmistakable only via the
+  backend/chip (Golden Rule §6), and **cross-chain replay is a real concern**.
+
+**Replay protection — CORRECTED 2026-07-24 (supersedes earlier "no/weak replay protection" notes).**
+eCash's patched Bitcoin Core (LayerTwo-Labs/bitcoin-patched#24) adds an **opt-in** replay-protection
+marker: a tx with **`nLockTime == LOCKTIME_THRESHOLD - 1` (= 499,999,999)** is treated as *final* on
+eCash, but stock Bitcoin Core reads it as a **block height ~500M blocks (~9,500 years) out** and
+rejects it as **non-final** → the tx confirms on eCash but **can never replay onto Bitcoin**. It only
+bites when at least one input is non-final (`nSequence < 0xFFFFFFFF`); BDK's default RBF (`0xFFFFFFFD`)
+guarantees that. **Our wallet stamps this on every eCash tx it builds** (`send` + `publishData`), gated
+per network via `NetworkRegistry.replayProtectionLockHeight` and applied in
+`WalletEngine.applyingReplayProtection` — stock bdk-swift/bdk-android, no BDK fork. So a user's eCash
+spend can't move their BTC (the direction that matters). *Caveat:* it's **directional** — a plain
+Bitcoin tx (`nLockTime == 0`) is still replayable onto eCash; and it's **opt-in**, so a tx built by
+another wallet that omits the marker isn't protected.
 
 ### 2a. What L2L's reference wallet actually does (primary source)
 
@@ -135,8 +146,11 @@ current `bitcoin-patched` is *exactly* Bitcoin.) This is why their BlueWallet fo
    `Network.testnet4`/`.signet`. The *only* thing that distinguishes an eCash wallet from a Bitcoin
    wallet is **which backend (Electrum/node) you point at** — addresses, magic, and xpubs are
    identical.
-3. **No replay protection + identical addresses = the core safety problem.** A signed eCash tx is a
-   structurally valid Bitcoin tx (same magic), and an eCash address *is* a Bitcoin address. So:
+3. **Identical addresses + opt-in replay protection = the core safety problem.** An eCash address *is*
+   a Bitcoin address, and a signed tx is structurally valid on both chains. eCash's opt-in `nLockTime`
+   marker (see "replay protection" above) protects the eCash→BTC direction *when we stamp it* (we do,
+   per-network via `NetworkRegistry.replayProtectionLockHeight`) — but addresses are still
+   indistinguishable and the reverse direction is unprotected. So:
    - Network separation is **purely backend-based** — there is no on-chain/address signal. The
      wallet must bind each wallet hard to its network's backend and never cross.
    - This is exactly why **not shipping a BTC-mainnet wallet** (the `no-bitcoin-mainnet` decision)

@@ -320,6 +320,21 @@ public final class WalletEngine: WalletEngineProtocol {
         return result
     }
 
+    /// Stamp the network's replay-protection `nLockTime` on a tx builder, if it has one. For eCash
+    /// this sets `nLockTime = 499_999_999` (LOCKTIME_THRESHOLD - 1) — final on eCash, a far-future
+    /// block-height lock on Bitcoin → the tx can't replay onto BTC (NetworkRegistry
+    /// `replayProtectionLockHeight`). No-op on Bitcoin/Signet. The protection also needs a non-final
+    /// input sequence, which BDK's default RBF (`0xFFFFFFFD`) provides — do NOT disable RBF on eCash.
+    private func applyingReplayProtection(_ builder: TxBuilder) -> TxBuilder {
+        guard let height = NetworkRegistry.replayProtectionLockHeight(for: network) else { return builder }
+        #if SKIP
+        let lock = LockTime.Blocks(height: height)   // bdk-android (Kotlin sealed-class variant)
+        #else
+        let lock = LockTime.blocks(height: height)   // bdk-swift
+        #endif
+        return builder.nlocktime(locktime: lock)
+    }
+
     /// Build → sign → broadcast. The flow is implemented end-to-end, but it has NOT been
     /// verified against a funded wallet on live L2L Signet — that requires device/emulator testing
     /// with real coins. TODO(M2-device): confirm fee/change/RBF on a real send.
@@ -364,11 +379,12 @@ public final class WalletEngine: WalletEngineProtocol {
             #else
             let unspendable = untrusted
             #endif
-            psbt = try TxBuilder()
+            var builder = TxBuilder()
                 .addRecipient(script: script, amount: bdkAmount)
                 .feeRate(feeRate: bdkFeeRate)
                 .unspendable(unspendable: unspendable)
-                .finish(wallet: wallet)
+            builder = applyingReplayProtection(builder)
+            psbt = try builder.finish(wallet: wallet)
         } catch {
             // Insufficient-funds / dust / fee errors classified, never echoed (Golden Rule §2).
             throw WalletError.mapping(rawDescription: "\(error)")
@@ -454,10 +470,11 @@ public final class WalletEngine: WalletEngineProtocol {
             #else
             let withData = TxBuilder().addData(data: data)
             #endif
-            psbt = try withData
+            var builder = withData
                 .feeRate(feeRate: bdkFeeRate)
                 .unspendable(unspendable: unspendable)
-                .finish(wallet: wallet)
+            builder = applyingReplayProtection(builder)
+            psbt = try builder.finish(wallet: wallet)
         } catch {
             throw WalletError.mapping(rawDescription: "\(error)")
         }
