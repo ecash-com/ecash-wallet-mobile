@@ -600,6 +600,21 @@ final class AppState {
     /// The next sync replaces this view with BDK's persisted truth, including the balance.
     private func insertPending(_ tx: WalletTx) {
         transactions = sorted([tx] + transactions.filter { $0.txid != tx.txid })
+
+        // Refresh the balance too, or Home keeps showing the pre-send number until the user happens
+        // to pull-to-refresh — which reads as "my payment didn't go through".
+        //
+        // This needs no network: `WalletEngine.applyBroadcast` already folded the broadcast tx into
+        // the wallet graph, so the engine's cached balance reflects the spent UTXOs (and our own
+        // unconfirmed change) the moment we get here.
+        if let id = selectedWalletId {
+            balance = (try? walletOps.balance(walletId: id)) ?? balance
+            pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? pendingBalance
+        }
+
+        // Then reconcile with the backend in the background — confirmations, fee, and the split
+        // summary (a split-coins tx should clear the Home nudge without a manual refresh).
+        Task { await sync() }
     }
 
     /// Switch the active wallet. Clears the previous wallet's on-screen state immediately and
