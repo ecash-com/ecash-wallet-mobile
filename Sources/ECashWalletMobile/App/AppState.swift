@@ -144,7 +144,11 @@ final class AppState {
         // only when Thunder needs to derive/sign (Golden Rule §2). Everything else stays on BDK.
         walletOps = WalletFacade(
             primary: WalletManagerOps(manager),
-            thunder: ThunderService(loadMnemonic: { [manager] id in try manager.mnemonic(for: id) }),
+            thunder: ThunderService(
+                loadMnemonic: { [manager] id in try manager.mnemonic(for: id) },
+                // Resolved per call so a Settings → Network endpoint change applies immediately
+                // (the same override chain the BDK backends use).
+                makeClient: { [manager] in ThunderRPCClient(endpoint: manager.backendURL(for: .thunder)) }),
             isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network == .thunder })
         balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
         // New-wallet seed length: 24 if explicitly chosen, otherwise 12 (covers unset → default 12).

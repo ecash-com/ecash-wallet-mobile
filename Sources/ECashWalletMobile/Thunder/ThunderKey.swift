@@ -23,7 +23,16 @@ struct ThunderKey {
 
     /// Derive the key at `index` from a BIP39 mnemonic (optional passphrase).
     static func derive(mnemonic: String, passphrase: String = "", index: UInt32) throws -> ThunderKey {
-        let seed = Bip39Seed.seed(mnemonic: mnemonic, passphrase: passphrase)
+        try derive(seed: Bip39Seed.seed(mnemonic: mnemonic, passphrase: passphrase), index: index)
+    }
+
+    /// Derive the key at `index` from an already-computed BIP39 seed.
+    ///
+    /// Deriving a *range* of indices — scanning the address set to sync, or resolving which key owns an
+    /// input — must go through this, not the mnemonic overload: the mnemonic → seed step is PBKDF2 with
+    /// 2048 iterations, so re-running it per index turns a 20-address scan into 20 PBKDF2 runs for no
+    /// reason. Compute the seed once, derive many.
+    static func derive(seed: [UInt8], index: UInt32) throws -> ThunderKey {
         let node = Slip10Ed25519.derive(seed: seed, hardenedPath: accountPath + [index])
         let signingKey = try Curve25519.Signing.PrivateKey(rawRepresentation: node.key)
         let publicKey = Array(signingKey.publicKey.rawRepresentation)

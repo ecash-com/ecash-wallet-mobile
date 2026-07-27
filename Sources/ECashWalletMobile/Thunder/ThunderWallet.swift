@@ -25,6 +25,10 @@ struct ThunderWallet {
         self.passphrase = passphrase
     }
 
+    /// The BIP39 seed for this mnemonic. PBKDF2 (2048 iterations) — compute it once and pass it to the
+    /// batch helpers rather than re-deriving per index.
+    func seed() -> [UInt8] { Bip39Seed.seed(mnemonic: mnemonic, passphrase: passphrase) }
+
     /// The key at derivation index `index` (`m/1'/0'/0'/index'`).
     func key(at index: UInt32) throws -> ThunderKey {
         try ThunderKey.derive(mnemonic: mnemonic, passphrase: passphrase, index: index)
@@ -35,19 +39,36 @@ struct ThunderWallet {
         try key(at: index).address
     }
 
-    /// The first `count` addresses (indices `0 ..< count`).
+    /// The first `count` addresses (indices `0 ..< count`), from a single seed computation.
     func addresses(count: Int) throws -> [ThunderAddress] {
-        try (0..<count).map { try address(at: UInt32($0)) }
+        let seed = seed()
+        return try (0..<count).map { try ThunderKey.derive(seed: seed, index: UInt32($0)).address }
     }
 
     /// Resolve the key controlling `address` by scanning indices `0 ..< searchLimit`; nil if none
     /// matches (the wallet doesn't own it, or it's derived beyond the limit).
     func key(for address: ThunderAddress, searchLimit: Int = defaultAddressSearchLimit) throws -> ThunderKey? {
+        try keys(for: [address], searchLimit: searchLimit)[address]
+    }
+
+    /// Resolve the keys controlling `addresses` in ONE scan of indices `0 ..< searchLimit` — the shape
+    /// signing actually needs, since a transaction usually spends several of our addresses at once.
+    /// Scanning once per address instead would repeat the whole derivation for each input.
+    /// Addresses we don't own are simply absent from the result.
+    func keys(for addresses: [ThunderAddress],
+              searchLimit: Int = defaultAddressSearchLimit) throws -> [ThunderAddress: ThunderKey] {
+        var wanted = Set(addresses)
+        guard !wanted.isEmpty else { return [:] }
+        let seed = seed()
+        var found: [ThunderAddress: ThunderKey] = [:]
         for index in 0..<searchLimit {
-            let candidate = try key(at: UInt32(index))
-            if candidate.address == address { return candidate }
+            let candidate = try ThunderKey.derive(seed: seed, index: UInt32(index))
+            if wanted.remove(candidate.address) != nil {
+                found[candidate.address] = candidate
+                if wanted.isEmpty { break }
+            }
         }
-        return nil
+        return found
     }
 
     /// Build the submit-ready authorized transaction from a locally-constructed transaction and the
@@ -63,14 +84,16 @@ struct ThunderWallet {
             throw ThunderError.inputAddressCountMismatch(
                 inputs: transaction.inputs.count, addresses: inputAddresses.count)
         }
-        var keys: [ThunderKey] = []
-        keys.reserveCapacity(inputAddresses.count)
+        // One scan for every input address, not one scan per input.
+        let byAddress = try keys(for: inputAddresses, searchLimit: searchLimit)
+        var inputKeys: [ThunderKey] = []
+        inputKeys.reserveCapacity(inputAddresses.count)
         for (index, address) in inputAddresses.enumerated() {
-            guard let key = try key(for: address, searchLimit: searchLimit) else {
+            guard let key = byAddress[address] else {
                 throw ThunderError.noKeyForInputAddress(inputIndex: index)
             }
-            keys.append(key)
+            inputKeys.append(key)
         }
-        return try AuthorizedThunderTransaction.authorize(transaction, inputKeys: keys)
+        return try AuthorizedThunderTransaction.authorize(transaction, inputKeys: inputKeys)
     }
 }

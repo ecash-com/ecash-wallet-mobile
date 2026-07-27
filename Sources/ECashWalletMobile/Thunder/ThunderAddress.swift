@@ -8,7 +8,7 @@ import Blake3   // official BLAKE3 (the address hash)
 
 /// A Thunder address: the first 20 bytes of `BLAKE3(ed25519_public_key)` (`authorization.rs::
 /// get_address`), rendered as plain bitcoin-alphabet base58 with no checksum (`address.rs::as_base58`).
-struct ThunderAddress: Equatable {
+struct ThunderAddress: Equatable, Hashable {
     /// The raw 20-byte address hash.
     let bytes: [UInt8]
 

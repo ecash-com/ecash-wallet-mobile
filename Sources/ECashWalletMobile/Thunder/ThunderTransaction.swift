@@ -12,6 +12,17 @@ enum ThunderOutPoint: Equatable {
     case regular(txid: [UInt8], vout: UInt32)          // tag 0 — created by a Thunder tx
     case coinbase(merkleRoot: [UInt8], vout: UInt32)   // tag 1 — created by a block body
     case deposit(txid: [UInt8], vout: UInt32)          // tag 2 — created by a mainchain deposit
+
+    func borshEncode(into w: inout BorshWriter) {
+        switch self {
+        case let .regular(txid, vout):
+            w.writeU8(0); w.writeFixedBytes(txid); w.writeU32(vout)
+        case let .coinbase(merkleRoot, vout):
+            w.writeU8(1); w.writeFixedBytes(merkleRoot); w.writeU32(vout)
+        case let .deposit(txid, vout):
+            w.writeU8(2); w.writeFixedBytes(txid); w.writeU32(vout)
+        }
+    }
 }
 
 /// An output's payload (thunder-rust `types::Content`). `bitcoin::Amount` serializes as its u64 sats.
@@ -21,12 +32,35 @@ enum ThunderOutputContent: Equatable {
     /// address's scriptPubKey bytes (what thunder-rust serializes for `main_address`). Future work —
     /// the everyday send path only uses `.value`.
     case withdrawal(sats: UInt64, mainFeeSats: UInt64, mainScriptPubKey: [UInt8])   // tag 1
+
+    func borshEncode(into w: inout BorshWriter) {
+        switch self {
+        case let .value(sats):
+            w.writeU8(0); w.writeU64(sats)
+        case let .withdrawal(sats, mainFeeSats, mainScriptPubKey):
+            w.writeU8(1); w.writeU64(sats); w.writeU64(mainFeeSats); w.writeVarBytes(mainScriptPubKey)
+        }
+    }
+
+    /// The value this output moves, in sats. A withdrawal removes BOTH the payout and the mainchain
+    /// fee from the sidechain, so both count (thunder-rust `GetValue for Content`).
+    var valueSats: UInt64 {
+        switch self {
+        case let .value(sats): return sats
+        case let .withdrawal(sats, mainFeeSats, _): return sats &+ mainFeeSats
+        }
+    }
 }
 
 /// A transaction output (thunder-rust `types::Output`): a 20-byte address hash plus its content.
 struct ThunderOutput: Equatable {
     let address: [UInt8]           // 20-byte Thunder address hash (`ThunderAddress.bytes`)
     let content: ThunderOutputContent
+
+    func borshEncode(into w: inout BorshWriter) {
+        w.writeFixedBytes(address)   // Address = [u8; 20], raw (no length prefix)
+        content.borshEncode(into: &w)
+    }
 }
 
 /// A Thunder transaction — the exact value that is BLAKE3-hashed for its txid and ed25519-signed for
@@ -51,16 +85,13 @@ struct ThunderTransaction: Equatable {
         // inputs: Vec<(OutPoint, Hash)>  — u32 count, then each (outpoint, 32-byte hash)
         w.writeU32(UInt32(inputs.count))
         for input in inputs {
-            Self.encodeOutPoint(input.outPoint, into: &w)
+            input.outPoint.borshEncode(into: &w)
             w.writeFixedBytes(input.utxoHash)
         }
         // proof: #[borsh(skip)] — deliberately omitted
         // outputs: Vec<Output>  — u32 count, then each (20-byte address, content)
         w.writeU32(UInt32(outputs.count))
-        for output in outputs {
-            w.writeFixedBytes(output.address)
-            Self.encodeContent(output.content, into: &w)
-        }
+        for output in outputs { output.borshEncode(into: &w) }
         return w.bytes
     }
 
@@ -69,23 +100,16 @@ struct ThunderTransaction: Equatable {
         Array(Blake3.hash(data: borshEncoded()))
     }
 
-    private static func encodeOutPoint(_ op: ThunderOutPoint, into w: inout BorshWriter) {
-        switch op {
-        case let .regular(txid, vout):
-            w.writeU8(0); w.writeFixedBytes(txid); w.writeU32(vout)
-        case let .coinbase(merkleRoot, vout):
-            w.writeU8(1); w.writeFixedBytes(merkleRoot); w.writeU32(vout)
-        case let .deposit(txid, vout):
-            w.writeU8(2); w.writeFixedBytes(txid); w.writeU32(vout)
+    /// Canonical Borsh size in bytes, without building the encoding — used to price a fee before the
+    /// tx exists (see `ThunderCoinSelector`). Exact, because every field is fixed-width: 4-byte Vec
+    /// length + 37 per outpoint + 32 per utxo hash + 4 + (20 address + content) per output.
+    static func borshSize(inputCount: Int, outputs: [ThunderOutputContent]) -> Int {
+        let contentSize = outputs.reduce(0) { total, content in
+            switch content {
+            case .value: return total + 1 + 8
+            case let .withdrawal(_, _, spk): return total + 1 + 8 + 8 + 4 + spk.count
+            }
         }
-    }
-
-    private static func encodeContent(_ c: ThunderOutputContent, into w: inout BorshWriter) {
-        switch c {
-        case let .value(sats):
-            w.writeU8(0); w.writeU64(sats)
-        case let .withdrawal(sats, mainFeeSats, mainScriptPubKey):
-            w.writeU8(1); w.writeU64(sats); w.writeU64(mainFeeSats); w.writeVarBytes(mainScriptPubKey)
-        }
+        return 4 + inputCount * (37 + 32) + 4 + outputs.count * 20 + contentSize
     }
 }
