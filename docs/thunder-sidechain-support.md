@@ -1,11 +1,18 @@
 # Thunder sidechain support — research + plan
 
-> Status: **RESEARCH / not started** (2026-07-22). Source-backed notes on how L2L's **Thunder**
-> sidechain (`github.com/LayerTwo-Labs/thunder-rust`) handles keys/addresses/signing/transactions,
-> and what it would take for this wallet to support it. **Bottom line: Thunder shares NOTHING with
-> Bitcoin's crypto — BDK cannot touch it. Supporting it is a second, parallel wallet engine. Leaning
-> to build the crypto with ONE cross-platform Swift lib (`swift-crypto` ed25519 + BLAKE3, both native
-> on iOS + Android via Skip Fuse) rather than Rust FFI — gated on a build spike (§5a).**
+> Status: **BUILT, not yet run against a real node** (updated 2026-07-27). Source-backed notes on how
+> L2L's **Thunder** sidechain (`github.com/LayerTwo-Labs/thunder-rust`) handles keys/addresses/signing/
+> transactions, and what this wallet does about it. **Bottom line: Thunder shares NOTHING with Bitcoin's
+> crypto — BDK cannot touch it, so it is a second, parallel wallet engine, built as ONE cross-platform
+> Swift stack** (`swift-crypto` ed25519 + vendored BLAKE3 + hand-written SLIP-0010 + Borsh, all native
+> on iOS + Android via Skip Fuse) **rather than Rust FFI.**
+>
+> **Where it stands:** the non-custodial send path is complete on both sides — the node's half shipped
+> in thunder-rust branch `2026-07-24-refactor` (§8c), ours in commit `302dc78` (§8d). Balance, receive,
+> send and sweep are wired; **history is the one gap**, waiting on a `get_stxos` RPC (§8c). Thunder is
+> deliberately **commented out of `WalletNetwork.selectable`** until it has run against a live node, so
+> none of it is reachable in the UI. Two things are still owed before real funds move: a `borsh::to_vec`
+> golden-vector cross-check against a real node, and an actual endpoint to test against.
 
 ## 1. What Thunder is
 
@@ -234,14 +241,13 @@ Borsh entirely — it maps to this exactly.)
 
 ### Node RPCs we consume
 ```
-get_utxos(addresses: [Address])         -> [PointedOutput]        # ⏳ dev adding (reads full chain state)
-balance_for(addresses: [Address])       -> Balance                # ⏳ (or sum get_utxos client-side)
-get_transactions(addresses: [Address],
-                 limit?)                 -> [ {txid, net_sats, fee_sats?, block_height?, confirmations} ]  # ⏳
-submit_transaction(Authorized<Transaction>) -> Txid               # ✅ shipped 0.17.0 (fills the proof)
+get_utxos(addresses: [Address])         -> [PointedOutput]        # ✅ shipped (reads full chain state)
+submit_transaction(Authorized<Transaction>) -> Txid               # ✅ shipped (fills the proof)
+getblockcount()                         -> u32                    # ✅ pre-existing (height/liveness)
+get_stxos(addresses: [Address])         -> [(OutPoint, SpentOutput)]   # ⏳ asked for — history (§8c)
 ```
-Sync/height reuse existing `getblockcount` / `get_best_sidechain_block_hash`. Fee: TBD (a
-`suggested_fee` or a client default).
+Balance is summed from `get_utxos` client-side — no `balance_for` needed. Fee: no node-side estimator
+and no min-relay rule, so the client prices it (see §8d).
 
 ### Client responsibilities (all pure Swift — most already built)
 - Coin selection over the `get_utxos` result (value + outpoint + address). **⏳ to write** (small,
@@ -262,69 +268,105 @@ engine** and broadcasts it on eCash; the sidechain credits it. No Thunder `submi
 `transactions()`→`get_transactions`. Same `WalletOps` surface the BDK path implements, routed by
 `WalletFacade` — the Thunder engine just swaps BDK for (swift-crypto + Thunder RPC).
 
-## 8c. What shipped in 0.17.0 — and the remaining delta (2026-07-23)
+## 8c. The node side — what shipped, and the one remaining ask (2026-07-27)
 
-thunder-rust **0.17.0** (`c9831e83 "Update wallet API"`) landed the sign/submit split — real progress,
-but the wallet is still **node-holds-the-seed**, so it does not yet support our non-custodial (keys-only-
-on-phone) flow. Verified against `rpc-api/lib.rs` + `app/rpc_server.rs` + `lib/wallet.rs`.
+Reviewed against thunder-rust branch **`2026-07-24-refactor`** (PR #116 "WIP: refactor for mobile
+wallets", head `fb922ee`). **Both blockers are gone — the non-custodial send path is open.**
 
-**Shipped and directly usable:**
-- ✅ **`submit_transaction(Authorized<Transaction>) -> Txid`** — exactly what we need; submits a
-  client-signed tx. Our Borsh + ed25519 + `AuthorizedThunderTransaction.authorize` already produces this.
-- ✅ **`create_transfer(dest, value_sats, fee_sats) -> Transaction`** and
-  **`create_withdrawal(...) -> Transaction`** — both return an **unsigned** `Transaction` (docstring:
-  "without signing it"); the node does coin-selection + change + utreexo proof.
+**Shipped:**
+- ✅ **`get_utxos(addresses) -> [PointedOutput]`** (`rpc-api/lib.rs`, commit `ed23b82`) → `Node::
+  get_utxos_by_addresses` → `State::get_utxos_by_addresses` (`lib/state/mod.rs`). Crucially it reads the
+  **full chain UTXO set**, not the node's local wallet DB, so no seed is required for the node to serve
+  our addresses. (Implementation note: it iterates the whole `utxos` DB and filters per call — fine at
+  current chain size; revisit if it ever gets slow.)
+- ✅ **`submit_transaction` regenerates the utreexo proof** before validating (commit `fb922ee`,
+  `lib/node/mod.rs` → `State::regenerate_proof`). So the phone submits with an **empty proof** and never
+  touches the accumulator — exactly the §8b flow.
+- ✅ **Borsh wire format unchanged** by the `lib/types` → `types/` crate extraction (commit `c7a4ba2`):
+  diffing `transaction.rs` across it shows only import paths, `#[cfg(feature = "heed")]` gates and test
+  renames. Our Swift codec stays valid. `THIS_SIDECHAIN` is still `9`.
 
-**Why it's still custodial as-is:** `create_transfer` → `wallet.create_transaction(value, fee)` →
-`select_coins` picks from the **node's own seed-derived wallet**, and change goes to a node
-`get_new_address()`. There is **no `spend_from` / `change_address` param** and **no watch-only path** —
-every read (`balance`, `get_wallet_utxos`, `get_addresses`) is scoped to the node's local wallet. So for
-the node to build a tx over **our** coins, it must hold **our** seed (`set_seed_from_mnemonic`) = custodial.
+**⏳ The one remaining ask — history.** There is no address-scoped way to see *spent* outputs, and
+`get_utxos` by definition returns only unspent ones, so a remote wallet can show a balance and receive
+funds but cannot reconstruct any history: every send it has ever made is invisible. `get_transaction
+(txid)` doesn't help — it needs a txid we have no way to discover.
 
-> **SUPERSEDED (2026-07-23): the `create_transfer_from` node-coin-selection ask below is NOT what we're
-> building.** The dev proposed — and we agreed — a cleaner split: the node does NOT do coin-selection;
-> it just serves `get_utxos(addresses)` and `submit_transaction` (which fills the proof). The phone
-> selects coins + builds + signs. See **§8b** for the decided flow. The remaining ask kept below only
-> for its read-method shapes (`get_utxos`/`balance_for`/`get_transactions`, still needed) — ignore
-> `create_transfer_from`. Standalone dev handoff: `docs/thunder-rpc-request.md`.
-
-**(SUPERSEDED spec) The delta — ADDITIVE (keep the local wallet, add a remote-wallet path).** Jake,
-2026-07-23: the node should still support a **local wallet** (self-hosters) AND a **remote wallet** (our
-mobile app holds the keys; node holds no seed). The existing methods keep serving the local wallet; add
-address-scoped variants that serve a remote wallet by reading the node's **full chain STATE** (the
-Utreexo UTXO set + accumulator for proofs — `lib/state/`), NOT the local wallet DB:
-
+The ask (raised 2026-07-27; dev expects to do it same-day or next) is deliberately minimal — it mirrors
+the `get_utxos` he just wrote, over the `stxos` DB that already exists:
 ```
-# BUILD (node selects + proves over addresses WE pass; no seed, no signing)
-create_transfer_from(
-    spend_from:     [Address],     # our addresses whose UTXOs may be spent (node filters the
-                                   #   full-state UTXO set to these; it already indexes address->utxo)
-    dest:           Address,
-    value_sats:     u64,
-    fee_sats:       u64,
-    change_address: Address        # ours
-) -> Transaction                   # UNSIGNED; node built inputs+change and filled the utreexo `proof`
-# (create_withdrawal_from = same shape + mainchain_address/mainchain_fee_sats; withdrawals are v2)
-
-# READ (address-scoped, from full state — no seed)
-get_utxos(addresses: [Address])         -> [PointedOutput]     # already have PointedOutput{outpoint,output}
-balance_for(addresses: [Address])       -> Balance            # or client sums get_utxos
-get_transactions(addresses: [Address],
-                 limit: Option<u32>)    -> [ {txid, net_sats, fee_sats?, block_height?, confirmations} ]
-
-# SUBMIT — already shipped ✓
-submit_transaction(Authorized<Transaction>) -> Txid
+get_stxos(addresses: [Address]) -> [(OutPoint, SpentOutput)]
 ```
+`SpentOutput { output, inpoint }` and `InPoint` already derive `Serialize`, so it needs no new types.
+That is enough to rebuild history client-side: `outpoint.txid` is the tx that paid us, `inpoint` is the
+tx that spent it, and we net the two per txid. Plus one optional extra: **`block_height: Option<u32>` on
+`GetTransactionResponse`** (the node already resolves `block_hash` there and `archive.get_height` is
+adjacent) so history can be ordered — without it we can show *what* happened but not reliably in what
+order.
 
-**Proof round-trips fine over JSON-RPC:** `Transaction.proof` is `#[borsh(skip)]`, so it's excluded from
-the SIGNED bytes / txid but serde still serializes it in the JSON. So `create_transfer_from` returns the
-proof (JSON) → client signs `borsh(transaction)` (no proof) → `submit_transaction` carries the proof back
-(JSON). Client-side we just hold the proof blob opaquely between build and submit; we never decode it.
+### ⚠️ The node's OpenAPI schema disagrees with its serde — trust serde
 
-**Client flow (unchanged from §8b):** `create_transfer_from` (unsigned) → for each input resolve our
-address→ed25519 key → `sign(borsh(transaction))` → `Authorized<Transaction>` → `submit_transaction`.
-Balance/history via the address-scoped reads. Deposit is still an eCash-mainchain tx via our BDK engine
-to `format_deposit_address(...)` (no Thunder spend RPC).
+Three shape traps, all verified by reading the `types` crate. **Do not generate a client from the
+OpenAPI document**; these are why `ThunderRPCTypes.swift` is hand-written.
+
+1. **`Transaction.inputs`** is annotated `Vec<(OutPoint, String)>`, but `Hash = [u8; 32]` carries no
+   serde hex wrapper → JSON is an **array of 32 numbers**. Each input is a 2-element JSON array (a Rust
+   tuple).
+2. **`Authorization.verifying_key` / `.signature`** are annotated `String`, but ed25519-dalek 2.2
+   serializes via `serializer.serialize_bytes` (no `serdect`/`serde_bytes` anywhere in the dependency
+   graph) → **arrays of 32 / 64 numbers**. This isn't a preference: its `Deserialize` implements
+   `visit_bytes` and `visit_seq` but *not* `visit_str`, so a hex string is rejected outright.
+3. **`OutPoint::Deposit`** wraps a *mainchain* `bitcoin::OutPoint`, and `bitcoin::Txid` serializes as
+   **display** hex — byte-REVERSED relative to the internal bytes we Borsh-encode. Thunder's own `Txid`
+   (in `Regular`) is the opposite: raw byte order, no reversal. Convert on the `Deposit` boundary only.
+   Get this backwards and you build a plausible-looking input whose utxo hash the node can't match.
+
+Shapes that are what you'd hope: `Address` is base58, `Txid`/`MerkleRoot`/`BlockHash` are lowercase hex
+(`hexstr_human_readable`), `Content` is externally tagged — `{"Value": <sats>}` /
+`{"Withdrawal":{"value_sats","main_fee_sats","main_address"}}`. `proof` is a **required** field with no
+`#[serde(default)]`, so submit must send `{"targets":[],"hashes":[]}`.
+
+**Superseded:** the `create_transfer_from` node-side-coin-selection ask (previously in this section) is
+dead — the node does not select coins at all, the phone does. See §8b.
+
+## 8d. The client side — what we built (commit `302dc78`, 2026-07-27)
+
+All of `Sources/ECashWalletMobile/Thunder/`. Pure Swift; no `thunder_types`/FFI crate.
+
+- **`ThunderPointedOutput`** — `BLAKE3(borsh(PointedOutput))`, i.e. the `Hash` in every transaction
+  input and the utreexo leaf the node proves against (thunder-rust builds inputs as
+  `hash(&PointedOutput { outpoint, output })`). **This is ours to compute and it is consensus-critical:**
+  get it wrong and `regenerate_proof` proves the wrong leaf and the tx is rejected. The Borsh encoders
+  live on `ThunderOutPoint`/`ThunderOutputContent`/`ThunderOutput` so this reuses byte-for-byte the same
+  encoding the signed transaction uses rather than a parallel copy.
+- **`ThunderRPCTypes`** — Codable matched to serde (see the traps above). Withdrawal outputs decode but
+  are marked unspendable — consensus refuses to let anyone spend them (thunder-rust `f585f25`) — so they
+  are excluded from both balance and coin selection.
+- **`ThunderRPCClient`** — JSON-RPC 2.0 with positional params and an injected `fetch`, so every path is
+  unit-tested against canned JSON with no server. Endpoint resolves per call via
+  `manager.backendURL(for: .thunder)`, so a Settings override applies without rebuilding the service.
+- **`ThunderCoinSelector`** — largest-first. Thunder's only consensus rule here is
+  `value_in >= value_out` (`NotEnoughValueIn`) — no min-relay floor, no vbyte/weight concept — so the fee
+  is the exact canonical Borsh size × sat/byte with a 1-sat floor, and change worth less than the output
+  it would occupy is folded into the fee instead of creating uneconomic dust.
+- **`ThunderAddressIndexStore`** — the revealed index is now **persisted** per wallet. Thunder has no
+  watch-only xpub (all-hardened SLIP-0010), so the app is the only thing that knows how far down the
+  chain a wallet has gone; if that counter reset on relaunch we would re-issue published addresses
+  (privacy) and sync only a shallow prefix, making funds at a high index *look* missing. Sync scans
+  `0 ..< revealed + 20`; change goes to a fresh index, never back to an input's address.
+- **`ThunderService`** — `balance` (cached from the last sync, since `WalletOps.balance` is synchronous),
+  `sync`, `send`, `sweep`. Spent coins are evicted from the cache after submit so an immediate second
+  send cannot reselect them. `pendingBalance` is **0 by design**: `get_utxos` reads the node's state,
+  which has no mempool view, so a just-submitted tx appears at the next sync after it is mined.
+  `transactions()` throws `.historyUnavailable` — deliberately distinct from `.backendUnavailable`, so
+  the UI can say "not available yet" rather than "can't reach the node". `splitToSelf` throws
+  `.unsupportedOperation` (splitting guards an eCash-fork replay concern this chain doesn't have).
+- **Performance:** `ThunderKey.derive(seed:index:)` + `ThunderWallet.keys(for:)` compute the BIP39 seed
+  (PBKDF2, 2048 iterations) **once per scan** instead of once per index — a 20-address scan was 20 PBKDF2
+  runs, and signing re-scanned from zero for every input.
+
+**When `get_stxos` lands:** add the method to `ThunderRPCClient` and implement `transactions()` by
+netting `get_utxos` + `get_stxos` per txid (received = outputs to us keyed by `outpoint.txid`; sent =
+ours spent, keyed by `inpoint.txid`). Nothing else needs to change.
 
 ## 8. Bottom line
 
@@ -334,13 +376,18 @@ irrelevant to all of it. The path is a **Fuse-native `ThunderService`** on **one
 crypto stack** — `swift-crypto` (ed25519) + SwiftBlake3 + hand-written SLIP-0010 + a Swift Borsh codec —
 plugged into the per-network engine abstraction (`WalletOps`/`WalletFacade`) as a non-BDK engine.
 
-**Status 2026-07-23 — mostly built:**
+**Status 2026-07-27 — built, unproven against a real node:**
 - ✅ **Crypto/keys/Borsh/authorization** — `ThunderKey`, `ThunderWallet`, `Base58`, `Slip10Ed25519`,
   `Bip39Seed`, `ThunderAddress`, `ThunderTransaction` (Borsh), `AuthorizedThunderTransaction` — all
   vector-tested; builds + runs on iOS + Android (portable-BLAKE3 fix for the Android load crash).
-- ✅ **UI** — Thunder is a selectable network (crimson chip); create/import/backup/receive work; ECX
-  unit; balance/history/send error `.backendUnavailable` until the RPC lands.
-- ⏳ **Remaining (gated on the dev's `get_utxos`/balance/history RPCs, §8b):** a small Swift coin-selector,
-  the Thunder RPC client, and wiring `ThunderService`'s send/balance/history ops. Then: the one
-  `borsh::to_vec` golden-vector cross-check + persist the revealed-address index (§ receive discipline)
-  before enabling real funds. Pure Swift throughout — NOT using the dev's `thunder_types`/FFI crate.
+- ✅ **Node RPCs we need for sending** — `get_utxos` + proof-regenerating `submit_transaction` shipped
+  on thunder-rust `2026-07-24-refactor` (§8c).
+- ✅ **Client engine** — utxo-hash, RPC client, coin selection, persisted address index, and
+  `ThunderService` balance/sync/send/sweep (§8d, commit `302dc78`). 218 host tests green; release APK
+  builds. Pure Swift throughout — NOT using the dev's `thunder_types`/FFI crate.
+- ✅ **UI** — create/import/backup/receive work; crimson chip; ECX unit. Thunder is **commented out of
+  `WalletNetwork.selectable`**, so it is not reachable until the flow is proven end to end.
+- ⏳ **History** — blocked on `get_stxos` (§8c); `transactions()` throws `.historyUnavailable`.
+- ⏳ **Before real funds:** a live endpoint to test against, and the `borsh::to_vec` golden-vector
+  cross-check against a real thunder-rust encoding. Everything above is verified only against
+  hand-built vectors and stubbed JSON — no byte of it has met a real node yet.
