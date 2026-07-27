@@ -122,6 +122,17 @@ public enum NetworkRegistry {
         }
     }
 
+    /// The `nSequence` stamped on every input of a replay-protected tx.
+    ///
+    /// **This is load-bearing, not cosmetic.** Bitcoin only *enforces* `nLockTime` when at least one
+    /// input is non-final (`nSequence < 0xFFFFFFFF`); if every input were final, Core ignores the
+    /// locktime entirely and the eCash tx would replay onto Bitcoin after all — the exact thing the
+    /// marker exists to prevent. BDK's RBF default (`0xFFFFFFFD`) already satisfies this, but relying
+    /// on a library default for a money-safety property is how it gets silently removed later, so
+    /// `WalletEngine` sets it explicitly. `0xFFFFFFFD` is the same value RBF uses, so this changes
+    /// nothing about the transaction beyond making the guarantee ours.
+    static let replayProtectionSequence: UInt32 = UInt32(0xFFFF_FFFD)
+
     /// The **fork height** for coin-splitting: coins confirmed BELOW this block are pre-fork (shared
     /// with the other chain → need splitting); at/above it, coins are chain-specific (post-fork, replay-
     /// safe). `.ecash` is **drynet3 → 957_600** today; the real eCash mainnet fork is block **964_000**

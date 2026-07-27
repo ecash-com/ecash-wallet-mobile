@@ -392,6 +392,24 @@ final class AppState {
     /// `beginSendFlow()` clears it at each Send tap so a fresh flow never reuses a finished one.
     @ObservationIgnored private var activeSendVM: SendViewModel?
 
+    /// Which wallets have ever completed a sync here — see `WalletBalanceSummary`.
+    @ObservationIgnored private let syncStore = WalletSyncStore()
+
+    /// The last-known balance for any wallet, selected or not. A cached read of BDK's persisted
+    /// chain data (no network, safe on the main actor), or `.unknown` when the wallet has never
+    /// synced on this device and `0` would be a guess rather than a fact.
+    func balanceSummary(walletId: String) -> WalletBalanceSummary {
+        guard let amount = try? walletOps.balance(walletId: walletId) else { return .unknown }
+        if syncStore.hasSynced(walletId: walletId) { return .known(amount) }
+        // No marker, but coins or history prove it synced at some point — covers wallets that
+        // existed before the marker did, so they don't all read "Not synced" until their next sync.
+        if amount.sats > 0 { return .known(amount) }
+        if let transactions = try? walletOps.transactions(walletId: walletId), !transactions.isEmpty {
+            return .known(amount)
+        }
+        return .unknown
+    }
+
     /// Discard any cached Send VM so the next `makeSendViewModel()` builds a fresh flow. Call when
     /// the user opens Send (before presenting the cover).
     func beginSendFlow() { activeSendVM = nil }
@@ -407,6 +425,13 @@ final class AppState {
             balance: balance,
             unitLabel: params.unitLabel,
             network: wallet.network,
+            // The user's OTHER wallets on the SAME network. Same-network is a hard filter: `.ecash`
+            // uses Bitcoin's `bc` HRP, so a cross-network entry here would look perfectly valid and
+            // send coins to a chain that will never see them (Golden Rule §6).
+            destinations: manager.wallets
+                .filter { $0.network == wallet.network && $0.id != id }
+                .map { SendViewModel.Destination(id: $0.id, label: $0.label,
+                                                 balance: balanceSummary(walletId: $0.id)) },
             send: { address, amount, feeRate in
                 // Routed via the facade: BDK wallets broadcast off the main actor as before; a Thunder
                 // wallet gets `.backendUnavailable` until its RPC is wired.
@@ -430,6 +455,12 @@ final class AppState {
                 wallet.network == .thunder
                     ? ThunderAddress(base58: address) != nil
                     : self.manager.isValidAddress(address, network: wallet.network)
+            },
+            // A receive address from one of the user's other wallets. `unused: true` deliberately —
+            // deriving a FRESH address every time someone browses the picker would inflate that
+            // wallet's revealed-index space, which is what hid a real incoming tx once before.
+            addressForDestination: { destinationId in
+                try await self.walletOps.receiveAddress(walletId: destinationId, unused: true).address
             })
         activeSendVM = vm
         return vm
@@ -595,6 +626,9 @@ final class AppState {
     func removeWallet(id: String) {
         let wasSelected = id == selectedWalletId
         try? manager.removeWallet(id: id)
+        // Purge every artifact keyed to this wallet (Golden Rule §5) — including its sync marker,
+        // so a later wallet can't inherit a stale "already synced" claim.
+        syncStore.forget(walletId: id)
         if wasSelected { resetPerWalletState() }
         refresh()
         if wasSelected && selectedWalletId != nil {
@@ -634,6 +668,8 @@ final class AppState {
             // main actor; execution resumes here on the main actor for the observable updates.
             let updated = try await walletOps.sync(walletId: id)
             balance = updated
+            // Record that this wallet's balance is now a fact rather than an unsynced default.
+            syncStore.markSynced(walletId: id, at: Int64(Date().timeIntervalSince1970))
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             // Coin-split status (local, no I/O) — drives the Home nudge. eCash only; nil elsewhere.

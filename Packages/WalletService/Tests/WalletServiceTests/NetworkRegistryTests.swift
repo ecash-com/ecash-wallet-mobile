@@ -100,4 +100,40 @@ final class NetworkRegistryTests: XCTestCase {
         XCTAssertEqual(Descriptors.accountPath(for: WalletNetwork.ecash),
                        Descriptors.accountPath(for: WalletNetwork.bitcoin))
     }
+
+    // MARK: - Replay protection (eCash)
+
+    /// eCash stamps the reserved marker `LOCKTIME_THRESHOLD - 1`, which its patched consensus treats
+    /// as final while stock Bitcoin Core reads it as a block height ~9,500 years out and rejects the
+    /// tx as non-final — so an eCash spend can never replay onto BTC at the same (byte-identical)
+    /// addresses. (LayerTwo-Labs/bitcoin-patched#24)
+    func testEcashReplayProtectionUsesTheReservedMarker() {
+        XCTAssertEqual(NetworkRegistry.replayProtectionLockHeight(for: WalletNetwork.ecash), UInt32(499_999_999))
+    }
+
+    /// The marker must stay BELOW `LOCKTIME_THRESHOLD` (500,000,000): at or above it, Bitcoin reads
+    /// nLockTime as a Unix timestamp — a moment in 1985 — which is already past, making the tx final
+    /// on Bitcoin too and destroying the protection.
+    func testMarkerIsInterpretedAsAHeightNotATimestamp() {
+        // `?? UInt32(0)` explicitly — a bare `0` transpiles to a Kotlin Int and the comparison
+        // fails to type-check against UInt.
+        let marker = NetworkRegistry.replayProtectionLockHeight(for: WalletNetwork.ecash) ?? UInt32(0)
+        XCTAssertLessThan(marker, UInt32(500_000_000))
+    }
+
+    /// Stamping this on Bitcoin or Signet would make their transactions unminable, so those networks
+    /// must never carry it.
+    func testOnlyEcashStampsALocktime() {
+        XCTAssertNil(NetworkRegistry.replayProtectionLockHeight(for: WalletNetwork.bitcoin))
+        XCTAssertNil(NetworkRegistry.replayProtectionLockHeight(for: WalletNetwork.signet))
+        XCTAssertNil(NetworkRegistry.replayProtectionLockHeight(for: WalletNetwork.thunder))
+    }
+
+    /// The half that's easy to lose: Bitcoin only ENFORCES nLockTime when an input is non-final.
+    /// If this sequence ever became 0xFFFFFFFF, Core would ignore the marker entirely and eCash
+    /// spends would replay onto Bitcoin — with nothing else in the code looking any different.
+    func testReplayProtectionSequenceIsNonFinal() {
+        XCTAssertLessThan(NetworkRegistry.replayProtectionSequence, UInt32(0xFFFF_FFFF))
+        XCTAssertEqual(NetworkRegistry.replayProtectionSequence, UInt32(0xFFFF_FFFD))   // BDK's RBF value
+    }
 }

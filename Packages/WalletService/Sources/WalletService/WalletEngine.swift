@@ -335,8 +335,13 @@ public final class WalletEngine: WalletEngineProtocol {
     /// Stamp the network's replay-protection `nLockTime` on a tx builder, if it has one. For eCash
     /// this sets `nLockTime = 499_999_999` (LOCKTIME_THRESHOLD - 1) — final on eCash, a far-future
     /// block-height lock on Bitcoin → the tx can't replay onto BTC (NetworkRegistry
-    /// `replayProtectionLockHeight`). No-op on Bitcoin/Signet. The protection also needs a non-final
-    /// input sequence, which BDK's default RBF (`0xFFFFFFFD`) provides — do NOT disable RBF on eCash.
+    /// `replayProtectionLockHeight`). No-op on Bitcoin/Signet.
+    ///
+    /// **Both halves are required.** The locktime marker only bites when at least one input is
+    /// non-final; with every input at `0xFFFFFFFF`, Bitcoin ignores `nLockTime` and the tx replays.
+    /// BDK's RBF default already gives us `0xFFFFFFFD`, but we set it explicitly rather than inherit
+    /// it, so a future change to that default (or an RBF toggle) can't quietly strip replay
+    /// protection off eCash spends. Same value RBF uses — the transaction is unchanged.
     private func applyingReplayProtection(_ builder: TxBuilder) -> TxBuilder {
         guard let height = NetworkRegistry.replayProtectionLockHeight(for: network) else { return builder }
         #if SKIP
@@ -344,7 +349,9 @@ public final class WalletEngine: WalletEngineProtocol {
         #else
         let lock = LockTime.blocks(height: height)   // bdk-swift
         #endif
-        return builder.nlocktime(locktime: lock)
+        return builder
+            .nlocktime(locktime: lock)
+            .setExactSequence(nsequence: NetworkRegistry.replayProtectionSequence)
     }
 
     /// Build → sign → broadcast. The flow is implemented end-to-end, but it has NOT been

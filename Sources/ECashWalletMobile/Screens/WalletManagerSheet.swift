@@ -103,6 +103,11 @@ struct WalletManagerSheet: View {
                         Text(wallet.label)
                             .textStyle(.body)
                             .foregroundStyle(Theme.Colors.text0)
+                        // Balance in each wallet's OWN unit — a Bitcoin wallet and an eCash wallet
+                        // can sit next to each other here, and "BTC" on the wrong row would be a
+                        // small lie about which chain the coins are on.
+                        WalletBalanceLabel(balance: app.balanceSummary(walletId: wallet.id),
+                                           unitLabel: NetworkRegistry.params(for: wallet.network).unitLabel)
                         Text(metaText(wallet), bundle: .module)
                             .textStyle(.xs)
                             .foregroundStyle(wallet.isBackedUp ? Theme.Colors.text2 : Theme.Colors.warning)

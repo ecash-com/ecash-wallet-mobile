@@ -22,6 +22,7 @@ struct SendScreen: View {
     @State var path: [SendRoute] = []
     @State var showMainnetConfirm = false   // extra explicit gate for real-money sends (Golden Rule §6/§7)
     @State var showScanner = false          // iOS camera scanner cover (Android uses an activity)
+    @State var showDestinations = false     // "one of my wallets" picker sheet
 
     init(viewModel: SendViewModel) {
         _vm = State(initialValue: viewModel)
@@ -131,6 +132,34 @@ struct SendScreen: View {
                 .fieldBoxInset()
                 .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
 
+                // Shortcut: pay one of the user's own wallets on this network without copying an
+                // address by hand. Hidden entirely when there's nothing else to pay.
+                if vm.hasDestinations {
+                    Button { showDestinations = true } label: {
+                        HStack(spacing: Theme.Space.x2) {
+                            Image(icon: Icon.wallet)
+                                .resizable().scaledToFit().frame(width: 16, height: 16)
+                            Text("Send to one of my wallets", bundle: .module,
+                                 comment: "send: pick another of the user's wallets as the destination")
+                                .textStyle(.sm)
+                            if vm.isResolvingDestination {
+                                ProgressView().scaleEffect(0.7)
+                            }
+                        }
+                        .foregroundStyle(Theme.Colors.accent)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(vm.isResolvingDestination)
+                }
+
+                if let destinationError = vm.destinationError {
+                    Text(verbatim: destinationError)
+                        .textStyle(.sm)
+                        .foregroundStyle(Theme.Colors.negative)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+
                 // Valid address (for THIS network) → green ✓ + the parsed address in mono.
                 if let preview = vm.recipientAddressPreview {
                     HStack(alignment: .top, spacing: Theme.Space.x2) {
@@ -161,6 +190,15 @@ struct SendScreen: View {
                 .opacity(vm.canContinueRecipient ? 1 : 0.4)
             }
             .padding(Theme.Space.gutter)
+        }
+        .sheet(isPresented: $showDestinations) {
+            SendDestinationPicker(destinations: vm.destinations,
+                                  networkDisplayName: vm.networkDisplayName,
+                                  unitLabel: vm.unitLabel) { destination in
+                // Deriving the address can hit the Keychain (Thunder), so it runs after the sheet
+                // closes rather than blocking the dismissal.
+                Task { await vm.useDestination(destination) }
+            }
         }
         #if os(iOS)
         .fullScreenCover(isPresented: $showScanner) {

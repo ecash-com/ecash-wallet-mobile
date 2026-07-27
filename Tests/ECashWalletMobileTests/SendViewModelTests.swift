@@ -422,4 +422,105 @@ import WalletService
         #expect(!vm.authorizing)
         #expect(vm.isSendingLocked)         // success screen stays locked
     }
+
+    // MARK: - "Send to one of my wallets"
+
+    /// Build a VM offering `destinations`, whose address lookup returns `address` (or throws).
+    private func makeDestinationVM(destinations: [SendViewModel.Destination],
+                                   address: String = "tb1qmyotherwallet",
+                                   fail: Bool = false) -> SendViewModel {
+        SendViewModel(
+            balance: Amount(sats: 1_000_000),
+            unitLabel: "sBTC",
+            network: .signet,
+            destinations: destinations,
+            send: { _, _, _ in Self.pendingTx },
+            sweep: { _, _ in Self.pendingTx },
+            onSent: { _ in },
+            authorize: { _ in true },
+            validateAddress: { _ in true },
+            addressForDestination: { _ in
+                if fail { throw WalletError.notImplemented }
+                return address
+            })
+    }
+
+    private static let otherWallet = SendViewModel.Destination(
+        id: "w2", label: "Drynet savings", balance: .known(Amount(sats: 123_456)))
+
+    @Test func noDestinationsHidesTheShortcut() {
+        let (vm, _) = makeVM()
+        #expect(vm.destinations.isEmpty)
+        #expect(!vm.hasDestinations)          // a single-wallet user never sees the row
+    }
+
+    @Test func pickingAWalletFillsTheAddressField() async {
+        let vm = makeDestinationVM(destinations: [Self.otherWallet])
+        #expect(vm.hasDestinations)
+        await vm.useDestination(Self.otherWallet)
+        #expect(vm.addressText == "tb1qmyotherwallet")
+        #expect(vm.destinationError == nil)
+        #expect(!vm.isResolvingDestination)
+    }
+
+    /// Picking only fills the field — it must not skip the user past confirming what they're paying.
+    @Test func pickingAWalletDoesNotAdvanceOrSend() async {
+        let vm = makeDestinationVM(destinations: [Self.otherWallet])
+        await vm.useDestination(Self.otherWallet)
+        #expect(vm.step == .recipient)
+        #expect(vm.reviewAddress.isEmpty)
+    }
+
+    @Test func aFailedLookupReportsAndLeavesTheFieldAlone() async {
+        let vm = makeDestinationVM(destinations: [Self.otherWallet], fail: true)
+        vm.addressText = "tb1qtypedbyhand"
+        await vm.useDestination(Self.otherWallet)
+        #expect(vm.addressText == "tb1qtypedbyhand")     // never clobbered by a failure
+        #expect(vm.destinationError != nil)
+        #expect(vm.destinationError?.contains("Drynet savings") == true)
+        #expect(!vm.isResolvingDestination)
+    }
+
+    @Test func anEmptyAddressIsTreatedAsAFailure() async {
+        let vm = makeDestinationVM(destinations: [Self.otherWallet], address: "")
+        await vm.useDestination(Self.otherWallet)
+        #expect(vm.addressText.isEmpty)
+        #expect(vm.destinationError != nil)
+    }
+
+    @Test func aSecondPickReplacesTheFirstAndClearsTheError() async {
+        let vm = makeDestinationVM(destinations: [Self.otherWallet], fail: true)
+        await vm.useDestination(Self.otherWallet)
+        #expect(vm.destinationError != nil)
+
+        let working = makeDestinationVM(destinations: [Self.otherWallet], address: "tb1qsecond")
+        await working.useDestination(Self.otherWallet)
+        #expect(working.addressText == "tb1qsecond")
+        #expect(working.destinationError == nil)
+    }
+
+    // MARK: - Destination balances
+
+    /// A never-synced wallet must not claim to be empty — those are different facts.
+    @Test func unknownBalanceIsNotZero() {
+        #expect(WalletBalanceSummary.unknown.amount == nil)
+        #expect(WalletBalanceSummary.unknown.displayText(unitLabel: "ECX") == nil)
+        #expect(WalletBalanceSummary.known(.zero).amount == .zero)
+        #expect(WalletBalanceSummary.known(.zero).displayText(unitLabel: "ECX") != nil)
+    }
+
+    @Test func knownBalanceRendersWithItsUnit() {
+        let text = WalletBalanceSummary.known(Amount(sats: 123_456)).displayText(unitLabel: "ECX")
+        #expect(text?.hasSuffix(" ECX") == true)
+        #expect(text?.contains(Amount(sats: 123_456).formattedCoin()) == true)
+    }
+
+    @Test func destinationsCarryTheirOwnBalance() {
+        let synced = SendViewModel.Destination(id: "a", label: "A", balance: .known(Amount(sats: 10)))
+        let fresh = SendViewModel.Destination(id: "b", label: "B", balance: .unknown)
+        let vm = makeDestinationVM(destinations: [synced, fresh])
+        #expect(vm.destinations.count == 2)
+        #expect(vm.destinations[0].balance == .known(Amount(sats: 10)))
+        #expect(vm.destinations[1].balance == .unknown)
+    }
 }

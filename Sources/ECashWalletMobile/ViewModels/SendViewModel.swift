@@ -47,12 +47,29 @@ final class SendViewModel {
         }
     }
 
+    /// Another wallet in this app that this wallet can pay — offered as a destination so the user
+    /// doesn't have to hand-copy an address between two of their own wallets.
+    struct Destination: Identifiable, Equatable, Hashable {
+        let id: String        // walletId
+        let label: String
+        /// Last-known balance, or `.unknown` for a wallet that has never synced here — a freshly
+        /// created destination wallet reads "Not synced", not a confident "0".
+        let balance: WalletBalanceSummary
+    }
+
     // Wallet context, fixed at presentation time (the Send sheet is per-selected-wallet).
     let balance: Amount
     let unitLabel: String
     let network: WalletNetwork
     let networkDisplayName: String
     let isMainnet: Bool
+
+    /// The user's OTHER wallets **on this same network** (see `AppState.makeSendViewModel`), snapshot
+    /// at presentation time. Same-network filtering is a safety rule, not a convenience one: eCash
+    /// uses Bitcoin's `bc` HRP, so an eCash address and a real mainnet address are indistinguishable
+    /// by eye — offering a cross-network wallet here would be a one-tap way to send coins to a chain
+    /// that will never see them.
+    let destinations: [Destination]
 
     // Entry state. `addressText` accepts a bare address or a BIP21 URI (parsed when leaving the
     // recipient step).
@@ -88,25 +105,63 @@ final class SendViewModel {
     /// Validates a destination address for this wallet's network (checksum + network/prefix).
     /// Injected so the view model stays platform-agnostic; AppState wires it to BDK via WalletManager.
     private let validateAddress: (String) -> Bool
+    /// A receive address for one of the user's other wallets, by walletId.
+    private let addressForDestination: (String) async throws -> String
+
+    /// True while a picked wallet's address is being derived (a Keychain read + derivation for a
+    /// Thunder wallet, a cached lookup for BDK).
+    private(set) var isResolvingDestination = false
+    /// Set if deriving a picked wallet's address failed — shown inline, already user-safe.
+    private(set) var destinationError: String? = nil
+
+    /// Whether to offer the "one of my wallets" shortcut at all — hidden for a single-wallet user.
+    var hasDestinations: Bool { !destinations.isEmpty }
 
     init(balance: Amount,
          unitLabel: String,
          network: WalletNetwork,
+         destinations: [Destination] = [],
          send: @escaping (_ address: String, _ amount: Amount, _ feeRate: FeeRate) async throws -> WalletTx,
          sweep: @escaping (_ address: String, _ feeRate: FeeRate) async throws -> WalletTx,
          onSent: @escaping @MainActor (WalletTx) -> Void,
          authorize: @escaping (String) async -> Bool,
-         validateAddress: @escaping (String) -> Bool = { _ in true }) {
+         validateAddress: @escaping (String) -> Bool = { _ in true },
+         addressForDestination: @escaping (String) async throws -> String = { _ in "" }) {
         self.balance = balance
         self.unitLabel = unitLabel
         self.network = network
         self.networkDisplayName = NetworkRegistry.params(for: network).displayName
         self.isMainnet = network.isMainnet
+        self.destinations = destinations
         self.send = send
         self.sweep = sweep
         self.onSent = onSent
         self.authorize = authorize
         self.validateAddress = validateAddress
+        self.addressForDestination = addressForDestination
+    }
+
+    /// Fill the recipient field with a receive address from one of the user's own wallets.
+    ///
+    /// The address is *shown*, not hidden behind the wallet's name: the user still sees and confirms
+    /// exactly what they're paying, on this screen and again at review (Golden Rule §7). We only save
+    /// them the copy-paste.
+    func useDestination(_ destination: Destination) async {
+        guard !isResolvingDestination else { return }
+        isResolvingDestination = true
+        destinationError = nil
+        defer { isResolvingDestination = false }
+        do {
+            let address = try await addressForDestination(destination.id)
+            guard !address.isEmpty else {
+                destinationError = "Couldn't get an address from \(destination.label)."
+                return
+            }
+            addressText = address
+        } catch {
+            // WalletError/ThunderError are already scrubbed; never surface raw engine text.
+            destinationError = "Couldn't get an address from \(destination.label)."
+        }
     }
 
     // MARK: - Keypad

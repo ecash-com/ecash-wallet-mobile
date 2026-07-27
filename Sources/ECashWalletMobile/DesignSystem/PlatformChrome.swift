@@ -47,6 +47,20 @@ extension View {
         #endif
     }
 
+    /// Make a whole list row tappable, including the empty space a `Spacer` occupies.
+    ///
+    /// iOS-only: `contentShape` isn't part of SkipUI's surface, and Android doesn't need it — a
+    /// Compose row is hit-testable across its full width already. Without it on iOS, taps that land
+    /// in the gap between a row's label and its trailing edge do nothing, which reads as a dead row.
+    @ViewBuilder
+    func fullRowTapTarget() -> some View {
+        #if os(iOS)
+        self.contentShape(Rectangle())
+        #else
+        self
+        #endif
+    }
+
     /// Hide a list row's TOP separator (the hairline a plain `List` draws above its first row, which
     /// reads as a divider right under the nav bar). iOS-only — `listRowSeparator` is on the SkipUI
     /// Compose-crash watchlist for Android, and the macOS host lacks the `edges:` overload; Android
