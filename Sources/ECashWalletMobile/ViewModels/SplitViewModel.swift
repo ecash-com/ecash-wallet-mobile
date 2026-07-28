@@ -30,6 +30,9 @@ final class SplitViewModel {
     var tier: SendViewModel.FeeTier = .normal
     private(set) var phase: Phase = .intro
     private(set) var authorizing = false
+    /// The broadcast split transaction, once it succeeds — so the success screen can show the fee
+    /// and the txid rather than asserting success with nothing to back it up.
+    private(set) var completedTx: WalletTx?
 
     /// The drain — no address; the engine derives a fresh wallet-owned destination.
     private let split: (_ feeRate: FeeRate) async throws -> WalletTx
@@ -75,6 +78,7 @@ final class SplitViewModel {
         do {
             let tx = try await split(tier.feeRate)
             onDone(tx)                 // insert the pending tx + refresh (summary recomputes → nudge clears)
+            completedTx = tx           // the success screen shows what actually happened
             phase = .done
         } catch let error as WalletError {
             phase = .failed(error.userMessage)

@@ -284,11 +284,13 @@ struct TxDetailSheet: View {
 
     // MARK: - Derived values
 
-    /// Recipient amount (net minus fee for sends), signed like the row.
+    /// Recipient amount (net minus fee for sends), signed like the row. For a self-transfer there is
+    /// no recipient — netting the fee out would render the whole transaction as 0 — so the amount is
+    /// the fee, which is the only value that actually left the wallet. See `WalletTx.isSelfTransfer`.
     private var amountCoin: String {
         let sign = tx.isReceived ? "+" : "-"
         var sats = abs(tx.netSats)
-        if !tx.isReceived, let fee = tx.feeSats, fee <= sats {
+        if !tx.isReceived, !tx.isSelfTransfer, let fee = tx.feeSats, fee <= sats {
             sats = sats - fee
         }
         return "\(sign)\(Amount(sats: sats).formattedCoin())"

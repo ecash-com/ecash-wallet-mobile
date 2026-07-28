@@ -70,6 +70,12 @@ struct TxRow: View {
             Text(verbatim: "CoinNews \(Self.displayKind(kind))")
                 .font(.grotesk(16, .semibold))
                 .foregroundStyle(Theme.Colors.text0)
+        } else if tx.isSelfTransfer {
+            // A split or self-sweep didn't pay anyone — calling it "Sent" next to a fee-sized
+            // amount is what makes it look like a failed send.
+            Text("Sent to yourself", bundle: .module, comment: "tx row: coins moved between the user's own addresses (split / self-sweep)")
+                .font(.grotesk(16, .semibold))
+                .foregroundStyle(Theme.Colors.text0)
         } else {
             (tx.isReceived
                 ? Text("Received", bundle: .module, comment: "tx row: incoming")
@@ -154,7 +160,10 @@ struct TxRow: View {
     private var amountText: String {
         let sign = tx.isReceived ? "+" : "-"
         var sats = abs(tx.netSats)
-        if !tx.isReceived, let fee = tx.feeSats, fee <= sats {
+        // Subtracting the fee answers "what did the recipient get" — right for a real send, wrong
+        // for a self-transfer (split / self-sweep / CoinNews post), where there is no recipient and
+        // the subtraction cancels to exactly 0. There, the fee IS the whole story.
+        if !tx.isReceived, !tx.isSelfTransfer, let fee = tx.feeSats, fee <= sats {
             sats = sats - fee
         }
         return "\(sign)\(Amount(sats: sats).formattedCoin())"

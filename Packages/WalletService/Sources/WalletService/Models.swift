@@ -356,6 +356,19 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
     public var isReceived: Bool { netSats >= 0 }
     public var isConfirmed: Bool { confirmations > 0 }
 
+    /// True when this transaction only moved coins between **this wallet's own** addresses — a
+    /// coin split, a sweep back to itself, or a CoinNews `OP_RETURN` post. Every input and every
+    /// output belongs to us, so the only value that actually left the wallet is the fee, which is
+    /// exactly what `netSats == -feeSats` says.
+    ///
+    /// Display code must special-case these: the usual "amount minus fee" (which answers *how much
+    /// did the recipient get*) evaluates to **zero** here, because there is no recipient. A split
+    /// that moved a whole balance would render as `0.00000000`, reading as "nothing happened".
+    public var isSelfTransfer: Bool {
+        guard let feeSats, netSats < 0 else { return false }
+        return -netSats == feeSats
+    }
+
     /// Fee rate in sat/vByte, or nil if the fee or size is unknown. A method (not a property) so
     /// the `Double` return never lands on the bridged property surface; computed for display only.
     public func feeRatePerVByte() -> Double? {

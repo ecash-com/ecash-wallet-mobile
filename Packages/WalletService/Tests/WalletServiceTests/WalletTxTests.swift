@@ -45,4 +45,36 @@ final class WalletTxTests: XCTestCase {
         XCTAssertTrue(tx(confirmations: 1).isConfirmed)
         XCTAssertFalse(tx(confirmations: 0).isConfirmed)
     }
+
+    // MARK: - Self-transfer (split / self-sweep / CoinNews post)
+
+    /// A coin split drains every UTXO back to the same wallet, so the only value that leaves is the
+    /// fee: netSats == -feeSats. This is the flag the UI needs, because the usual "amount minus fee"
+    /// cancels to zero here and renders a real split as 0.00000000.
+    func testSplitToSelfIsASelfTransfer() {
+        XCTAssertTrue(tx(netSats: -200, feeSats: 200).isSelfTransfer)
+    }
+
+    /// An ordinary send moves value to someone else on top of the fee — never a self-transfer.
+    func testOrdinarySendIsNotASelfTransfer() {
+        XCTAssertFalse(tx(netSats: -400_000, feeSats: 200).isSelfTransfer)
+    }
+
+    func testReceiveIsNotASelfTransfer() {
+        XCTAssertFalse(tx(netSats: 500_000, feeSats: nil).isSelfTransfer)
+        XCTAssertFalse(tx(netSats: 0, feeSats: 0).isSelfTransfer)
+    }
+
+    /// Without a fee we can't prove nothing else left the wallet, so don't claim it.
+    func testUnknownFeeIsNotASelfTransfer() {
+        XCTAssertFalse(tx(netSats: -200, feeSats: nil).isSelfTransfer)
+    }
+
+    /// The regression this exists to prevent: fee-netting a self-transfer yields exactly zero.
+    func testFeeNettingWouldZeroOutASelfTransfer() {
+        let split = tx(netSats: -200, feeSats: 200)
+        let netted = abs(split.netSats) - (split.feeSats ?? 0)
+        XCTAssertEqual(netted, 0)                 // what the UI used to show
+        XCTAssertEqual(abs(split.netSats), 200)   // what it shows now: the fee
+    }
 }

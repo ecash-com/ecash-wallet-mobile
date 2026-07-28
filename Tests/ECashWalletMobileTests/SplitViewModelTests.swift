@@ -85,4 +85,24 @@ import WalletService
         await vm.confirm()               // second call must not drain again
         #expect(rec.splitCount == 1)
     }
+
+    /// The success screen shows a receipt (fee + txid), so the completed tx has to survive past
+    /// `onDone` — it used to be handed off and dropped, leaving the screen asserting success with
+    /// nothing to back it up.
+    @Test func successKeepsTheBroadcastTxForTheReceipt() async {
+        let (vm, _) = makeVM()
+        #expect(vm.completedTx == nil)
+        await vm.confirm()
+        #expect(vm.phase == .done)
+        let tx = try? #require(vm.completedTx)
+        #expect(tx?.txid.isEmpty == false)
+    }
+
+    /// A failed split must not leave a receipt behind claiming otherwise.
+    @Test func failureLeavesNoCompletedTx() async {
+        let (vm, rec) = makeVM()
+        rec.errorToThrow = WalletError.broadcastFailed
+        await vm.confirm()
+        #expect(vm.completedTx == nil)
+    }
 }
