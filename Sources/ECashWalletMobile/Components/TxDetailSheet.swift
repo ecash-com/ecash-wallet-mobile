@@ -288,6 +288,9 @@ struct TxDetailSheet: View {
     /// no recipient — netting the fee out would render the whole transaction as 0 — so the amount is
     /// the fee, which is the only value that actually left the wallet. See `WalletTx.isSelfTransfer`.
     private var amountCoin: String {
+        if tx.isSelfTransfer, let moved = tx.receivedSats, moved > 0 {
+            return Amount(sats: moved).formattedCoin()   // moved between our own addresses
+        }
         let sign = tx.isReceived ? "+" : "-"
         var sats = abs(tx.netSats)
         if !tx.isReceived, !tx.isSelfTransfer, let fee = tx.feeSats, fee <= sats {

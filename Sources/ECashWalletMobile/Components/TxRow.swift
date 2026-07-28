@@ -158,11 +158,16 @@ struct TxRow: View {
     /// Recipient-amount magnitude (net minus fee for sends — the fee is itemized on the
     /// tx-detail screen). e.g. "+0.01250000" / "-0.00400000".
     private var amountText: String {
+        // A self-transfer (split / self-sweep) has no recipient, so neither of the usual answers
+        // fits: `netSats` is just the fee, and netting the fee out of it gives exactly 0. What
+        // happened is that a balance MOVED to another of our addresses — so show that, unsigned,
+        // since nothing entered or left the wallet. The fee is in the detail sheet.
+        if tx.isSelfTransfer, let moved = tx.receivedSats, moved > 0 {
+            return Amount(sats: moved).formattedCoin()
+        }
         let sign = tx.isReceived ? "+" : "-"
         var sats = abs(tx.netSats)
-        // Subtracting the fee answers "what did the recipient get" — right for a real send, wrong
-        // for a self-transfer (split / self-sweep / CoinNews post), where there is no recipient and
-        // the subtraction cancels to exactly 0. There, the fee IS the whole story.
+        // Subtracting the fee answers "what did the recipient get" — right for a real send.
         if !tx.isReceived, !tx.isSelfTransfer, let fee = tx.feeSats, fee <= sats {
             sats = sats - fee
         }

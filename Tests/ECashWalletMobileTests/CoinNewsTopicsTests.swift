@@ -136,9 +136,12 @@ import WalletService
 
     // MARK: - Per-network endpoint + empty fallback
 
+    /// Asserts the BUNDLED mapping, not `publicEndpoint` — the latter lets a remote overlay win, and
+    /// overlays live in process-global UserDefaults that another suite may be writing concurrently.
+    /// Testing through it made this fail at random with whatever URL that suite had just set.
     @Test func publicEndpointRegistryIsPerNetwork() {
-        #expect(CoinNewsEndpointRegistry.publicEndpoint(for: .signet) != nil)   // hosted indexer
-        #expect(CoinNewsEndpointRegistry.publicEndpoint(for: .bitcoin) == nil)  // none yet
+        #expect(CoinNewsEndpointRegistry.bundledEndpoint(for: .signet) != nil)   // hosted indexer
+        #expect(CoinNewsEndpointRegistry.bundledEndpoint(for: .bitcoin) == nil)  // none yet
     }
 
     @Test func emptyClientReturnsNothing() async throws {

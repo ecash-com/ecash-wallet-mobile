@@ -16,6 +16,16 @@ enum CoinNewsEndpointRegistry {
         if let remote = RemoteServiceOverrides.coinNewsURL(for: network) {
             return CoinNewsEndpoint(baseURL: remote)
         }
+        return bundledEndpoint(for: network)
+    }
+
+    /// The endpoint compiled into the app, ignoring any remote overlay.
+    ///
+    /// Split out so the per-network mapping can be asserted on its own. Testing it through
+    /// `publicEndpoint` meant a leaked override from another suite was indistinguishable from a real
+    /// change to the mapping — the two live in process-global `UserDefaults`, and Swift Testing runs
+    /// suites in parallel, so that test failed at random.
+    static func bundledEndpoint(for network: WalletNetwork) -> CoinNewsEndpoint? {
         switch network {
         case .signet:
             // L2L drivechain signet CoinNews indexer.

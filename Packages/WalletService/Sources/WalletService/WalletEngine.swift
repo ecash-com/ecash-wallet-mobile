@@ -218,7 +218,8 @@ public final class WalletEngine: WalletEngineProtocol {
                                    isRBF: tx.isExplicitlyRbf(),
                                    blockHeight: blockHeight,
                                    vsize: Int64(tx.vsize()),
-                                   coinNewsKind: coinNewsKind(of: tx)))
+                                   coinNewsKind: coinNewsKind(of: tx),
+                                   receivedSats: Int64(flow.received.toSat())))
         }
         return result
     }
@@ -557,7 +558,8 @@ public final class WalletEngine: WalletEngineProtocol {
                         timestampEpochSeconds: nil,
                         isRBF: tx.isExplicitlyRbf(),
                         blockHeight: nil,
-                        vsize: Int64(tx.vsize()))
+                        vsize: Int64(tx.vsize()),
+                        receivedSats: Int64(flow.received.toSat()))
     }
 
     /// Publish an `OP_RETURN` data output (CoinNews message). Same build → sign → broadcast path as

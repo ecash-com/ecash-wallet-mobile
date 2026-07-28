@@ -77,4 +77,20 @@ final class WalletTxTests: XCTestCase {
         XCTAssertEqual(netted, 0)                 // what the UI used to show
         XCTAssertEqual(abs(split.netSats), 200)   // what it shows now: the fee
     }
+
+    /// The amount a split actually moved lives in `receivedSats`, not `netSats` — netSats is only
+    /// the fee, so without this the UI has no way to say what happened. Real numbers from the first
+    /// on-chain drynet3 split: 230,854 sats in, 386 fee, 230,468 landed at the new address.
+    func testSelfTransferCarriesTheMovedAmount() {
+        let split = WalletTx(txid: "s", netSats: -386, feeSats: 386, confirmations: 1,
+                             timestampEpochSeconds: nil, isRBF: true, receivedSats: 230_468)
+        XCTAssertTrue(split.isSelfTransfer)
+        XCTAssertEqual(split.receivedSats, 230_468)
+        XCTAssertEqual(abs(split.netSats), 386)   // net is the fee — not what the row should show
+    }
+
+    /// Older/foreign txs may have no received value; the flag must not depend on it.
+    func testSelfTransferFlagIsIndependentOfReceivedSats() {
+        XCTAssertTrue(tx(netSats: -200, feeSats: 200).isSelfTransfer)   // receivedSats defaults nil
+    }
 }

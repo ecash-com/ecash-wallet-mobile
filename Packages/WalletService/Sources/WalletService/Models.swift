@@ -329,6 +329,15 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
     /// at the display edge. Signed Int64 (see above); nil if unknown.
     public let vsize: Int64?
 
+    /// Value paid TO this wallet by this tx (BDK `sentAndReceived.received`), in sats.
+    ///
+    /// Needed because `netSats` alone can't describe a **self-transfer**: a split moves the whole
+    /// balance to our own address, so the net is only `-fee` and the amount that actually moved
+    /// appears nowhere. This carries it. (For an ordinary send this is just the change; for a
+    /// receive it equals `netSats`.) Signed `Int64` like every other bridged number — unsigned
+    /// properties crash the JNI bridge (see `feeSats`).
+    public let receivedSats: Int64?
+
     /// If this tx carries a CoinNews `OP_RETURN`, its kind ("topic"/"story"/"comment"/"upvote"/
     /// "downvote"/"continuation"); nil for ordinary transactions. Detected from the output scripts at
     /// the engine boundary (the bridged surface stays String — never a raw enum). Lets the UI mark it.
@@ -338,7 +347,9 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
 
     public init(txid: String, netSats: Int64, feeSats: Int64?,
                 confirmations: Int32, timestampEpochSeconds: Int64?, isRBF: Bool,
-                blockHeight: Int64? = nil, vsize: Int64? = nil, coinNewsKind: String? = nil) {
+                blockHeight: Int64? = nil, vsize: Int64? = nil, coinNewsKind: String? = nil,
+                receivedSats: Int64? = nil) {
+        self.receivedSats = receivedSats
         self.txid = txid
         self.netSats = netSats
         self.feeSats = feeSats
