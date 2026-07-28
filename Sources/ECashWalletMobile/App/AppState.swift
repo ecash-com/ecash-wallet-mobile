@@ -281,6 +281,9 @@ final class AppState {
                                               scriptType: scriptType)
         resetPerWalletState()   // the new wallet is auto-selected; don't show the old one's numbers
         refresh()
+        // A fresh wallet has no history, but sync anyway: it settles the balance as a known 0
+        // rather than an unsynced unknown (see WalletBalanceSummary) and matches selectWallet.
+        Task { await sync() }
         return wallet
     }
 
@@ -293,6 +296,9 @@ final class AppState {
                                               scriptType: scriptType)
         resetPerWalletState()   // the imported wallet is auto-selected
         refresh()
+        // Sync immediately — an imported wallet exists precisely BECAUSE it has history, and
+        // without this it sits on a zero balance until the user thinks to pull-to-refresh.
+        Task { await sync() }
         return wallet
     }
 
@@ -303,6 +309,9 @@ final class AppState {
         let wallet = try manager.importPrivateKey(label: label, network: network, wif: wif)
         resetPerWalletState()   // the imported wallet is auto-selected
         refresh()
+        // Sync immediately — an imported wallet exists precisely BECAUSE it has history, and
+        // without this it sits on a zero balance until the user thinks to pull-to-refresh.
+        Task { await sync() }
         return wallet
     }
 
