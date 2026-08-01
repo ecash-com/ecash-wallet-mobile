@@ -112,5 +112,41 @@ final class CoinNewsCryptoTests: XCTestCase {
         XCTAssertFalse(CoinNewsCrypto.schnorrVerify(signature: sig, message32: other, xonlyPublicKey: pk))
         #endif
     }
+    // MARK: - Secure aux randomness
+
+    /// BIP-340 aux randomness must come from the platform CSPRNG, not a general-purpose PRNG.
+    /// Regression guard for the all-zero `zeroAux` this replaced (flagged in the Aug 2026 security
+    /// assessment): zero aux is spec-valid, and there was never a nonce-reuse risk, but it forfeits
+    /// fault/side-channel defence in depth.
+    ///
+    /// NOTE: like the rest of this file these run on APPLE only, so they cover `SecRandomCopyBytes`.
+    /// The Android `java.security.SecureRandom` branch is verified by transpilation + a device run.
+    func testSecureAuxRandIsCorrectLengthAndNotZero() throws {
+        let aux = try CoinNewsCrypto.secureAuxRand()
+        XCTAssertEqual(aux.count, 32)
+        XCTAssertFalse(aux.allSatisfy { $0 == UInt8(0) }, "aux randomness must not be all zeros")
+    }
+
+    /// Two draws must differ — a per-call-seeded PRNG (the failure mode if Swift's random APIs were
+    /// used and transpiled to kotlin.random.Random) would show up here.
+    func testSecureAuxRandDiffersBetweenCalls() throws {
+        XCTAssertNotEqual(try CoinNewsCrypto.secureAuxRand(), try CoinNewsCrypto.secureAuxRand())
+    }
+
+    /// Fresh aux must not break signing: signatures now differ per call (that's the point), so this
+    /// asserts they still VERIFY rather than that they're equal.
+    func testSigningWithSecureAuxStillVerifies() throws {
+        let sk = Data([UInt8](repeating: UInt8(7), count: 32))
+        let msg = Data([UInt8](repeating: UInt8(3), count: 32))
+        let pk = try CoinNewsCrypto.xonlyPublicKey(privateKey: sk)
+        let sig1 = try CoinNewsCrypto.schnorrSign(message32: msg, privateKey: sk,
+                                                  auxRand: try CoinNewsCrypto.secureAuxRand())
+        let sig2 = try CoinNewsCrypto.schnorrSign(message32: msg, privateKey: sk,
+                                                  auxRand: try CoinNewsCrypto.secureAuxRand())
+        XCTAssertTrue(CoinNewsCrypto.schnorrVerify(signature: sig1, message32: msg, xonlyPublicKey: pk))
+        XCTAssertTrue(CoinNewsCrypto.schnorrVerify(signature: sig2, message32: msg, xonlyPublicKey: pk))
+        XCTAssertNotEqual(sig1, sig2, "fresh aux randomness should produce distinct signatures")
+    }
+
 }
 #endif  // !SKIP

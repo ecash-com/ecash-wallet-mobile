@@ -449,7 +449,8 @@ public final class WalletManager: @unchecked Sendable {
             throw WalletError.mapping(rawDescription: "invalid target id")
         }
         let payload = try CoinNewsMessage.signedVote(targetId: targetId, upvote: upvote,
-                                                     identityPrivateKey: identity, auxRand: Self.zeroAux)
+                                                     identityPrivateKey: identity,
+                                                     auxRand: try CoinNewsCrypto.secureAuxRand())
         let engine = try liveEngine(walletId: walletId)
         return try engine.publishData(payload, feeRate: feeRate)
     }
@@ -463,7 +464,8 @@ public final class WalletManager: @unchecked Sendable {
             throw WalletError.mapping(rawDescription: "invalid parent id")
         }
         let payload = try CoinNewsMessage.signedComment(parentId: parentId, body: body,
-                                                        identityPrivateKey: identity, auxRand: Self.zeroAux)
+                                                        identityPrivateKey: identity,
+                                                     auxRand: try CoinNewsCrypto.secureAuxRand())
         let engine = try liveEngine(walletId: walletId)
         return try engine.publishData(payload, feeRate: feeRate)
     }
@@ -477,9 +479,6 @@ public final class WalletManager: @unchecked Sendable {
         return try CoinNewsIdentity.privateKey(mnemonicPhrase: phrase, network: wallet.network)
     }
 
-    /// BIP-340 aux randomness. Zero is valid + deterministic; TODO: secure-random for fault-attack
-    /// protection (defense-in-depth — the signed data is public, so determinism leaks nothing here).
-    private static let zeroAux = Data([UInt8](repeating: UInt8(0), count: 32))
 
     // Iterate the ASCII (UTF-8) bytes + integer-range matching, so this transpiles cleanly to Kotlin
     // (a `Character` switch / `Array(String)` does not).

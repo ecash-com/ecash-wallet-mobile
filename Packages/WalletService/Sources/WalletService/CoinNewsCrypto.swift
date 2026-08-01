@@ -9,6 +9,9 @@ import CryptoKit            // SHA-256 (Apple). `canImport` (not `!SKIP`) so the
 #if canImport(P256K)
 import P256K                // BIP-340 Schnorr (Apple) — Android uses fr.acinq.secp256k1 via #if SKIP
 #endif
+#if canImport(Security)
+import Security             // SecRandomCopyBytes (Apple CSPRNG) — Android uses java.security.SecureRandom
+#endif
 
 #if !SKIP_BRIDGE
 /// CoinNews cryptographic primitives — SHA-256, BIP-340 tagged hashes, ItemID, and BIP-340 Schnorr
@@ -71,8 +74,32 @@ public enum CoinNewsCrypto {
         #endif
     }
 
+    /// 32 fresh bytes of BIP-340 auxiliary randomness, from the platform CSPRNG.
+    ///
+    /// **Do not replace this with Swift's `SystemRandomNumberGenerator` / `random(in:)`.** This module
+    /// is transpiled, so those become Kotlin's `kotlin.random.Random` on Android — a general-purpose
+    /// PRNG, **not** cryptographically secure. The code would look right and silently be weaker than
+    /// what it replaced, which is the worst possible outcome for nonce randomness. Hence the explicit
+    /// split: `SecRandomCopyBytes` on Apple, `java.security.SecureRandom` on Android.
+    ///
+    /// Why it matters: aux randomness is BIP-340's defence-in-depth against fault and side-channel
+    /// attacks on nonce derivation. All-zero aux is *valid* per the spec (and the signature is still
+    /// deterministic-per-message, so there's no nonce-reuse risk), but it forfeits that protection.
+    public static func secureAuxRand() throws -> Data {
+        #if !SKIP
+        var bytes = [UInt8](repeating: 0, count: 32)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        guard status == errSecSuccess else { throw WalletError.signingFailed }
+        return Data(bytes)
+        #else
+        let bytes = kotlin.ByteArray(32)
+        java.security.SecureRandom().nextBytes(bytes)
+        return Data(platformValue: bytes)
+        #endif
+    }
+
     /// BIP-340 Schnorr signature (64 B) over a 32-byte message. `auxRand` must be 32 bytes (BIP-340
-    /// nonce randomness — pass fresh random in production; fixed bytes for test vectors).
+    /// nonce randomness — pass `secureAuxRand()` in production; fixed bytes for test vectors).
     public static func schnorrSign(message32: Data, privateKey: Data, auxRand: Data) throws -> Data {
         #if !SKIP
         let key = try P256K.Schnorr.PrivateKey(dataRepresentation: privateKey)
