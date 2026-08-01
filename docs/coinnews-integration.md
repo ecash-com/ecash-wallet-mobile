@@ -1,6 +1,7 @@
 # CoinNews integration — design record (TO BUILD)
 
-> **Status:** 🟡 PLANNED — not built. Captures how the wallet will **fetch** and **publish** CoinNews
+> **Status:** 🟢 SUBSTANTIALLY BUILT (read + publish, per-network) — **with one gap: we do not yet
+> verify signatures on what we display** (see §4.1). Design below is the original record. Captures how the wallet will **fetch** and **publish** CoinNews
 > once we're ready. The protocol itself is summarized in memory `coinnews-protocol`; the canonical
 > spec is the CoinNews draft (BSD-2). Reference code lives in `LayerTwo-Labs/drivechain-frontends`:
 > the wire codec at **`coinnews/codec/`** (Go) and a standalone hostable indexer+API at
@@ -59,6 +60,17 @@ do build → sign → broadcast; this adds an `OP_RETURN` output and an author s
   the publisher already holds the target outpoint (it's rendering the target) and hashes it.
 
 ### 3.2 Author identity + Schnorr signing — DECISIONS (2026-06-15)
+
+> **Update 2026-08-01:** BIP-340 signing now uses **real auxiliary randomness** per signature
+> (`CoinNewsCrypto.secureAuxRand()` — `SecRandomCopyBytes` on Apple, `java.security.SecureRandom` on
+> Android), replacing a hardcoded all-zero `auxRand`. Zero aux is spec-valid and there was never a
+> nonce-reuse risk (the nonce derives from the message), but it forfeited BIP-340's defence in depth
+> against fault/side-channel attacks. Note the identity key lives at the hardened `m/1899'/0'/0'`,
+> separate from `m/84'` spend keys, so the exposure was reputational, never financial.
+>
+> **Do not "simplify" that into Swift's `random(in:)`** — this module is transpiled, so it becomes
+> `kotlin.random.Random` on Android, which is not a CSPRNG. It would compile, pass tests, and be
+> weaker than the zeros it replaced.
 - **Identity model (DECIDED): one CoinNews identity per wallet, derived from the wallet seed** at a
   dedicated BIP-340 path (its own branch, distinct from the `m/84'/…` spend keys). Recoverable on
   restore; "wallet = identity." Derive/sign on demand, never persist the key (Golden Rule §2 /
@@ -131,6 +143,22 @@ Given an Item's `(txid, vout)`, the wallet independently: recomputes the ItemID,
 (backend), reads the `OP_RETURN`, decodes it, and verifies the Schnorr signature. So a hostile
 indexer can **hide** Items or **misrank** them, but **cannot forge** authorship or content. Surface
 verification state in the UI when we get to B.
+
+> ⚠️ **NOT IMPLEMENTED — the standing gap (confirmed 2026-08-01).** `CoinNewsCrypto.schnorrVerify`
+> exists and is vector-tested, but **nothing in the app calls it.** The read models
+> (`CoinNewsModels`) carry `authorXpkHex` — the *claimed* author — and **no signature field at all**,
+> because the `coinnews.v1` indexer doesn't return one. So today a compromised or malicious indexer
+> can fabricate stories, comments, and votes attributed to any identity and the wallet renders them
+> as genuine. Impact is reputational/trust, not funds (nothing here touches spending keys), but it
+> undermines the property that makes an on-chain bulletin board worth having.
+>
+> Closing it needs one of: (a) the indexer returning the signature + signed payload per item, or
+> (b) the client fetching the raw `OP_RETURN` by `(txid, vout)` and verifying against the chain —
+> the design already assumed (b) is possible. Not fixable client-side alone with today's API; needs
+> a conversation with whoever runs the indexer.
+>
+> Notably, the Aug 2026 external security assessment scrutinised our *signing* path and never asked
+> whether we verify what we *read*.
 
 ## 5. Where it lives in the app
 

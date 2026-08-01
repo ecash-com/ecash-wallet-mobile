@@ -113,3 +113,61 @@ The repository states: *"Building from source isn't recommended yet"* and *"The 
 ---
 
 *This assessment is based solely on publicly available source code and documentation. It does not constitute a formal security audit and should not be the sole basis for trust decisions involving real funds.*
+
+---
+
+# Maintainer response (2026-08-01)
+
+Reviewed each finding against the code. Broadly fair and more accurate than most automated reviews;
+two corrections and one severity we'd argue down, plus a gap it didn't look for.
+
+| # | Finding | Status |
+|---|---------|--------|
+| 1 | Deterministic zero BIP-340 aux | ✅ **Fixed** — `da1ca8a` |
+| 2 | No auth-bound keys | ⏳ Accepted; scheduled pre-mainnet (`docs/key-storage.md` §6) |
+| 3 | Custom crypto outside BDK | ⚠️ **Partly incorrect** — see below |
+| 4 | Remote endpoint config fetch | ⏳ Accepted; hardening scoped, not built |
+| 5 | No formal audit | ⏳ Accepted |
+
+**1 — Fixed.** `CoinNewsCrypto.secureAuxRand()` now draws 32 bytes per signature from the platform
+CSPRNG (`SecRandomCopyBytes` / `java.security.SecureRandom`). Worth recording the blast radius the
+assessment omitted: the key involved is the **CoinNews identity key** at the hardened `m/1899'/0'/0'`,
+separate from `m/84'` spend keys. Compromise means someone can post and vote as you — it exposes no
+spending key and no seed. Reputational, not financial, so we'd have rated it Low. Fixed regardless
+because it was cheap.
+
+Implementation note for future readers: this module is **transpiled**, so Swift's
+`SystemRandomNumberGenerator` / `random(in:)` become `kotlin.random.Random` on Android — not a CSPRNG.
+The obvious "cleanup" of that `#if SKIP` split would compile, pass every test, and be weaker than the
+zeros it replaced.
+
+**3 — Two corrections.** The Schnorr primitive is **libsecp256k1** (via `swift-secp256k1` / P256K on
+Apple, `fr.acinq.secp256k1` on Android), not something we wrote; what's ours is message framing and
+tagged hashes. And the recommendation — "ensure dedicated unit tests against published BIP-340 test
+vectors" — was **already satisfied before the assessment**: `CoinNewsCryptoTests.swift` runs the
+official BIP-340 vectors (key→pubkey, (key, aux, msg)→sig, verify) plus the NIST SHA-256 vector. The
+report marks `CoinNewsCrypto` as "(implied)", indicating that file wasn't opened. The ⭐⭐⭐ rating
+rests on it.
+
+Thunder is likewise vector-pinned, and as of `307f859` its Borsh codec is cross-checked against
+**thunder-rust's own `borsh::to_vec()`** output rather than our reading of the format.
+
+**4 — Accepted, with impact bounded.** A malicious backend can lie about balances, censor broadcasts,
+and correlate addresses. It **cannot** steal funds: it never sees keys, and the recipient is
+user-confirmed. So this is privacy and availability, not theft. Config signing (a key baked into the
+app) is the fix we'd prefer over cert pinning, since it also survives domain compromise.
+
+## What the assessment didn't look for
+
+**We do not verify CoinNews signatures on content we display.** `schnorrVerify` exists and is
+vector-tested, but nothing in the app calls it, and the read models carry the *claimed* author
+(`authorXpkHex`) with no signature field, because the indexer doesn't return one. A compromised
+indexer can fabricate posts attributed to any identity. Impact is trust, not funds — but the review
+scrutinised our signing path closely and never asked whether we check what we read. Tracked in
+`docs/coinnews-integration.md` §4.1.
+
+Also unexamined, and noted here for completeness: the JNI bridge as a trust boundary, dependency
+supply chain (Skip, BDK, Firebase, vendored BLAKE3), and imported WIF keys of unknown entropy
+provenance (`docs/wif-import-and-sweep.md`).
+
+We agree with the bottom line: a formal audit and `docs/key-storage.md` §6 before real funds.

@@ -1,10 +1,15 @@
 # Import private key (WIF) — plan
 
-> Status: **BUILT — engine + UI (2026-07-21).** WalletService WIF path (single-key `pkh` wallet,
+> Status: **BUILT + PROVEN ON-CHAIN (2026-07-28).** WalletService WIF path (single-key `pkh` wallet,
 > watch-only + sign-on-demand) and the Advanced-on-Import UI (type toggle + live address preview)
 > are implemented and verified: real-BDK derives the distribution WIF `Kzjzb4…` → `14kwDb3…`, WIF
-> never in the public descriptor, iOS + Android builds green, unit tests pass. **Remaining:** funded
-> send end-to-end (ship-gate, needs test coins), reveal-the-WIF in Backup, WIF QR-scan.
+> never in the public descriptor, iOS + Android builds green, unit tests pass.
+>
+> **The funded ship-gate is CLEARED.** A real pre-fork P2PKH UTXO (230,854 sats, confirmed at height
+> 724,375 — below drynet3's 957,600 fork) was imported by WIF on drynet3 and successfully
+> **split** (drain-to-self), which exercised import → sync → coin selection → sign → broadcast on a
+> funded wallet end to end. **Remaining:** reveal-the-WIF in Backup, WIF QR-scan, and the
+> imported-key provenance warning (see below).
 > Original plan (2026-07-17). Feasibility **confirmed against our pinned
 > bdk-swift/bdk-android 2.3.1** — no Rust, no binding changes (§2). Companion to
 > `docs/custom-derivation-path-import.md`; both are "bring legacy Bitcoin into eCash" features but
