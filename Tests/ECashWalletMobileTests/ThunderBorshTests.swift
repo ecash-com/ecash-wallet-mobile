@@ -132,4 +132,80 @@ import Crypto
         let verifying = try Curve25519.Signing.PublicKey(rawRepresentation: key.publicKeyBytes)
         #expect(verifying.isValidSignature(Data(signature), for: Data(tx.borshEncoded())))
     }
+
+    // MARK: - Golden vector from real thunder-rust
+
+    /// **The cross-implementation check** the whole Borsh codec hinged on.
+    ///
+    /// Every other test in this file builds its expected bytes from the spec by hand, which proves
+    /// we're self-consistent but not that we agree with the chain. This vector was produced by
+    /// running `borsh::to_vec()` against thunder-rust's OWN `types::Transaction`
+    /// (branch `2026-07-24-refactor`) on this exact input, so a mismatch here means our transactions
+    /// would be rejected — or worse, signed over different bytes than the node verifies.
+    ///
+    /// Input: one Regular input (txid 0x11×32, vout 7, utxo hash 0x0f×32), one Value output
+    /// (address 0xAB×20, 5000 sats).
+    @Test func borshMatchesRealThunderRustGoldenVector() {
+        let tx = ThunderTransaction(
+            inputs: [.init(outPoint: .regular(txid: [UInt8](repeating: 0x11, count: 32), vout: 7),
+                           utxoHash: [UInt8](repeating: 0x0f, count: 32))],
+            outputs: [ThunderOutput(address: [UInt8](repeating: 0xAB, count: 20),
+                                    content: .value(sats: 5_000))])
+
+        let expected = "01000000" + "00" + String(repeating: "11", count: 32) + "07000000"
+            + String(repeating: "0f", count: 32)
+            + "01000000" + String(repeating: "ab", count: 20) + "00" + "8813000000000000"
+
+        #expect(ThunderHex.encode(tx.borshEncoded()) == expected)
+        #expect(tx.borshEncoded().count == 106)
+
+        // And the txid thunder-rust computed over those same bytes (BLAKE3, raw byte order —
+        // Thunder's Txid is NOT display-reversed like bitcoin::Txid).
+        #expect(ThunderHex.encode(tx.txid())
+                == "942998560ce2fcf099d3d1a65a42792194758f56c5c70d08c7412c5de4838c3e")
+    }
+
+    /// Second golden vector from real thunder-rust, covering the encodings the simple case can't
+    /// reach: a **Deposit** outpoint (a mainchain `bitcoin::OutPoint`) and a **Withdrawal** output.
+    ///
+    /// Two things this pins down:
+    ///  • Deposit txids go into Borsh as their RAW INTERNAL bytes — `de00…00ad` here, NOT reversed.
+    ///    The byte-reversal `ThunderRPCOutPoint` performs is a JSON-only concern (`bitcoin::Txid`
+    ///    serializes as display hex); mixing the two up would produce a valid-looking input whose
+    ///    utxo hash the node can't match.
+    ///  • A withdrawal's `main_address` is serialized as its scriptPubkey, u32-length-prefixed.
+    @Test func borshMatchesRealThunderRustDepositAndWithdrawalVector() {
+        var depositTxid = [UInt8](repeating: 0, count: 32)
+        depositTxid[0] = 0xde
+        depositTxid[31] = 0xad
+        // P2PKH scriptPubkey for 1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2, as thunder-rust serialized it.
+        let mainSpk = ThunderHex.decode("76a91477bff20c60e522dfaa3350c39b030a5d004e839a88ac")!
+
+        let tx = ThunderTransaction(
+            inputs: [
+                .init(outPoint: .regular(txid: [UInt8](repeating: 0x11, count: 32), vout: 1),
+                      utxoHash: [UInt8](repeating: 0x0f, count: 32)),
+                .init(outPoint: .deposit(txid: depositTxid, vout: 4),
+                      utxoHash: [UInt8](repeating: 0x0e, count: 32)),
+            ],
+            outputs: [
+                ThunderOutput(address: [UInt8](repeating: 0xAB, count: 20), content: .value(sats: 1_000)),
+                ThunderOutput(address: [UInt8](repeating: 0xCD, count: 20),
+                              content: .withdrawal(sats: 2_000, mainFeeSats: 300, mainScriptPubKey: mainSpk)),
+            ])
+
+        // Verbatim `borsh::to_vec()` output from thunder-rust (branch 2026-07-24-refactor).
+        let expected = "02000000001111111111111111111111111111111111111111111111111111111111111111"
+            + "010000000f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+            + "02de000000000000000000000000000000000000000000000000000000000000ad04000000"
+            + "0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e0e"
+            + "02000000abababababababababababababababababababab00e803000000000000"
+            + "cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd01d0070000000000002c01000000000000"
+            + "1900000076a91477bff20c60e522dfaa3350c39b030a5d004e839a88ac"
+
+        #expect(ThunderHex.encode(tx.borshEncoded()) == expected)
+        #expect(tx.borshEncoded().count == 241)
+        #expect(ThunderHex.encode(tx.txid())
+                == "0de4d5e4efb81a4b589309413d9c9cb508ea9e34e7a1c50a5132a67ccc79066c")
+    }
 }

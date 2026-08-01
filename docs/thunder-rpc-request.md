@@ -54,9 +54,10 @@ the `thunder_types`/FFI crate**. Two small things that help us stay byte-correct
 1. **Wire format stability** — we diffed `transaction.rs` across the `lib/types` → `types/` extraction
    and confirmed the Borsh encoding is unchanged; thank you. A heads-up on any future field/encoding
    change would be appreciated, since it would silently break our signatures.
-2. **One golden vector** — still the outstanding ask: a single `borsh::to_vec(&transaction)` example (a
-   known `Transaction` → expected hex, ideally plus the resulting `txid`) so we can assert our Swift
-   Borsh matches yours before we enable real sends.
+2. ~~**One golden vector**~~ — **no longer needed, thanks.** We generated our own by running
+   `borsh::to_vec()` against your `types::Transaction` directly (branch `2026-07-24-refactor`) and
+   pinned two vectors in our test suite: a simple Regular/Value transaction, and one covering a
+   Deposit outpoint plus a Withdrawal output. Bytes and txids match our Swift codec exactly.
 
 ## Two schema/serde mismatches (FYI — no action needed)
 
