@@ -130,6 +130,12 @@ struct TxRow: View {
     // LocalizedStringKey so the copy localizes via the module catalog; `dateText` stays a plain
     // String interpolated in (locale-aware date formatting is a later refinement — §10 note).
     private var metaText: LocalizedStringKey {
+        // Confirmed with no known depth (Thunder): say so and stop. Printing "1 conf" would present
+        // a floor as a fact, and the only date we hold is when this device first saw the tx — which
+        // for a restored wallet is "today" for transactions that are years old.
+        if tx.isConfirmedDepthUnknown {
+            return "Confirmed"
+        }
         if tx.confirmations > 5 {
             return "\(dateText) · Confirmed"
         }

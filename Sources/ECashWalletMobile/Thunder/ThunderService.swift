@@ -19,9 +19,10 @@ import WalletService
 /// 5. `submit_transaction`, where the node regenerates the utreexo proof.
 /// The seed never leaves the phone and the node never holds it — the whole point (Golden Rule §2).
 ///
-/// **Still gated:** transaction history. `get_utxos` returns only *unspent* outputs, so spends are
-/// invisible and no history can be reconstructed client-side; `transactions` fails with a distinct
-/// `.historyUnavailable` until the node exposes an address-scoped read for spent outputs.
+/// **History** is reconstructed from `get_utxos` + `get_stxos` (`ThunderHistory`) — spends are
+/// invisible in the UTXO set alone, so the spent-output read is the other half. Amounts and direction
+/// are exact; confirmation depth and true chronological order are not derivable, because the node
+/// exposes no height per transaction. See `ThunderHistory` for what that costs and how it's handled.
 ///
 /// The mnemonic is loaded APP-SIDE, transiently: `loadMnemonic` reads the secure store only when
 /// derivation or signing needs it, and the derived `ThunderWallet` is dropped right after — the same
@@ -32,11 +33,18 @@ final class ThunderService: WalletOps {
     /// Built per call so a Settings endpoint change takes effect without rebuilding the service.
     private let makeClient: @Sendable () -> ThunderRPCClient
     private let indexStore: ThunderAddressIndexStoring
+    private let firstSeenStore: ThunderFirstSeenStoring
+    /// Clock seam so tests don't depend on the wall clock.
+    private let now: @Sendable () -> Int64
 
     /// Last synced UTXO set per wallet. `WalletOps.balance` is synchronous (the UI reads it during
     /// layout), so a sync populates this and balance reads it — cached first, then refresh, exactly
     /// like the BDK path.
     private var utxoCache: [String: [ThunderPointedOutput]] = [:]
+
+    /// Last rebuilt history per wallet. `WalletOps.transactions` is synchronous, so — like balance —
+    /// a sync computes this and the read returns it.
+    private var historyCache: [String: [WalletTx]] = [:]
 
     /// How far past the highest revealed index a sync still looks. Mirrors BIP44's gap limit: money
     /// paid to an address we handed out but never recorded still has to be found.
@@ -46,10 +54,14 @@ final class ThunderService: WalletOps {
          makeClient: @escaping @Sendable () -> ThunderRPCClient = {
              ThunderRPCClient(endpoint: NetworkRegistry.params(for: .thunder).defaultBackend)
          },
-         indexStore: ThunderAddressIndexStoring = UserDefaultsThunderAddressIndexStore()) {
+         indexStore: ThunderAddressIndexStoring = UserDefaultsThunderAddressIndexStore(),
+         firstSeenStore: ThunderFirstSeenStoring = UserDefaultsThunderFirstSeenStore(),
+         now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
         self.loadMnemonic = loadMnemonic
         self.makeClient = makeClient
         self.indexStore = indexStore
+        self.firstSeenStore = firstSeenStore
+        self.now = now
     }
 
     // MARK: - Addresses (local — no RPC)
@@ -88,15 +100,28 @@ final class ThunderService: WalletOps {
     /// next sync after it is mined, not before.
     func pendingBalance(walletId: String) throws -> Amount { Amount(sats: 0) }
 
-    /// Scan this wallet's addresses (0 ..< revealed + gap limit) and refresh the cached UTXO set.
+    /// Scan this wallet's addresses (0 ..< revealed + gap limit), refresh the cached UTXO set, and
+    /// rebuild history from the unspent + spent reads.
     func sync(walletId: String) async throws -> Amount {
-        let utxos = try await fetchUtxos(walletId: walletId)
-        utxoCache[walletId] = utxos
+        let addresses = try await addressWindow(walletId: walletId)
+        let client = makeClient()
+        let rawUtxos = try await client.getUtxos(addresses: addresses)
+        // Spent outputs are the other half of history; a node without get_stxos still gives a
+        // correct balance, so a failure here must not break syncing.
+        let rawStxos = (try? await client.getStxos(addresses: addresses)) ?? []
+
+        utxoCache[walletId] = rawUtxos.compactMap(\.spendable)
+        firstSeenStore.record(txids: ThunderHistory.txids(utxos: rawUtxos, stxos: rawStxos),
+                              walletId: walletId, now: now())
+        historyCache[walletId] = ThunderHistory.build(
+            utxos: rawUtxos, stxos: rawStxos,
+            firstSeen: firstSeenStore.firstSeen(walletId: walletId))
         return try balance(walletId: walletId)
     }
 
-    /// Blocked on the node: see the type note and `ThunderError.historyUnavailable`.
-    func transactions(walletId: String) throws -> [WalletTx] { throw ThunderError.historyUnavailable }
+    /// History rebuilt from `get_utxos` + `get_stxos` at the last sync (see `ThunderHistory` for what
+    /// can and can't be derived — notably no fee, no height, no real confirmation depth).
+    func transactions(walletId: String) throws -> [WalletTx] { historyCache[walletId] ?? [] }
 
     // MARK: - Sending
 
@@ -156,13 +181,17 @@ final class ThunderService: WalletOps {
     /// (withdrawals, which consensus refuses to let anyone spend) are dropped here, so they can't
     /// inflate a balance or be picked by coin selection.
     private func fetchUtxos(walletId: String) async throws -> [ThunderPointedOutput] {
+        let addresses = try await addressWindow(walletId: walletId)
+        return try await makeClient().getUtxos(addresses: addresses).compactMap(\.spendable)
+    }
+
+    /// This wallet's address window: 0 ..< revealed + gap limit.
+    private func addressWindow(walletId: String) async throws -> [String] {
         let mnemonic = try requireMnemonic(walletId: walletId)
         let window = Int(indexStore.revealedIndex(walletId: walletId) + Self.gapLimit) + 1
-        let addresses = try await Task.detached(priority: .userInitiated) {
+        return try await Task.detached(priority: .userInitiated) {
             try ThunderWallet(mnemonic: mnemonic).addresses(count: window).map(\.base58)
         }.value
-        let client = makeClient()
-        return try await client.getUtxos(addresses: addresses).compactMap(\.spendable)
     }
 
     /// Sign `selection` + `outputs` and submit. Shared by send and sweep — the only difference between

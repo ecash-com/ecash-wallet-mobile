@@ -52,6 +52,13 @@ struct ThunderRPCClient: Sendable {
         try await call(method: "get_utxos", params: [addresses])
     }
 
+    /// `get_stxos(addresses) -> [Pointed<SpentOutput>]` — outputs of ours that have been SPENT.
+    /// The counterpart to `get_utxos`: together they cover every coin that ever touched these
+    /// addresses, which is what history is reconstructed from (spends are invisible in the UTXO set).
+    func getStxos(addresses: [String]) async throws -> [ThunderRPCPointedSpentOutput] {
+        try await call(method: "get_stxos", params: [addresses])
+    }
+
     /// `submit_transaction(Authorized<Transaction>) -> Txid`. The node regenerates the utreexo proof
     /// before validating (commit fb922ee), so we submit with an empty proof. Returns the txid hex.
     func submitTransaction(_ authorized: AuthorizedThunderTransaction) async throws -> String {

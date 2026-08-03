@@ -26,11 +26,10 @@ enum ThunderError: Error, Equatable {
     case insufficientFunds(neededSats: Int64, availableSats: Int64)
     /// The destination isn't a valid Thunder address (base58 of a 20-byte hash).
     case invalidAddress
-    /// Transaction history needs an address-scoped RPC the node doesn't expose yet: `get_utxos` shows
-    /// only *unspent* outputs, so spends are invisible and no history can be reconstructed. Tracked as
-    /// the `get_stxos` ask (docs/thunder-sidechain-support.md); balance / receive / send all work
-    /// without it. Distinct from `backendUnavailable` so the UI can say "not available yet" rather
-    /// than "can't reach the node".
+    /// **No longer thrown** — `get_stxos` shipped (thunder-rust `f98c31ec`) and history is now
+    /// reconstructed from it plus `get_utxos` (`ThunderHistory`). Kept as a case because a node
+    /// predating that RPC still answers everything else, and we may want to surface the difference
+    /// rather than silently showing an empty Activity list.
     case historyUnavailable
     /// An operation that has no meaning on Thunder (e.g. splitting coins, which guards against an
     /// eCash-fork replay concern that this chain simply doesn't have).

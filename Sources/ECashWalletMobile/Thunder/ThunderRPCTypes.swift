@@ -218,6 +218,64 @@ struct ThunderRPCPointedOutput: Codable, Equatable {
     }
 }
 
+// MARK: - SpentOutput (get_stxos)
+
+/// `types::InPoint` over JSON — which transaction *spent* one of our outputs.
+/// `{"Regular":{"txid":"<hex>","vin":0}}` or `{"Withdrawal":{"m6id":"<hex>"}}`.
+///
+/// The `Regular` case is what history is built from: its txid is the transaction that took the coin.
+/// `Withdrawal` means the coin left via a BIP300 withdrawal bundle rather than an ordinary spend —
+/// there's no Thunder txid to attribute it to, so history records it separately.
+enum ThunderRPCInPoint: Codable, Equatable {
+    case regular(txid: [UInt8], vin: UInt32)
+    case withdrawal(m6idHex: String)
+
+    private enum Tag: String, CodingKey { case regular = "Regular", withdrawal = "Withdrawal" }
+    private enum RegularKeys: String, CodingKey { case txid, vin }
+    private enum WithdrawalKeys: String, CodingKey { case m6id }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: Tag.self)
+        if let nested = try? container.nestedContainer(keyedBy: RegularKeys.self, forKey: .regular) {
+            let hex = try nested.decode(String.self, forKey: .txid)
+            guard let txid = ThunderHex.decode(hex), txid.count == 32 else {
+                throw ThunderRPCError.malformedResponse("inpoint txid")
+            }
+            self = .regular(txid: txid, vin: try nested.decode(UInt32.self, forKey: .vin))
+        } else if let nested = try? container.nestedContainer(keyedBy: WithdrawalKeys.self, forKey: .withdrawal) {
+            self = .withdrawal(m6idHex: try nested.decode(String.self, forKey: .m6id))
+        } else {
+            throw ThunderRPCError.malformedResponse("unknown inpoint variant")
+        }
+    }
+
+    func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: Tag.self)
+        switch self {
+        case let .regular(txid, vin):
+            var nested = container.nestedContainer(keyedBy: RegularKeys.self, forKey: .regular)
+            try nested.encode(ThunderHex.encode(txid), forKey: .txid)
+            try nested.encode(vin, forKey: .vin)
+        case let .withdrawal(m6idHex):
+            var nested = container.nestedContainer(keyedBy: WithdrawalKeys.self, forKey: .withdrawal)
+            try nested.encode(m6idHex, forKey: .m6id)
+        }
+    }
+}
+
+/// `types::SpentOutput` — the output as it was, plus where it went.
+struct ThunderRPCSpentOutput: Codable, Equatable {
+    let output: ThunderRPCOutput
+    let inpoint: ThunderRPCInPoint
+}
+
+/// `Pointed<SpentOutput>` from `get_stxos`. Note the nesting: `Pointed`'s field is named `output`
+/// whatever it holds, so a spent entry is `{"outpoint":…, "output":{"output":…, "inpoint":…}}`.
+struct ThunderRPCPointedSpentOutput: Codable, Equatable {
+    let outpoint: ThunderRPCOutPoint
+    let output: ThunderRPCSpentOutput
+}
+
 // MARK: - Transaction (request side)
 
 /// `Authorized<Transaction>` as `submit_transaction` wants it. Encode-only: this is the one value we

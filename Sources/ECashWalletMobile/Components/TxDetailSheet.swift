@@ -126,7 +126,7 @@ struct TxDetailSheet: View {
     /// Status pill: amber "Pending" (0 conf) / amber "Confirming" (1–5) / green "Confirmed" (>5).
     private var statusPill: some View {
         HStack(spacing: Theme.Space.x1) {
-            Image(icon: tx.confirmations > 5 ? Icon.check : Icon.pending)
+            Image(icon: (tx.confirmations > 5 || tx.isConfirmedDepthUnknown) ? Icon.check : Icon.pending)
                 .resizable().scaledToFit()
                 .frame(width: 13, height: 13)
             pillLabel.textStyle(.sm)
@@ -138,6 +138,9 @@ struct TxDetailSheet: View {
     }
 
     private var pillLabel: Text {
+        if tx.isConfirmedDepthUnknown {   // in a block, depth not reported by the node
+            return Text("Confirmed", bundle: .module, comment: "tx status pill: confirmed")
+        }
         if tx.confirmations == 0 {
             return Text("Pending", bundle: .module, comment: "tx status pill: unconfirmed")
         }
@@ -147,8 +150,9 @@ struct TxDetailSheet: View {
         return Text("Confirming", bundle: .module, comment: "tx status pill: settling")
     }
 
-    private var pillColor: Color { tx.confirmations > 5 ? Theme.Colors.positive : Theme.Colors.warning }
-    private var pillTint: Color { tx.confirmations > 5 ? Theme.Colors.positiveTint : Theme.Colors.warningTint }
+    private var isSettled: Bool { tx.confirmations > 5 || tx.isConfirmedDepthUnknown }
+    private var pillColor: Color { isSettled ? Theme.Colors.positive : Theme.Colors.warning }
+    private var pillTint: Color { isSettled ? Theme.Colors.positiveTint : Theme.Colors.warningTint }
 
     // MARK: - Details
 

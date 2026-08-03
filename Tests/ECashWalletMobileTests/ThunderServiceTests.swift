@@ -22,6 +22,8 @@ import WalletService
     /// A service whose RPC returns `utxosJSON` for `get_utxos` and `txid` for `submit_transaction`,
     /// recording every request body it was sent.
     private static func service(utxosJSON: String = "[]",
+                                stxosJSON: String = "[]",
+                                stxosFails: Bool = false,
                                 submitTxid: String = "aa",
                                 requests: RequestLog = RequestLog(),
                                 indexStore: ThunderAddressIndexStoring = InMemoryThunderAddressIndexStore(),
@@ -37,6 +39,11 @@ import WalletService
                     switch method {
                     case "get_utxos":
                         return (Data(#"{"jsonrpc":"2.0","id":1,"result":\#(utxosJSON)}"#.utf8), 200)
+                    case "get_stxos":
+                        if stxosFails {
+                            return (Data(#"{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}"#.utf8), 200)
+                        }
+                        return (Data(#"{"jsonrpc":"2.0","id":1,"result":\#(stxosJSON)}"#.utf8), 200)
                     case "submit_transaction":
                         return (Data(#"{"jsonrpc":"2.0","id":1,"result":"\#(submitTxid)"}"#.utf8), 200)
                     default:
@@ -47,9 +54,10 @@ import WalletService
             indexStore: indexStore)
     }
 
-    private static func utxoJSON(address: String, sats: UInt64, vout: Int) -> String {
+    private static func utxoJSON(address: String, sats: UInt64, vout: Int,
+                                txid: String = String(repeating: "11", count: 32)) -> String {
         """
-        {"outpoint":{"Regular":{"txid":"\(String(repeating: "11", count: 32))","vout":\(vout)}},
+        {"outpoint":{"Regular":{"txid":"\(txid)","vout":\(vout)}},
          "output":{"address":"\(address)","content":{"Value":\(sats)}}}
         """
     }
@@ -145,18 +153,41 @@ import WalletService
         #expect(try await service.sync(walletId: "w1").sats == 1_000)
     }
 
-    // MARK: - History (still gated on the node)
+    // MARK: - History
 
-    @Test func historyFailsWithItsOwnError() {
-        do {
-            _ = try Self.service().transactions(walletId: "w1")
-            Issue.record("expected historyUnavailable")
-        } catch let error as ThunderError {
-            // Distinct from backendUnavailable: the node is reachable, the RPC just doesn't exist yet.
-            #expect(error == .historyUnavailable)
-        } catch {
-            Issue.record("wrong error: \(error)")
-        }
+    /// Before a sync there's nothing to show — an empty list, not an error. (`get_stxos` shipped in
+    /// thunder-rust `f98c31ec`, so this op is no longer gated.)
+    @Test func historyIsEmptyBeforeSync() throws {
+        #expect(try Self.service().transactions(walletId: "w1").isEmpty)
+    }
+
+    /// Sync rebuilds history from get_utxos + get_stxos. The spend is only visible because of the
+    /// stxo read — the UTXO set alone would show the change and nothing else.
+    @Test func syncRebuildsHistoryFromBothReads() async throws {
+        let txidIn = String(repeating: "11", count: 32)
+        let txidSpend = String(repeating: "22", count: 32)
+        let utxos = "[\(Self.utxoJSON(address: Self.address0, sats: 30_000, vout: 0, txid: txidSpend))]"
+        let stxos = """
+        [{"outpoint":{"Regular":{"txid":"\(txidIn)","vout":0}},
+          "output":{"output":{"address":"\(Self.address0)","content":{"Value":100000}},
+                    "inpoint":{"Regular":{"txid":"\(txidSpend)","vin":0}}}}]
+        """
+        let service = Self.service(utxosJSON: utxos, stxosJSON: stxos)
+        _ = try await service.sync(walletId: "w1")
+
+        let txs = try service.transactions(walletId: "w1")
+        #expect(txs.count == 2)
+        #expect(txs.first { $0.txid == txidIn }?.netSats == 100_000)
+        #expect(txs.first { $0.txid == txidSpend }?.netSats == -70_000)
+    }
+
+    /// A node that doesn't serve get_stxos must still sync and report the right balance — history
+    /// degrades to receives-only rather than the whole sync failing.
+    @Test func syncSurvivesAGetStxosFailure() async throws {
+        let service = Self.service(utxosJSON: "[\(Self.utxoJSON(address: Self.address0, sats: 4_000, vout: 0))]",
+                                   stxosFails: true)
+        #expect(try await service.sync(walletId: "w1").sats == 4_000)
+        #expect(try service.transactions(walletId: "w1").count == 1)
     }
 
     // MARK: - Sending

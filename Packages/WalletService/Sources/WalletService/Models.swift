@@ -375,6 +375,16 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
     /// Display code must special-case these: the usual "amount minus fee" (which answers *how much
     /// did the recipient get*) evaluates to **zero** here, because there is no recipient. A split
     /// that moved a whole balance would render as `0.00000000`, reading as "nothing happened".
+    /// Confirmed, but we don't know how deep — the engine could establish that it's in a block
+    /// without learning the height.
+    ///
+    /// Only Thunder produces this today: its node exposes no per-transaction height (see
+    /// `ThunderHistory`), yet anything visible in the node's state is necessarily in a connected
+    /// block. BDK always knows the height when confirmed, so its transactions never hit this.
+    /// Display code must not print a confirmation count or a date for these — the count would be a
+    /// floor presented as fact, and the only timestamp we have is when this device first saw it.
+    public var isConfirmedDepthUnknown: Bool { confirmations > 0 && blockHeight == nil }
+
     public var isSelfTransfer: Bool {
         guard let feeSats, netSats < 0 else { return false }
         return -netSats == feeSats
