@@ -22,4 +22,4 @@ build:
         # Android BDK binding (mavenCentral). Keep in lock-step with bdk-swift (both 2.3.x).
         - 'implementation("org.bitcoindevkit:bdk-android:2.3.1")'
         # BIP-340 Schnorr for CoinNews authorship (Android side; iOS uses swift-secp256k1/P256K).
-        - 'implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.17.3")'
+        - 'implementation("fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.23.0")'

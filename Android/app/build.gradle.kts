@@ -103,3 +103,17 @@ android {
         }
     }
 }
+
+// Force a 16 KB-page-size-compatible CameraX. Google Play requires 16 KB page support for apps
+// targeting Android 15+ (we target 36), and CameraX 1.3.x ships libimage_processing_util_jni.so
+// aligned to 4 KB — which fails that check. CameraX arrives transitively (SkipQRCode's ML Kit
+// scanner) so there's no direct declaration to edit; constraining it here is what raises it.
+// Verify after changing: unpack the APK and confirm every lib/*/*.so has a LOAD p_align of at
+// least 0x4000 (llvm-readelf -l).
+dependencies {
+    constraints {
+        implementation("androidx.camera:camera-core:1.6.1") {
+            because("16 KB page alignment required by Google Play (targetSdk 36)")
+        }
+    }
+}
