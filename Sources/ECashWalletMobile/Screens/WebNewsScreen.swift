@@ -21,16 +21,15 @@ import SkipWeb
 struct WebNewsScreen: View {
     let url: URL
 
-    /// Used to hand outbound links to the system browser — see `ExternalLinkDelegate`.
+    /// Hands outbound links to the system browser — see `opensExternally(_:)`.
     @Environment(\.openURL) var openURL
 
     #if os(iOS) || os(Android)
-    /// Held in `@State` so the engine, its configuration and the delegate survive body
-    /// re-evaluation instead of being rebuilt (which would reload the page).
+    /// Held in `@State` so the engine and its configuration survive body re-evaluation instead of
+    /// being rebuilt (which would reload the page).
     @State var navigator = WebViewNavigator()
     @State var state = WebViewState()
     @State var configuration = WebEngineConfiguration()
-    @State var linkDelegate = ExternalLinkDelegate()
     #endif
 
     var body: some View {
@@ -42,15 +41,16 @@ struct WebNewsScreen: View {
     @ViewBuilder
     private var content: some View {
         #if os(iOS) || os(Android)
-        WebView(configuration: configuration, navigator: navigator, url: url, state: $state)
+        WebView(configuration: configuration,
+                navigator: navigator,
+                url: url,
+                state: $state,
+                shouldOverrideUrlLoading: { candidate in
+                    guard opensExternally(candidate) else { return false }
+                    openURL(candidate)
+                    return true   // true = "we handled it"; the web view does not navigate
+                })
             .ignoresSafeArea(edges: .bottom)
-            .onAppear {
-                // Wired here rather than at construction because the handler needs `openURL` from the
-                // environment. Both are reference types, so assigning after the WebView was built
-                // still takes effect.
-                linkDelegate.open = { openURL($0) }
-                configuration.uiDelegate = linkDelegate
-            }
         #else
         // macOS host only (tests / transpile target) — never a shipping path.
         ZStack {
@@ -61,35 +61,27 @@ struct WebNewsScreen: View {
         }
         #endif
     }
-}
 
-#if os(iOS) || os(Android)
-/// Sends `target="_blank"` links to the system browser instead of opening them in this view.
-///
-/// Two problems, one fix. First the links did nothing at all: a new-window request goes to
-/// `createWebViewWith` (`WKUIDelegate` / `WebChromeClient.onCreateWindow`) and SkipWeb's default
-/// answer is `nil` — deny — so every outbound link on the news site was inert.
-///
-/// Second, loading them in place is worse than it sounds. This screen deliberately has no browser
-/// chrome: no back, forward, or reload. Follow a link two pages deep and the only way out is the
-/// navigation back button, which pops the entire screen and loses your place. Handing outbound links
-/// to the real browser gives the user history, tabs and share for free, and leaves this view showing
-/// the one page it exists to show.
-@MainActor
-final class ExternalLinkDelegate: SkipWebUIDelegate {
-    /// Set by the view from `@Environment(\.openURL)`.
-    var open: ((URL) -> Void)?
-
-    // `nonisolated` to match the protocol requirement. Both platforms deliver this callback on the
-    // main thread, so `assumeIsolated` states a fact rather than hopping through a Task — which
-    // Swift 6 would reject anyway for carrying non-Sendable state across the boundary.
-    nonisolated func webView(_ webView: WebView, createWebViewWith request: WebWindowRequest,
-                             platformContext: PlatformCreateWindowContext) -> WebEngine? {
-        // Android may not know the target URL at onCreateWindow time (documented in SkipWeb). Without
-        // a destination there's nothing useful to do, so decline rather than guess.
-        guard let target = request.targetURL else { return nil }
-        MainActor.assumeIsolated { self.open?(target) }
-        return nil   // never create a child view — the system browser owns it now
+    /// Whether a navigation should leave the app for the system browser: anything off the news site's
+    /// own host.
+    ///
+    /// **Why links leave at all.** This screen deliberately has no browser chrome — no back, forward,
+    /// or reload. Follow a link two pages deep in place and the only way out is the navigation back
+    /// button, which pops the whole screen and loses your place. The real browser brings history, tabs
+    /// and share for free, and leaves this view showing the one page it exists to show.
+    ///
+    /// **Why by host, and not "everything but the first page".** This hook fires for the initial load
+    /// and for any redirect it goes through, not just for taps — a blanket rule would fling the user
+    /// into the browser the instant the screen opened. Comparing hosts can't do that: our own page and
+    /// any same-site redirect stay put no matter what. It also can't be tripped by a subframe, since
+    /// SkipWeb consults this before checking whether the navigation is main-frame (verified: the site
+    /// is a React SPA with no iframes; the only `iframe` strings in its bundle are React's own DOM
+    /// event registration, and its YouTube references are `watch?v=` links, not embedded players).
+    ///
+    /// Scheme links (`mailto:`, `tel:`) have no host, so they fall to the system too — which is
+    /// exactly where they belong.
+    private func opensExternally(_ candidate: URL) -> Bool {
+        guard let target = candidate.host, let own = url.host else { return true }
+        return target.caseInsensitiveCompare(own) != .orderedSame
     }
 }
-#endif
