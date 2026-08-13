@@ -3,6 +3,10 @@
 
 require('dotenv')
 Dotenv.load '../../Skip.env'
-app_identifier(ENV['ANDROID_APPLICATION_ID'] || ENV['PRODUCT_BUNDLE_IDENTIFIER'])
+# iOS identifier ONLY. The Skip template had `ANDROID_APPLICATION_ID || PRODUCT_BUNDLE_IDENTIFIER`
+# here, which is inverted for the Darwin lane: it reads correctly only while the Android override is
+# unset. When Android was rebranded ahead of iOS (2026-08-04) this silently resolved the iOS
+# app_identifier to the ANDROID package name, aiming TestFlight uploads at the wrong app.
+app_identifier(ENV['PRODUCT_BUNDLE_IDENTIFIER'])
 
 # apple_id("my@email")

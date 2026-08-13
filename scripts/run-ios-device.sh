@@ -9,7 +9,9 @@ cd "$(dirname "$0")/.."
 
 SCHEME="ECashWalletMobile App"
 CONFIG="${1:-Debug}"
-BUNDLE_ID="com.layertwolabs.mobile.ecashwallet"
+# Bundle id comes from Skip.env (the single source of truth) — hardcoding it here meant the
+# 2026-08 rebrand installed the new app and then tried to launch the old identifier.
+BUNDLE_ID="$(sed -n 's/^[[:space:]]*PRODUCT_BUNDLE_IDENTIFIER[[:space:]]*=[[:space:]]*//p' Skip.env | tr -d '[:space:]')"
 # Reuse Skip's DerivedData so this shares compiled artifacts with `skip app launch` (faster).
 DERIVED=".build/Darwin/DerivedData"
 

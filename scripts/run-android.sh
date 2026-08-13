@@ -18,7 +18,10 @@ cd "$(dirname "$0")/.."
 
 ADB="$HOME/Library/Android/sdk/platform-tools/adb"
 command -v adb >/dev/null 2>&1 && ADB="$(command -v adb)"
-PKG="com.layertwolabs.mobile.ecashwallet"
+# Package comes from Skip.env: ANDROID_APPLICATION_ID when set (Android-only override), else the
+# shared PRODUCT_BUNDLE_IDENTIFIER. Hardcoding it broke installs after the 2026-08 rebrand.
+PKG="$(sed -n 's/^[[:space:]]*ANDROID_APPLICATION_ID[[:space:]]*=[[:space:]]*//p' Skip.env | tr -d '[:space:]')"
+[ -n "$PKG" ] || PKG="$(sed -n 's/^[[:space:]]*PRODUCT_BUNDLE_IDENTIFIER[[:space:]]*=[[:space:]]*//p' Skip.env | tr -d '[:space:]')"
 CONFIG="${1:---release}"
 [ "$CONFIG" = "--release" ] || [ "$CONFIG" = "--debug" ] || { echo "usage: $0 [--release|--debug]" >&2; exit 1; }
 ARCH="${ARCH:-aarch64}"   # Saga is arm64-v8a; one ABI instead of three

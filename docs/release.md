@@ -3,7 +3,7 @@
 > How the app is built, signed, and shipped to the **App Store / TestFlight** (iOS) and **Google
 > Play** (Android), via fastlane. Secrets are gitignored and supplied locally (templates committed).
 >
-> **Status (2026-06-24):** Version **0.1.1** (build 2). iOS is **connected** (App Store Connect API
+> **Status (2026-08-13):** Version **0.2.0** (build 1), first release under the **eCash orgs**. iOS is **connected** (App Store Connect API
 > key in place) → push via `fastlane beta`; 0.1.1(2) uploaded to TestFlight. Android: the **upload
 > keystore is wired** and produces a Play-grade **signed AAB** (§2b, verified `CN=Layer Two Labs`);
 > remaining is Play Console setup (create app, App content section, manual first upload). Still also
@@ -11,7 +11,9 @@
 > service-account JSON (not yet created).
 
 All fastlane commands run from the platform subdir: `cd Darwin` (iOS) / `cd Android` (Android).
-Bundle id / package = `com.layertwolabs.mobile.ecashwallet` (from `Skip.env`, shared by both).
+Bundle id / package = `com.ecash.mobile.wallet` (from `Skip.env`, shared by both) as of the 2026-08
+org migration. The Layer Two Labs identifier `com.layertwolabs.mobile.ecashwallet` still exists as a
+separate, published app on both stores — the new identifiers are a NEW listing, not an update.
 
 **Version** is centralized in `Skip.env` — `MARKETING_VERSION` (semantic, currently `0.1.1`) +
 `CURRENT_PROJECT_VERSION` (build number, currently `2`), shared by iOS and Android. **Bump
@@ -42,7 +44,7 @@ the relevant lane — it creates one via the API key.
 ### Verify auth without building
 ```
 cd Darwin && fastlane run latest_testflight_build_number \
-  api_key_path:"fastlane/apikey.json" app_identifier:"com.layertwolabs.mobile.ecashwallet"
+  api_key_path:"fastlane/apikey.json" app_identifier:"com.ecash.mobile.wallet"
 ```
 "Could not find a build upload … Result: 1" = auth OK + app found, no builds yet (the healthy
 fresh-app state).
@@ -105,7 +107,7 @@ Verify it's signed with the upload key (not the debug key) before uploading:
 increase (0.1.1 used versionCode 2).
 
 #### Play Console — still TODO ⬜
-1. **Create the app** in Play Console, package `com.layertwolabs.mobile.ecashwallet`; choose
+1. **Create the app** in Play Console, package `com.ecash.mobile.wallet`; choose
    **"Let Google manage and protect your app signing key"** (Play App Signing — matches the upload-key
    model above).
 2. **App content section** (required before ANY testing track goes live): privacy-policy URL, Data

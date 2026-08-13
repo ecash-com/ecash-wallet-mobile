@@ -51,17 +51,20 @@ live users); on Android there's no Play listing to strand, just ad-hoc APK teste
 
 ## 2. Apple (App Store Connect / TestFlight)
 
-- [ ] Enroll the **eCash org** in the Apple Developer Program (needs D-U-N-S; §1.3). Get the new **Team ID**.
-- [ ] Create a new **App Store Connect app record** with the new bundle id (§1.2).
-- [ ] Register the new **bundle identifier** under the new team (Certificates, IDs & Profiles).
+- [x] Enroll the **eCash org** in the Apple Developer Program. Team ID **`7BQ6DL5YV9`** (Blockchain Emulation Services Ltd).
+- [x] App Store Connect app record created for **`com.ecash.mobile.wallet`** (2026-08-13).
+- [x] Bundle identifier registered (Push Notifications enabled; Broadcast Capability deliberately NOT — that's APNs channel broadcast, unrelated to our FCM topics).
+- [x] App Store Connect API key **`LM5CG2YGN9`** generated + wired into `Darwin/fastlane/apikey.json` (auth verified). Original text:
 - [ ] Generate a new **App Store Connect API key** (Users & Access → Integrations, role App Manager) →
       replace `Darwin/fastlane/apikey.json` (`key_id`, `issuer_id`, inline `.p8`).
+- [x] Apple Distribution certificate created + installed (paired in the login keychain; `security find-identity` shows it for 7BQ6DL5YV9). Profile is created by fastlane on first `beta`. Original text:
 - [ ] New **distribution certificate** + provisioning profile (fastlane can create via the API key;
       uncomment `get_certificates(...)` in the Fastfile lane on first run if it reports one missing).
+- [x] DONE — `DEVELOPMENT_TEAM` updated in the xcconfig AND both hardcoded pbxproj entries. Original text:
 - [ ] Update `DEVELOPMENT_TEAM` `6AXPP357T2` → new team id in gitignored `Darwin/DeveloperSettings.xcconfig`
       (and confirm `Darwin/fastlane/AppStore.xcconfig` pulls it). Also the two hardcoded
       `DEVELOPMENT_TEAM = 6AXPP357T2` lines in `Darwin/ECashWalletMobile.xcodeproj/project.pbxproj`.
-- [ ] Update `Darwin/fastlane/Appfile` (`app_identifier`, `apple_id`/`team_id` if set).
+- [x] `Darwin/fastlane/Appfile` fixed. ⚠️ It read `ANDROID_APPLICATION_ID || PRODUCT_BUNDLE_IDENTIFIER`, which is inverted for the Darwin lane: while Android was rebranded ahead of iOS it silently resolved the iOS app_identifier to the ANDROID package, aiming TestFlight at the wrong app. Now uses `PRODUCT_BUNDLE_IDENTIFIER` only.
 - [ ] Re-do App Store listing metadata under the new org (`Darwin/fastlane/metadata/…` is reusable).
 - [ ] First `fastlane beta` upload → new TestFlight. Re-invite testers (they install a NEW app).
 
