@@ -103,8 +103,12 @@ Verify it's signed with the upload key (not the debug key) before uploading:
   .build/Android/app/outputs/bundle/release/app-release.aab | grep -E "CN=|jar verified"
 # expect: "jar verified." + signer "CN=Layer Two Labs"  (NOT "CN=Android Debug")
 ```
-**Bump `CURRENT_PROJECT_VERSION` in `Skip.env` before each Play upload** — versionCode must strictly
-increase (0.1.1 used versionCode 2).
+**Bump `CURRENT_PROJECT_VERSION` in `Skip.env` before each Play upload — and NEVER reset it on a
+version bump.** One number feeds both stores, and they disagree about the rules: Apple scopes build
+numbers *within* a version string (0.2.0(1) and 0.2.1(1) are both valid), while Play requires
+`versionCode` to strictly increase for the life of the app and ignores `versionName` entirely. So a
+reset-to-1 makes the next Android build unuploadable — hit for real on 2026-08-13 when 0.2.1(1)
+collided with the already-uploaded 0.2.0(1). Always increment; Apple tolerates the gaps.
 
 #### Play Console — still TODO ⬜
 1. **Create the app** in Play Console, package `com.ecash.mobile.wallet`; choose

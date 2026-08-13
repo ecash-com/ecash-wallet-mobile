@@ -30,3 +30,14 @@ cp "$SRC" "$DEST"
 echo "✓ Shareable APK:"
 ls -lh "$DEST"
 echo "  (debug-key signed unless Android/keystore.properties exists — fine for sideloading)"
+
+# Stage the AAB under a versioned name too. `skip export` leaves it at a fixed path with a generic
+# name, so a stale bundle from an earlier version is indistinguishable from a fresh one at a glance —
+# which is exactly how a 0.2.0 AAB nearly got uploaded as 0.2.1. Play wants THIS file, not the APK.
+AAB_SRC=".build/Android/app/outputs/bundle/release/app-release.aab"
+if [ -f "$AAB_SRC" ]; then
+  AAB_DEST=".build/dist/eCashWallet-${VERSION}.aab"
+  cp "$AAB_SRC" "$AAB_DEST"
+  echo "✓ Play bundle (upload THIS to Google Play):"
+  ls -lh "$AAB_DEST"
+fi
