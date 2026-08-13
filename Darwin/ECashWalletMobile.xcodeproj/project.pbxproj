@@ -226,8 +226,8 @@
 			isa = XCBuildConfiguration;
 			baseConfigurationReference = 496EB72F2A6AE4DE00C1253B /* ECashWalletMobile.xcconfig */;
 			buildSettings = {
-				CODE_SIGN_IDENTITY = "Apple Development";
-				CODE_SIGN_STYLE = Automatic;
+				CODE_SIGN_IDENTITY = "Apple Distribution";
+				CODE_SIGN_STYLE = Manual;
 				DEVELOPMENT_TEAM = 7BQ6DL5YV9;
 				ENABLE_PREVIEWS = YES;
 				INFOPLIST_KEY_CFBundleDisplayName = eCash.com;

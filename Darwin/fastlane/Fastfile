@@ -7,11 +7,29 @@ default_platform(:ios)
 lane :assemble do |options|
   # only build the iOS side of the app
   ENV["SKIP_ZERO"] = "true"
+  # Release signs MANUALLY with the App Store profile that `get_provisioning_profile` just created
+  # and installed (its name lands in SIGH_PROFILE_NAME). Automatic signing can't be used headlessly
+  # here: it selects the identity itself — refusing a pinned "Apple Distribution" — and can only
+  # create the development profile it then wants if an Xcode account is signed in on the machine.
+  # Passing the profile explicitly keeps the archive reproducible on any machine, CI included.
+  bundle_id = ENV['PRODUCT_BUNDLE_IDENTIFIER']
+  profile = options[:profile_name] ||
+            ENV["sigh_#{bundle_id}_appstore_profile-name"] ||
+            "#{bundle_id} AppStore"
+  signing_args = profile ? " PROVISIONING_PROFILE_SPECIFIER=\"#{profile}\"" : ""
   build_app(
     scheme: "ECashWalletMobile App",
     sdk: "iphoneos",
     xcconfig: "fastlane/AppStore.xcconfig",
-    xcargs: "-skipPackagePluginValidation -skipMacroValidation",
+    # -allowProvisioningUpdates lets xcodebuild fetch/refresh profiles rather than failing outright.
+    # The project signs with CODE_SIGN_STYLE = Automatic, so an archive wants an "iOS App
+    # Development" profile when Release is misconfigured to sign with an Apple Development
+    # identity (fixed in project.pbxproj: Release now uses Apple Distribution). Under
+    # the old team that profile happened to be cached locally from earlier Xcode use; a new team +
+    # new bundle id has nothing cached, so the build failed with "No profiles ... were found.
+    # Automatic signing is disabled and unable to generate a profile." Passing the key here (gym
+    # doesn't inherit it from the lane) is what makes automatic signing actually work headlessly.
+    xcargs: "-skipPackagePluginValidation -skipMacroValidation -allowProvisioningUpdates" + signing_args,
     derived_data_path: "../.build/Darwin/DerivedData",
     output_directory: "../.build/fastlane/Darwin",
     skip_archive: ENV["FASTLANE_SKIP_ARCHIVE"] == "YES",
