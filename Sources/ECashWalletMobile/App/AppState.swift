@@ -219,6 +219,15 @@ final class AppState {
         for e in config.resolvedExplorers() {
             RemoteServiceOverrides.setExplorerTemplate(e.txTemplate, for: e.network)
         }
+        // Fork heights → WalletManager, which is where the split classification reads them (the engine
+        // computes splitSummary inside WalletService). Deliberately NOT mirrored into the app-side
+        // overlay: nothing here consumes it, and two copies of a consensus-ish boundary is two things
+        // that can disagree. The height moves per dry-run chain (drynet2/3 957_600, drynet4 961_632)
+        // while `.ecash` is matched by `family`, so a rollover shifts the boundary with no app update
+        // — pinning it in the binary would mis-flag every coin confirmed between the two heights.
+        for fh in config.resolvedForkHeights() {
+            manager.setRemoteForkHeight(network: fh.network, height: fh.height)
+        }
         // A new/changed CoinNews endpoint means the cached feed for that network is stale — drop it so
         // it rebuilds against the new indexer, and re-point the visible feed if it's the current one.
         if coinNewsChanged {

@@ -387,4 +387,47 @@ import WalletService
         let config = await service.load()
         #expect(config == nil)
     }
+
+    // MARK: - Fork height must track the SAME entry as the backend
+
+    /// The live config lists drynet2/3/4, all `family: "ecash"`. Backend selection is first-wins among
+    /// entries that HAVE a usable backend, so decommissioned drynet2 is skipped and drynet3 wins. The
+    /// fork height must come from that same entry — a naive "apply them all" loop lets the last entry
+    /// win (drynet4's 961632) while the app talks to drynet3 (957600), and every coin confirmed
+    /// between those heights gets wrongly flagged as needing a split.
+    @Test func forkHeightComesFromTheSameEntryAsTheBackend() throws {
+        let json = """
+        {"schema_version":1,"networks":[
+          {"id":"drynet2","family":"ecash","fork_height":957600,"backends":[]},
+          {"id":"drynet3","family":"ecash","fork_height":957600,
+           "backends":[{"kind":"esplora","url":"https://esplora.drynet3.example"}]},
+          {"id":"drynet4","family":"ecash","fork_height":961632,
+           "backends":[{"kind":"esplora","url":"https://esplora.drynet4.example"}]}
+        ]}
+        """
+        let config = try #require(RemoteEndpointConfig.parse(Data(json.utf8)))
+
+        let backend = try #require(config.resolvedPrimaryBackends().first { $0.network == WalletNetwork.ecash })
+        #expect(backend.url == "https://esplora.drynet3.example")
+
+        let heights = config.resolvedForkHeights().filter { $0.network == WalletNetwork.ecash }
+        #expect(heights.count == 1)                 // exactly one winner, not three
+        #expect(heights.first?.height == 957_600)   // drynet3's — matching the backend we adopted
+    }
+
+    /// When drynet3 is retired (no usable backend), drynet4 becomes the live entry and its height
+    /// must follow automatically — that's the rollover this whole mechanism exists for.
+    @Test func forkHeightFollowsTheRolloverWhenTheOldChainRetires() throws {
+        let json = """
+        {"schema_version":1,"networks":[
+          {"id":"drynet3","family":"ecash","fork_height":957600,"backends":[]},
+          {"id":"drynet4","family":"ecash","fork_height":961632,
+           "backends":[{"kind":"esplora","url":"https://esplora.drynet4.example"}]}
+        ]}
+        """
+        let config = try #require(RemoteEndpointConfig.parse(Data(json.utf8)))
+        #expect(config.resolvedPrimaryBackends().first { $0.network == WalletNetwork.ecash }?.url
+                == "https://esplora.drynet4.example")
+        #expect(config.resolvedForkHeights().first { $0.network == WalletNetwork.ecash }?.height == 961_632)
+    }
 }

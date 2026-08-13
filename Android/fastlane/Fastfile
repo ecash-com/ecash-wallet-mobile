@@ -40,12 +40,24 @@ lane :assemble do
   # sh "your_script.sh"
 end
 
-desc "Deploy Skip Android App to Google Play"
-lane :release do
+desc "Deploy Skip Android App to Google Play. Defaults to the INTERNAL testing track; " \
+     "pass track:beta / track:production to go wider. e.g. `fastlane release track:beta`"
+lane :release do |options|
 
   assemble
 
+  # Track defaults to "internal", NOT production. upload_to_play_store's own default is the
+  # production track, so an unqualified `fastlane release` would push a beta build straight at
+  # every user. Internal testing is the safe default: <=100 testers, no review, live in minutes.
+  # Promote upward deliberately (internal -> beta -> production), never by forgetting an argument.
+  track = options[:track] || "internal"
+
   upload_to_play_store(
-    aab: '../.build/Android/app/outputs/bundle/release/app-release.aab'
+    aab: '../.build/Android/app/outputs/bundle/release/app-release.aab',
+    track: track,
+    # The store listing is managed in the Play Console for now; don't let an upload clobber it.
+    skip_upload_metadata: true,
+    skip_upload_images: true,
+    skip_upload_screenshots: true
   )
 end

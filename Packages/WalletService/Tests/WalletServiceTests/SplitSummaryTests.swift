@@ -58,4 +58,32 @@ final class SplitSummaryTests: XCTestCase {
         XCTAssertNil(NetworkRegistry.forkHeight(for: WalletNetwork.signet))
         XCTAssertNil(NetworkRegistry.forkHeight(for: WalletNetwork.thunder))
     }
+
+    // MARK: - Remote fork height (drynet rollover)
+
+    /// The fork height is NOT a constant: drynet2/3 forked at 957,600 and drynet4 at 961,632, and the
+    /// remote config repoints `.ecash` at whichever chain is live. Classification must follow the
+    /// applied height, or a rollover silently mis-flags every coin confirmed between the two.
+    func testRemoteForkHeightOverridesTheBundledOne() {
+        let bundled = NetworkRegistry.forkHeight(for: WalletNetwork.ecash) ?? Int64(0)
+        XCTAssertEqual(bundled, Int64(957_600))
+
+        WalletManager.setRemoteForkHeightForTesting(Int64(961_632), network: WalletNetwork.ecash)
+        defer { WalletManager.clearRemoteForkHeightForTesting(network: WalletNetwork.ecash) }
+        XCTAssertEqual(WalletManager.effectiveForkHeight(for: WalletNetwork.ecash), Int64(961_632))
+
+        // A coin between the two heights: pre-fork under drynet4's boundary, post-fork under the old.
+        let between = [SplitUtxo(height: Int64(960_000), sats: Int64(50_000))]
+        XCTAssertEqual(SplitSummary.classify(between, forkHeight: Int64(961_632)).needsSplitCount, Int32(1))
+        XCTAssertEqual(SplitSummary.classify(between, forkHeight: Int64(957_600)).needsSplitCount, Int32(0))
+    }
+
+    /// A malformed payload must not be able to move the boundary to zero — that would mark every coin
+    /// post-fork and silently switch splitting off.
+    func testNonPositiveRemoteForkHeightIsIgnored() {
+        WalletManager.setRemoteForkHeightForTesting(Int64(961_632), network: WalletNetwork.ecash)
+        defer { WalletManager.clearRemoteForkHeightForTesting(network: WalletNetwork.ecash) }
+        WalletManager.setRemoteForkHeightForTesting(Int64(-1), network: WalletNetwork.ecash)
+        XCTAssertEqual(WalletManager.effectiveForkHeight(for: WalletNetwork.ecash), Int64(961_632))
+    }
 }

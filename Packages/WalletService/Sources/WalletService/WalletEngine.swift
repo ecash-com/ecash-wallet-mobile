@@ -475,7 +475,10 @@ public final class WalletEngine: WalletEngineProtocol {
     /// each spendable UTXO by its confirmation height against `NetworkRegistry.forkHeight`. Excludes
     /// untrusted 0-conf (not drainable), matching what `splitToSelf` would actually move.
     public func splitSummary() throws -> SplitSummary {
-        let fork = NetworkRegistry.forkHeight(for: network)
+        // Remote-config value when the app has applied one, else the bundled default. The height
+        // differs per dry-run chain (drynet2/3 957_600, drynet4 961_632), so pinning it here would
+        // misclassify after a config-driven rollover.
+        let fork = WalletManager.effectiveForkHeight(for: network)
         var untrustedKeys = Set<String>()
         for op in untrustedUnconfirmedOutpoints() { untrustedKeys.insert("\(op.txid):\(op.vout)") }
         var spendable: [SplitUtxo] = []

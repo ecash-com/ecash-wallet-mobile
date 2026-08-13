@@ -37,6 +37,13 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         let backends: [RemoteBackend]
         let explorerTxTemplate: String?
         let services: RemoteServices?
+        /// Block height at which this chain forked from Bitcoin — coins confirmed BELOW it exist on
+        /// both chains and need splitting (`SplitSummary.classify`). Null for chains that never
+        /// forked (Bitcoin, Signet). Carried remotely because it CHANGES per dry-run: drynet2/3 use
+        /// 957_600, drynet4 uses 961_632. Without this, a config-driven rollover to a new drynet
+        /// would silently classify against the previous fork height and mis-flag every coin
+        /// confirmed between the two.
+        let forkHeight: Int64?
 
         /// The `WalletNetwork` this entry maps to, or nil if unknown to this app.
         /// - `bitcoin` / `signet` (and a future literal `ecash`) match a `WalletNetwork` rawValue by
@@ -102,6 +109,11 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     struct ResolvedExplorer: Equatable, Sendable {
         let network: WalletNetwork
         let txTemplate: String
+    }
+
+    struct ResolvedForkHeight: Equatable, Sendable {
+        let network: WalletNetwork
+        let height: Int64
     }
 
     // MARK: - Parsing
@@ -182,6 +194,34 @@ struct RemoteEndpointConfig: Equatable, Sendable {
 
     /// Explorer tx-URL template per **known** network that supplies a non-empty, `{txid}`-bearing
     /// `explorer_tx_template`. A template without the `{txid}` placeholder is rejected.
+    /// Fork height per network, taken from **the same entry that won `resolvedPrimaryBackends`**.
+    ///
+    /// This has to match, and matching is not automatic: several entries map to `.ecash` (drynet2,
+    /// drynet3, drynet4 all report `family: "ecash"`). Backend selection is FIRST-wins among entries
+    /// that actually have a usable backend, so a decommissioned drynet2 is skipped and drynet3 wins.
+    /// A naive loop that just applied every fork height would let the LAST entry win — drynet4's
+    /// 961_632 — while the app was still talking to drynet3 (957_600), and every coin confirmed
+    /// between those heights would be wrongly flagged as needing a split. Height and backend must
+    /// come from one entry or the classification describes a chain we aren't on.
+    func resolvedForkHeights() -> [ResolvedForkHeight] {
+        var out: [ResolvedForkHeight] = []
+        var seen: Set<String> = []
+        for n in networks {
+            guard let network = n.walletNetwork, !seen.contains(network.rawValue) else { continue }
+            guard Self.hasUsableBackend(n) else { continue }   // same skip as backend selection
+            seen.insert(network.rawValue)
+            guard let height = n.forkHeight, height > 0 else { continue }
+            out.append(ResolvedForkHeight(network: network, height: height))
+        }
+        return out
+    }
+
+    /// Whether an entry offers a backend we could actually use — the gate that decides which of the
+    /// several `.ecash` entries is the live one.
+    private static func hasUsableBackend(_ n: RemoteNetwork) -> Bool {
+        n.backends.contains { isValidKind($0.kind) && !$0.url.trimmingCharacters(in: .whitespaces).isEmpty }
+    }
+
     func resolvedExplorers() -> [ResolvedExplorer] {
         var result: [ResolvedExplorer] = []
         var seen: Set<String> = []
@@ -219,6 +259,7 @@ extension RemoteEndpointConfig.RemoteNetwork: Decodable {
     enum CodingKeys: String, CodingKey {
         case id, family, backends, services
         case explorerTxTemplate = "explorer_tx_template"
+        case forkHeight = "fork_height"
     }
 
     init(from decoder: Decoder) throws {
@@ -229,6 +270,7 @@ extension RemoteEndpointConfig.RemoteNetwork: Decodable {
         self.backends = (try? c.decode([RemoteEndpointConfig.RemoteBackend].self, forKey: .backends)) ?? []
         self.explorerTxTemplate = try? c.decodeIfPresent(String.self, forKey: .explorerTxTemplate)
         self.services = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteServices.self, forKey: .services)
+        self.forkHeight = (try? c.decodeIfPresent(Int64.self, forKey: .forkHeight)) ?? nil
     }
 }
 

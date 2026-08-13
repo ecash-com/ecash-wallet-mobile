@@ -57,6 +57,7 @@ enum RemoteServiceOverrides {
         return NetworkRegistry.explorerURL(for: txid, on: network)
     }
 
+
     // MARK: - Write (applied from the fetched config)
 
     /// Set/replace the remote CoinNews URL for a network. Returns true if the stored value changed
@@ -81,6 +82,7 @@ enum RemoteServiceOverrides {
         guard let clean = trimmedOrNil(template), clean.contains("{txid}") else { return }
         defaults.set(clean, forKey: explorerKey(network))
     }
+
 
     /// Clear all stored service overlays (full reset / tests).
     static func clearAll() {

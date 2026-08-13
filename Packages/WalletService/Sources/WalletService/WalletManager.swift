@@ -295,6 +295,48 @@ public final class WalletManager: @unchecked Sendable {
         engines.removeAll()   // next sync rebuilds against the new endpoint
     }
 
+    /// Apply the **remote** fork height for a network (from the fetched config). Same precedence idea
+    /// as `setRemoteBackendDefault`: remote wins over the value compiled into `NetworkRegistry`.
+    ///
+    /// This must be remotely settable because the height moves as the dry-run chain rolls forward —
+    /// drynet2/3 forked at 957_600, drynet4 at 961_632 — while our `.ecash` case stays put and the
+    /// config repoints the backend by `family`. Pinning it in the binary would mean a rollover
+    /// silently classified coins against the PREVIOUS chain's fork, flagging everything confirmed
+    /// between the two heights as needing a split when it doesn't. Non-positive values are ignored so
+    /// a malformed payload can't move the boundary to zero and mark everything safe.
+    public func setRemoteForkHeight(network: WalletNetwork, height: Int64) {
+        guard height > 0 else { return }
+        let defaults = UserDefaults.standard
+        guard defaults.integer(forKey: remoteForkHeightKey(network)) != Int(height) else { return }
+        defaults.set(Int(height), forKey: remoteForkHeightKey(network))
+    }
+
+    /// Test seam: store a remote fork height without a WalletManager instance. Applies the SAME
+    /// non-positive guard as `setRemoteForkHeight`, so a test can exercise that rule; use
+    /// `clearRemoteForkHeightForTesting` to reset.
+    static func setRemoteForkHeightForTesting(_ height: Int64, network: WalletNetwork) {
+        guard height > 0 else { return }
+        UserDefaults.standard.set(Int(height), forKey: remoteForkHeightKey(network))
+    }
+
+    static func clearRemoteForkHeightForTesting(network: WalletNetwork) {
+        UserDefaults.standard.removeObject(forKey: remoteForkHeightKey(network))
+    }
+
+    /// Remote fork height if one was applied, else the bundled `NetworkRegistry` value.
+    static func effectiveForkHeight(for network: WalletNetwork) -> Int64? {
+        let stored = UserDefaults.standard.integer(forKey: remoteForkHeightKey(network))
+        if stored > 0 { return Int64(stored) }
+        return NetworkRegistry.forkHeight(for: network)
+    }
+
+    private static func remoteForkHeightKey(_ n: WalletNetwork) -> String {
+        "remote.forkheight.\(n.rawValue)"
+    }
+    private func remoteForkHeightKey(_ n: WalletNetwork) -> String {
+        WalletManager.remoteForkHeightKey(n)
+    }
+
     /// Clear all remote defaults (revert every network to user-override-or-bundled). Not needed in
     /// normal operation — exposed for a full reset / tests.
     public func clearRemoteBackendDefaults() {
