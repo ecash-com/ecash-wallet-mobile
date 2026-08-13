@@ -21,17 +21,16 @@ struct MainTabView: View {
     // masqueraded as "non-deterministic" crashes while debugging). Always boot to Wallet.
     @State var selection = MainTab.wallet   // not `private` — Fuse bridges @State (skip-fuse rule)
 
-    /// The News tab is shown only when CoinNews is available on the selected wallet's network
-    /// (off on Bitcoin mainnet — see `CoinNewsAvailability`).
-    private var showNews: Bool { app.coinNewsAvailable }
-
-    /// Coerce a stale `.news` selection to `.wallet` while News is hidden (e.g. after switching to a
-    /// Bitcoin wallet), so the TabView never points at a missing tag. Switching back to a CoinNews
-    /// network restores `.news` as selected.
+    /// Selection is plain state now. There used to be a coercion here forcing `.news` back to
+    /// `.wallet` whenever CoinNews was unavailable, because the News tab was conditionally REMOVED
+    /// and a TabView must never point at a missing tag.
+    ///
+    /// The News tab is permanent as of the News hub (it shows eCash.com news on networks without
+    /// CoinNews), so that coercion had nothing left to protect — and it actively broke the tab on
+    /// Bitcoin: tapping News set the selection, the getter immediately rewrote it to `.wallet`, and
+    /// the tap appeared to do nothing. Removing it is the fix; nothing else needs the indirection.
     private var selectionBinding: Binding<MainTab> {
-        Binding(
-            get: { (!showNews && selection == .news) ? .wallet : selection },
-            set: { selection = $0 })
+        Binding(get: { selection }, set: { selection = $0 })
     }
 
     /// Tab-bar icon. iOS tab bars force the `.fill` symbol variant on EVERY item, so we override it
@@ -71,14 +70,17 @@ struct MainTabView: View {
                 }
                 .tag(MainTab.activity)
 
-            if showNews {
-                NavigationStack { NewsScreen() }
-                    .tabItem {
-                        Label { Text("News", bundle: .module, comment: "News tab") }
-                        icon: { tabBarIcon(Icon.news, Icon.newsFill, selected: selection == .news) }
-                    }
-                    .tag(MainTab.news)
-            }
+            // News is now ALWAYS present. It used to be hidden whenever CoinNews was unavailable
+            // (Bitcoin mainnet), but the tab covers two things now: the per-network on-chain feed AND
+            // the eCash.com site, and the latter is worth reading on any network. `NewsHubScreen`
+            // decides what the tab actually shows — the chooser where both exist, the web news alone
+            // where CoinNews doesn't.
+            NavigationStack { NewsHubScreen() }
+                .tabItem {
+                    Label { Text("News", bundle: .module, comment: "News tab") }
+                    icon: { tabBarIcon(Icon.news, Icon.newsFill, selected: selection == .news) }
+                }
+                .tag(MainTab.news)
 
             NavigationStack { SettingsScreen() }
                 .tabItem {

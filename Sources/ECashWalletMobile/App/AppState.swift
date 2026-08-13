@@ -228,6 +228,12 @@ final class AppState {
         for fh in config.resolvedForkHeights() {
             manager.setRemoteForkHeight(network: fh.network, height: fh.height)
         }
+        // Display names, same pairing rule. `.ecash` is one case pointing at whichever drynet is live,
+        // so the label has to follow the rollover too — otherwise the app syncs drynet4 while the
+        // picker, chip, and Receive warning all still say "Drynet3".
+        for dn in config.resolvedDisplayNames() {
+            manager.setRemoteDisplayName(network: dn.network, name: dn.name)
+        }
         // A new/changed CoinNews endpoint means the cached feed for that network is stale — drop it so
         // it rebuilds against the new indexer, and re-point the visible feed if it's the current one.
         if coinNewsChanged {

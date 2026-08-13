@@ -44,6 +44,10 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         /// would silently classify against the previous fork height and mis-flag every coin
         /// confirmed between the two.
         let forkHeight: Int64?
+        /// Human-readable name for this chain ("Drynet 3", "Drynet 4"). Carried remotely for the same
+        /// reason as `forkHeight`: `.ecash` follows whichever drynet the config points at, so a name
+        /// baked into the binary goes stale at the next rollover.
+        let displayName: String?
 
         /// The `WalletNetwork` this entry maps to, or nil if unknown to this app.
         /// - `bitcoin` / `signet` (and a future literal `ecash`) match a `WalletNetwork` rawValue by
@@ -114,6 +118,11 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     struct ResolvedForkHeight: Equatable, Sendable {
         let network: WalletNetwork
         let height: Int64
+    }
+
+    struct ResolvedDisplayName: Equatable, Sendable {
+        let network: WalletNetwork
+        let name: String
     }
 
     // MARK: - Parsing
@@ -216,6 +225,22 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         return out
     }
 
+    /// Display name per network, from the SAME entry that won backend selection — same pairing rule
+    /// as `resolvedForkHeights`, and for the same reason: labelling the UI with one chain's name
+    /// while syncing another is exactly the confusion this is meant to remove.
+    func resolvedDisplayNames() -> [ResolvedDisplayName] {
+        var out: [ResolvedDisplayName] = []
+        var seen: Set<String> = []
+        for n in networks {
+            guard let network = n.walletNetwork, !seen.contains(network.rawValue) else { continue }
+            guard Self.hasUsableBackend(n) else { continue }
+            seen.insert(network.rawValue)
+            guard let name = n.displayName?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { continue }
+            out.append(ResolvedDisplayName(network: network, name: name))
+        }
+        return out
+    }
+
     /// Whether an entry offers a backend we could actually use — the gate that decides which of the
     /// several `.ecash` entries is the live one.
     private static func hasUsableBackend(_ n: RemoteNetwork) -> Bool {
@@ -260,6 +285,7 @@ extension RemoteEndpointConfig.RemoteNetwork: Decodable {
         case id, family, backends, services
         case explorerTxTemplate = "explorer_tx_template"
         case forkHeight = "fork_height"
+        case displayName = "display_name"
     }
 
     init(from decoder: Decoder) throws {
@@ -271,6 +297,7 @@ extension RemoteEndpointConfig.RemoteNetwork: Decodable {
         self.explorerTxTemplate = try? c.decodeIfPresent(String.self, forKey: .explorerTxTemplate)
         self.services = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteServices.self, forKey: .services)
         self.forkHeight = (try? c.decodeIfPresent(Int64.self, forKey: .forkHeight)) ?? nil
+        self.displayName = (try? c.decodeIfPresent(String.self, forKey: .displayName)) ?? nil
     }
 }
 

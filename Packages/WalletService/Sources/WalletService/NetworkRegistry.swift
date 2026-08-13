@@ -43,7 +43,31 @@ public struct NetworkParams: Equatable, Sendable {
 /// Resolves a `WalletNetwork` to its parameters. Adding eCash later is a
 /// new case here + a `WalletNetwork` case — not a refactor anywhere else.
 public enum NetworkRegistry {
+    /// Network params, with the **display name overlaid from the remote config** when one has been
+    /// applied (`WalletManager.setRemoteDisplayName`).
+    ///
+    /// Why the overlay lives here rather than at the ~12 call sites: `.ecash` is a single case that
+    /// points at whichever dry-run chain the config says (drynet2 → drynet3 → drynet4, matched by
+    /// `family`). The backend and fork height already follow that rollover, but the NAME was baked
+    /// into the binary — so after a rollover the app would sync drynet4 while every label in the UI
+    /// still read "Drynet3". Substituting it in one place means the picker, the network chip, Receive
+    /// warnings, Send review and the tx detail all follow automatically.
     public static func params(for network: WalletNetwork) -> NetworkParams {
+        let base = bundledParams(for: network)
+        guard let remote = WalletManager.remoteDisplayName(for: network), remote != base.displayName else {
+            return base
+        }
+        return NetworkParams(coinType: base.coinType,
+                             addressHRP: base.addressHRP,
+                             unitLabel: base.unitLabel,
+                             defaultBackend: base.defaultBackend,
+                             defaultBackendKind: base.defaultBackendKind,
+                             explorerTxTemplate: base.explorerTxTemplate,
+                             displayName: remote)
+    }
+
+    /// The values compiled into the app — the offline fallback, and everything except the name.
+    static func bundledParams(for network: WalletNetwork) -> NetworkParams {
         switch network {
         case .bitcoin:
             return NetworkParams(

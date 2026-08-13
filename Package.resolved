@@ -1,5 +1,5 @@
 {
-  "originHash" : "3f34a9af985568fbeccd033d8fb1e988b1fe26f7f5439cba6bab7bd1b344caa7",
+  "originHash" : "6dee386164fd7048794f303fe1f9054cc9fd16b28c4c3aae8980c5ebc7bcf47f",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -242,6 +242,15 @@
       "state" : {
         "revision" : "c89af47fd645e04db863e938ade39f91e1bb62b8",
         "version" : "1.7.0"
+      }
+    },
+    {
+      "identity" : "skip-web",
+      "kind" : "remoteSourceControl",
+      "location" : "https://source.skip.tools/skip-web.git",
+      "state" : {
+        "revision" : "f03bcc21db5fcdb079b0c94a54fd424dc8968bdb",
+        "version" : "0.11.3"
       }
     },
     {

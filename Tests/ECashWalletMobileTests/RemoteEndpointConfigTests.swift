@@ -430,4 +430,36 @@ import WalletService
                 == "https://esplora.drynet4.example")
         #expect(config.resolvedForkHeights().first { $0.network == WalletNetwork.ecash }?.height == 961_632)
     }
+
+    /// The display name must follow the same entry as the backend and fork height. Labelling the UI
+    /// "Drynet 3" while syncing drynet4 is precisely the confusion this mechanism removes.
+    @Test func displayNameComesFromTheLiveEntry() throws {
+        let json = """
+        {"schema_version":1,"networks":[
+          {"id":"drynet2","family":"ecash","display_name":"Drynet 2","fork_height":957600,"backends":[]},
+          {"id":"drynet3","family":"ecash","display_name":"Drynet 3","fork_height":957600,
+           "backends":[{"kind":"esplora","url":"https://esplora.drynet3.example"}]},
+          {"id":"drynet4","family":"ecash","display_name":"Drynet 4","fork_height":961632,
+           "backends":[{"kind":"esplora","url":"https://esplora.drynet4.example"}]}
+        ]}
+        """
+        let config = try #require(RemoteEndpointConfig.parse(Data(json.utf8)))
+        let names = config.resolvedDisplayNames().filter { $0.network == WalletNetwork.ecash }
+        #expect(names.count == 1)
+        #expect(names.first?.name == "Drynet 3")   // the live entry, not the newest listed
+    }
+
+    /// Once drynet3 has no backend, the name rolls over with everything else.
+    @Test func displayNameFollowsTheRollover() throws {
+        let json = """
+        {"schema_version":1,"networks":[
+          {"id":"drynet3","family":"ecash","display_name":"Drynet 3","fork_height":957600,"backends":[]},
+          {"id":"drynet4","family":"ecash","display_name":"Drynet 4","fork_height":961632,
+           "backends":[{"kind":"esplora","url":"https://esplora.drynet4.example"}]}
+        ]}
+        """
+        let config = try #require(RemoteEndpointConfig.parse(Data(json.utf8)))
+        #expect(config.resolvedDisplayNames().first { $0.network == WalletNetwork.ecash }?.name == "Drynet 4")
+        #expect(config.resolvedForkHeights().first { $0.network == WalletNetwork.ecash }?.height == 961_632)
+    }
 }

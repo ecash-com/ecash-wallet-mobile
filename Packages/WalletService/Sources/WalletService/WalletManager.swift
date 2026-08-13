@@ -323,6 +323,39 @@ public final class WalletManager: @unchecked Sendable {
         UserDefaults.standard.removeObject(forKey: remoteForkHeightKey(network))
     }
 
+    /// Apply the **remote** display name for a network (from the fetched config's `display_name`).
+    ///
+    /// Same rollover reasoning as `setRemoteForkHeight`: `.ecash` follows whichever dry-run chain the
+    /// config points at, so a name pinned in the binary goes stale the moment drynet3 retires and
+    /// drynet4 takes over — the app would sync one chain while labelling it as another. Blank values
+    /// are ignored so a malformed payload can't blank out every network label in the UI.
+    public func setRemoteDisplayName(network: WalletNetwork, name: String) {
+        guard let clean = trimmedOrNil(name) else { return }
+        let defaults = UserDefaults.standard
+        guard defaults.string(forKey: WalletManager.remoteDisplayNameKey(network)) != clean else { return }
+        defaults.set(clean, forKey: WalletManager.remoteDisplayNameKey(network))
+    }
+
+    /// The remote display name for a network, if one has been applied. Read by `NetworkRegistry.params`.
+    static func remoteDisplayName(for network: WalletNetwork) -> String? {
+        let stored = UserDefaults.standard.string(forKey: remoteDisplayNameKey(network))
+        guard let stored, !stored.trimmingCharacters(in: .whitespaces).isEmpty else { return nil }
+        return stored
+    }
+
+    /// Test seam: set/clear the stored display name without a manager instance.
+    static func setRemoteDisplayNameForTesting(_ name: String?, network: WalletNetwork) {
+        if let name, !name.isEmpty {
+            UserDefaults.standard.set(name, forKey: remoteDisplayNameKey(network))
+        } else {
+            UserDefaults.standard.removeObject(forKey: remoteDisplayNameKey(network))
+        }
+    }
+
+    private static func remoteDisplayNameKey(_ n: WalletNetwork) -> String {
+        "remote.displayname.\(n.rawValue)"
+    }
+
     /// Remote fork height if one was applied, else the bundled `NetworkRegistry` value.
     static func effectiveForkHeight(for network: WalletNetwork) -> Int64? {
         let stored = UserDefaults.standard.integer(forKey: remoteForkHeightKey(network))
