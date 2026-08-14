@@ -56,6 +56,21 @@ public struct BIP21: Equatable, Sendable {
                 // Value is the first segment after '='. (Values containing '=' are rare in the
                 // fields we read; amount never has one.)
                 let value = kv.count > 1 ? kv[1] : ""
+                // BIP21 REQUIRES that a client which doesn't implement a `req-`-prefixed variable
+                // treat the ENTIRE URI as invalid. We implement none of them, so any `req-` is a
+                // hard reject — never a silent skip.
+                //
+                // This is money-safety, not pedantry. A `req-` param means the payee's request is
+                // only satisfied by honoring it (payjoin and similar). Ignoring it produces a
+                // perfectly valid plain send that the payee may not credit: the coins leave, the
+                // invoice stays unpaid, and nothing looked wrong at any point. Refusing a URI we
+                // can only partly honor is the safe failure — the user can still pay another way.
+                //
+                // `key` is already lowercased, so `REQ-`/`Req-` are caught too. That's deliberately
+                // stricter than the spec's literal casing: over-rejecting an exotic URI costs a
+                // retry, under-rejecting one costs the payment.
+                if key.hasPrefix("req-") { return nil }
+
                 if key == "amount" {
                     guard let amt = Amount.fromCoin(value) else { return nil }
                     amount = amt
@@ -64,7 +79,8 @@ public struct BIP21: Equatable, Sendable {
                 } else if key == "message" {
                     message = value.removingPercentEncoding ?? value
                 }
-                // Unknown params are ignored (BIP21 allows extensions).
+                // Other unknown params are ignored — BIP21 allows extensions, and anything
+                // without the `req-` prefix is by definition optional to honor.
             }
         }
 

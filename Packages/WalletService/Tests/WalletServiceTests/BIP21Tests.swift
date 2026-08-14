@@ -44,6 +44,30 @@ final class BIP21Tests: XCTestCase {
         XCTAssertEqual(r?.amount?.sats, Int64(50_000_000))
     }
 
+    /// BIP21: a client that doesn't implement a `req-` variable MUST reject the whole URI. We
+    /// implement none, so every `req-` is fatal. Paying such a request as a plain send can leave the
+    /// payee's invoice uncredited while the coins are gone.
+    func testReqParamRejectsWholeURI() {
+        XCTAssertNil(BIP21.parse("bitcoin:tb1qabc?req-somefeature=1"))
+        // Fatal even when the rest of the URI is perfectly valid, and regardless of ordering —
+        // the reject must not depend on `req-` being seen before the params we do understand.
+        XCTAssertNil(BIP21.parse("bitcoin:tb1qabc?amount=0.5&req-pj=https://example.com"))
+        XCTAssertNil(BIP21.parse("bitcoin:tb1qabc?req-pj=https://example.com&amount=0.5"))
+    }
+
+    /// Case-folded, so `REQ-`/`Req-` can't smuggle a required param past the check.
+    func testReqParamRejectionIsCaseInsensitive() {
+        XCTAssertNil(BIP21.parse("bitcoin:tb1qabc?REQ-Feature=1"))
+        XCTAssertNil(BIP21.parse("bitcoin:tb1qabc?Req-feature=1"))
+    }
+
+    /// The prefix is what's required — a param merely CONTAINING "req-", or named "request",
+    /// is an ordinary optional extension and must not take the whole URI down with it.
+    func testReqLookalikeParamsStillIgnored() {
+        XCTAssertEqual(BIP21.parse("bitcoin:tb1qabc?request=1&amount=0.5")?.amount?.sats, Int64(50_000_000))
+        XCTAssertEqual(BIP21.parse("bitcoin:tb1qabc?xreq-thing=1&amount=0.5")?.amount?.sats, Int64(50_000_000))
+    }
+
     func testMalformedAmountRejectsWholeURI() {
         XCTAssertNil(BIP21.parse("bitcoin:tb1qabc?amount=notanumber"))
     }
