@@ -675,6 +675,34 @@ final class AppState {
         }
     }
 
+    /// Fill the on-screen numbers from BDK's **persisted** chain data before any network work.
+    ///
+    /// Without this, a wallet with real coins could display `0.00000000` and an empty history: only a
+    /// SUCCESSFUL `sync()` ever set those properties, while `resetPerWalletState()` zeroes them on
+    /// every wallet switch and they start zeroed at launch. So switch wallets (or cold-start) with a
+    /// backend that's down, and the zeros simply stayed — the balance read as "your money is gone"
+    /// when nothing had happened but a failed network call. For a wallet, that's the most alarming
+    /// thing the UI can say, and it was saying it purely from absence of data.
+    ///
+    /// The data was never lost: BDK's per-wallet SQLite store still held the last synced state, and
+    /// the wallet LIST was already showing it correctly via `balanceSummary(walletId:)` — so the
+    /// switcher and Home could disagree about the same wallet.
+    ///
+    /// Reads only the local store (no network), and only when there's nothing on screen worth
+    /// keeping, so a routine pull-to-refresh doesn't pay for it. That guard also means this never
+    /// overwrites fresher values with older ones. `refresh()` deliberately avoids these calls
+    /// because they build the BDK engine; this is the same synchronous read `balanceSummary` already
+    /// performs on the main actor for every row of the wallet list, so it adds no new class of risk.
+    private func loadCachedStateIfNeeded(walletId id: String) {
+        guard transactions.isEmpty, balance.sats == 0 else { return }
+        if let cached = try? walletOps.balance(walletId: id) { balance = cached }
+        if let pending = try? walletOps.pendingBalance(walletId: id) { pendingBalance = pending }
+        if let cachedTxs = try? walletOps.transactions(walletId: id) { transactions = sorted(cachedTxs) }
+        if selectedWallet?.network == .ecash {
+            splitSummary = try? walletOps.splitSummary(walletId: id)
+        }
+    }
+
     /// Clear state that belongs to the outgoing wallet so it can never bleed into the next
     /// (balance/transactions repopulate from the new wallet's sync; cached-first is a TODO).
     private func resetPerWalletState() {
@@ -701,6 +729,7 @@ final class AppState {
     /// observable mutations hop back to the main actor.
     func sync() async {
         guard let id = selectedWalletId else { return }
+        loadCachedStateIfNeeded(walletId: id)
         syncState = .syncing
         do {
             // `manager.sync` is a non-isolated async method, so the BDK network work runs off the
