@@ -190,6 +190,34 @@ import WalletService
         #expect(resolved.first?.kind == "electrum")
     }
 
+    /// The split check speaks HTTP only, so it needs an Esplora URL even when Electrum is the
+    /// PRIMARY backend. Keeping only the primary threw that URL away and silently disabled the
+    /// check whenever config priority (or a user override) put Electrum first.
+    @Test func esploraEndpointSurvivesElectrumWinningPriority() {
+        let json = """
+        { "schema_version": 1, "networks": [ { "id": "drynet2", "backends": [
+            { "kind": "esplora",  "url": "https://esplora.example",  "priority": 2 },
+            { "kind": "electrum", "url": "ssl://electrum.example:50002", "priority": 1 }
+        ] } ] }
+        """
+        let config = RemoteEndpointConfig.parse(data(json))!
+        #expect(config.resolvedPrimaryBackends().first?.kind == "electrum")   // primary is Electrum…
+        let esplora = config.resolvedEsploraEndpoints().first
+        #expect(esplora?.url == "https://esplora.example")                    // …Esplora still kept
+        #expect(esplora?.network == WalletNetwork.ecash)
+    }
+
+    /// No Esplora at all → nothing claimed, so the check reports it can't run rather than pointing
+    /// at an Electrum URL it can't speak to.
+    @Test func noEsploraEndpointMeansNoneClaimed() {
+        let json = """
+        { "schema_version": 1, "networks": [ { "id": "drynet2", "backends": [
+            { "kind": "electrum", "url": "ssl://electrum.example:50002" }
+        ] } ] }
+        """
+        #expect(RemoteEndpointConfig.parse(data(json))!.resolvedEsploraEndpoints().isEmpty)
+    }
+
     @Test func skipsUnknownNetworkIds() {
         let config = RemoteEndpointConfig.parse(data(Self.validJSON))!
         let networks = config.resolvedPrimaryBackends().map { $0.network }

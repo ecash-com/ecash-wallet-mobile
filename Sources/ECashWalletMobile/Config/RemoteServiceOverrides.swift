@@ -23,6 +23,7 @@ enum RemoteServiceOverrides {
     private static func faucetAmountKey(_ n: WalletNetwork) -> String { "remote.svc.faucet.\(n.rawValue).amount" }
     private static func faucetCooldownKey(_ n: WalletNetwork) -> String { "remote.svc.faucet.\(n.rawValue).cooldown" }
     private static func explorerKey(_ n: WalletNetwork) -> String { "remote.svc.explorer.\(n.rawValue).template" }
+    private static func esploraKey(_ n: WalletNetwork) -> String { "remote.svc.esplora.\(n.rawValue).url" }
 
     private static func trimmedOrNil(_ s: String?) -> String? {
         guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
@@ -78,6 +79,17 @@ enum RemoteServiceOverrides {
     }
 
     /// Set/replace the remote explorer tx-URL template for a network (must contain `{txid}`).
+    /// An Esplora HTTP endpoint for a network, independent of whichever backend is syncing it.
+    /// Used by the split check, which can only speak HTTP — see `resolvedEsploraEndpoints()`.
+    static func esploraURL(for network: WalletNetwork) -> String? {
+        trimmedOrNil(UserDefaults.standard.string(forKey: esploraKey(network)))
+    }
+
+    static func setEsploraURL(_ url: String, for network: WalletNetwork) {
+        guard let cleaned = trimmedOrNil(url) else { return }
+        UserDefaults.standard.set(cleaned, forKey: esploraKey(network))
+    }
+
     static func setExplorerTemplate(_ template: String, for network: WalletNetwork) {
         guard let clean = trimmedOrNil(template), clean.contains("{txid}") else { return }
         defaults.set(clean, forKey: explorerKey(network))

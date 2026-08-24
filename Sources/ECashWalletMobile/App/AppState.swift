@@ -207,6 +207,12 @@ final class AppState {
         for backend in config.resolvedPrimaryBackends() {
             manager.setRemoteBackendDefault(network: backend.network, kind: backend.kind, url: backend.url)
         }
+        // Esplora URLs are stored SEPARATELY from the primary backend. The split check speaks HTTP
+        // only, so it needs Esplora specifically — while the primary can legitimately be Electrum,
+        // by config priority or a user override in Settings → Network.
+        for esplora in config.resolvedEsploraEndpoints() {
+            RemoteServiceOverrides.setEsploraURL(esplora.url, for: esplora.network)
+        }
         // Services → the app-side overlay the registries read (dev-env override still wins for CoinNews).
         var coinNewsChanged = false
         for cn in config.resolvedCoinNews() {
@@ -752,13 +758,17 @@ final class AppState {
         defer { isCheckingSplittableCoins = false }
         splitCheckMessage = nil
 
-        // Needs an Esplora HTTP endpoint for Bitcoin. The bundled Bitcoin default is Electrum, so
-        // this normally comes from the remote config — say so plainly rather than failing silently.
-        guard manager.backendKind(for: .bitcoin) == "esplora" else {
+        // Needs an Esplora HTTP endpoint for Bitcoin, which is NOT the same thing as Bitcoin's
+        // primary backend: that can be Electrum by config priority or a user override, and the check
+        // can't speak Electrum. Prefer the separately-stored Esplora URL, and fall back to the
+        // primary only when it happens to be Esplora.
+        let bitcoinEsplora = RemoteServiceOverrides.esploraURL(for: .bitcoin)
+            ?? (manager.backendKind(for: .bitcoin) == "esplora" ? manager.backendURL(for: .bitcoin) : nil)
+        guard let bitcoinEsplora else {
             splitCheckMessage = "Needs a Bitcoin Esplora endpoint. Set one in Settings → Network → Bitcoin."
             return
         }
-        let service = SplitCheckService(esploraBaseURL: manager.backendURL(for: .bitcoin))
+        let service = SplitCheckService(esploraBaseURL: bitcoinEsplora)
         guard let candidates = try? walletOps.splitCandidates(walletId: id), !candidates.isEmpty else {
             splitCheckMessage = "No spendable coins to check."
             return

@@ -173,6 +173,29 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     }
 
     /// CoinNews indexer URL per **known** network that supplies a non-empty `services.coinnews.url`.
+    /// Every network's **Esplora** URL, regardless of which backend won `resolvedPrimaryBackends()`.
+    ///
+    /// Those two answer different questions. "Which backend syncs this network's wallets?" is a
+    /// priority decision that can legitimately land on Electrum. "Where can we ask an HTTP question
+    /// about an outpoint?" needs Esplora specifically — the split check is HTTP-only. Keeping just
+    /// the primary threw the Esplora URL away whenever Electrum outranked it, which silently
+    /// disabled the split check on somebody else's config change.
+    func resolvedEsploraEndpoints() -> [ResolvedBackend] {
+        var result: [ResolvedBackend] = []
+        var seen: Set<String> = []
+        for network in networks {
+            guard let walletNetwork = network.walletNetwork, !seen.contains(walletNetwork.rawValue) else { continue }
+            let esplora = network.backends
+                .filter { $0.kind == "esplora" }
+                .map { $0.url.trimmingCharacters(in: .whitespaces) }
+                .first { !$0.isEmpty }
+            guard let esplora else { continue }
+            seen.insert(walletNetwork.rawValue)
+            result.append(ResolvedBackend(network: walletNetwork, kind: "esplora", url: esplora))
+        }
+        return result.sorted { $0.network.rawValue < $1.network.rawValue }
+    }
+
     func resolvedCoinNews() -> [ResolvedCoinNews] {
         var result: [ResolvedCoinNews] = []
         var seen: Set<String> = []
