@@ -26,6 +26,26 @@ public enum PlatformBridge {
         #endif
     }
 
+    /// Read plain text from the Android system clipboard, or nil when it's empty or holds
+    /// something that isn't text. No-op off Android — iOS reads `UIPasteboard` directly.
+    ///
+    /// Coerces via `coerceToText` rather than reading `item.text`, so copying an address out of a
+    /// browser (which lands as styled text or a URI) still pastes as the plain string a user expects.
+    public static func pasteFromClipboard() -> String? {
+        #if SKIP
+        let context = ProcessInfo.processInfo.androidContext
+        guard let clipboard = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager else {
+            return nil
+        }
+        guard let clip = clipboard.primaryClip, clip.itemCount > 0 else { return nil }
+        let text = clip.getItemAt(0).coerceToText(context)?.toString()
+        guard let text, !text.isEmpty else { return nil }
+        return text
+        #else
+        return nil
+        #endif
+    }
+
     /// Block (or unblock) screen capture for the whole window — Android `FLAG_SECURE`.
     /// Used by seed-bearing screens (Backup reveal/verify, Import). No-op off Android and when
     /// no activity is tracked (fail-safe: the screen still shows; capture just isn't blocked).

@@ -121,6 +121,25 @@ struct SendScreen: View {
                         .noAutocapitalization()
                         .frame(maxWidth: .infinity, alignment: .leading)
 
+                    // Paste. An address is almost always arriving from somewhere else — a message,
+                    // an exchange withdrawal page — so the clipboard is the common case, and
+                    // long-press-to-paste is a poor discovery story on a field this narrow.
+                    // Silently does nothing on an empty clipboard rather than clearing what's typed.
+                    Button {
+                        if let pasted = Clipboard.paste() {
+                            vm.addressText = pasted.trimmingCharacters(in: .whitespacesAndNewlines)
+                        }
+                    } label: {
+                        // Text, not an icon: there's no paste glyph in our Material `.symbolset`
+                        // catalog, and the nearest one (`content_copy`) would actively mislead —
+                        // a user tapping "copy" next to an address field would reasonably expect
+                        // the opposite of what happens. A word is also the clearer affordance here.
+                        Text("Paste", bundle: .module, comment: "send: paste an address from the clipboard")
+                            .textStyle(.sm)
+                            .foregroundStyle(Theme.Colors.accent)
+                    }
+                    .buttonStyle(.plain)
+
                     // Scan a QR. Android → SkipQRCode's ML Kit activity; iOS → the AVFoundation cover.
                     Button { startScan() } label: {
                         Image(icon: Icon.scan)

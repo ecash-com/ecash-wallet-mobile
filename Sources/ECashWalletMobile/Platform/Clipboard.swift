@@ -20,4 +20,22 @@ enum Clipboard {
         PlatformBridge.copyToClipboard(text)
         #endif
     }
+
+    /// Read plain text from the clipboard, or nil when there's nothing usable there.
+    ///
+    /// Note for iOS: reading `UIPasteboard` programmatically makes the system show its "Allow
+    /// Paste?" prompt (iOS 16+) unless the user has already allowed it for this app. That's the OS
+    /// protecting clipboard contents and there's no way around it short of `PasteButton`, which
+    /// SkipUI doesn't provide — so we accept the prompt rather than lose the feature on Android.
+    static func paste() -> String? {
+        #if os(iOS)
+        let text = UIPasteboard.general.string
+        guard let text, !text.isEmpty else { return nil }
+        return text
+        #elseif os(Android)
+        return PlatformBridge.pasteFromClipboard()
+        #else
+        return nil
+        #endif
+    }
 }
