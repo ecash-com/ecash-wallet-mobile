@@ -19,8 +19,13 @@ import Foundation
 /// Keyed by `walletId` per Golden Rule §5 — nothing crosses between wallets, and removing a wallet
 /// clears its entry.
 struct SplitCheckStore {
-    private static let key = "split.check.results"
-    private static let checkedAtKey = "split.check.checkedAt"
+    // v2: v1 verdicts were produced by a checker that asked Esplora's outspend endpoint whether
+    // Bitcoin knew a transaction. That endpoint answers from the spend index and returns
+    // `{"spent":false}` for txids it has never seen, so every eCash-only coin was recorded as
+    // `shared`. Those verdicts are wrong, and they feed the summary before the user re-checks —
+    // changing the key discards them instead of leaving stale "needs splitting" on screen.
+    private static let key = "split.check.results.v2"
+    private static let checkedAtKey = "split.check.checkedAt.v2"
 
     private var all: [String: [String: String]] {
         get {

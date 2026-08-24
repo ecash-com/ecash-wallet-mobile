@@ -39,30 +39,56 @@ struct SplitCheckService {
     let esploraBaseURL: String
     var session: URLSession = .shared
 
-    /// Esplora's outspend endpoint answers both halves of the question in one call: whether Bitcoin
-    /// knows the transaction at all (404 if not), and whether that specific output is still unspent.
+    /// **Existence and spentness are two separate questions, and only one endpoint answers each.**
+    ///
+    /// `/tx/{txid}/outspend/{vout}` does NOT validate that the transaction exists — it answers from
+    /// the spend index and returns `200 {"spent":false}` for a txid Bitcoin has never seen. Treating
+    /// that as "unspent, therefore shared" marks every eCash-only coin as needing a split, forever,
+    /// including the fresh output a split just created. (Verified against
+    /// esplora.mainnet.drivechain.info.)
+    ///
+    /// `/tx/{txid}` is the existence test: 404 for unknown, 200 for known. It's also the cheap path —
+    /// an eCash-only coin resolves in one request and never needs the second.
+    private func txURL(txid: String) -> URL? {
+        URL(string: "\(esploraBaseURL.trimmedTrailingSlash)/tx/\(txid)")
+    }
+
     private func outspendURL(txid: String, vout: Int32) -> URL? {
         URL(string: "\(esploraBaseURL.trimmedTrailingSlash)/tx/\(txid)/outspend/\(vout)")
+    }
+
+    /// The decision itself, separated from the I/O so the logic that got this wrong is unit-tested.
+    /// `spent` is nil when the outspend call didn't yield a usable answer.
+    static func verdict(txExistsOnBitcoin: Bool, spent: Bool?) -> SplitCoinStatus {
+        guard txExistsOnBitcoin else { return .chainSpecific }   // Bitcoin never had it → can't replay
+        guard let spent else { return .unknown }                 // known there, but we couldn't tell
+        // Spent on Bitcoin → replaying our spend would be a double-spend → already separated.
+        return spent ? .chainSpecific : .shared
     }
 
     /// Classify one outpoint. Never throws — an unreachable backend yields `.unknown`, because
     /// "we couldn't check" and "it's safe" must never be the same answer on a money screen.
     func status(txid: String, vout: Int32) async -> SplitCoinStatus {
-        guard let url = outspendURL(txid: txid, vout: vout) else { return .unknown }
+        guard let txURL = txURL(txid: txid) else { return .unknown }
         do {
-            var request = URLRequest(url: url)
+            // 1. Does Bitcoin know this transaction at all?
+            var request = URLRequest(url: txURL)
             request.timeoutInterval = 15
-            let (data, response) = try await session.data(for: request)
+            let (_, response) = try await session.data(for: request)
             guard let http = response as? HTTPURLResponse else { return .unknown }
-            // 404 → Bitcoin has no such transaction. It only ever existed on eCash, so nothing can
-            // replay: chain-specific.
-            if http.statusCode == 404 { return .chainSpecific }
+            if http.statusCode == 404 { return Self.verdict(txExistsOnBitcoin: false, spent: nil) }
             guard http.statusCode == 200 else { return .unknown }
-            guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                  let spent = json["spent"] as? Bool else { return .unknown }
-            // Spent on Bitcoin → replaying our spend there would be a double-spend and get rejected,
-            // so the coins are already effectively separated.
-            return spent ? .chainSpecific : .shared
+
+            // 2. It does — so the coin exists on both chains unless Bitcoin already spent it.
+            guard let outspendURL = outspendURL(txid: txid, vout: vout) else { return .unknown }
+            var spendRequest = URLRequest(url: outspendURL)
+            spendRequest.timeoutInterval = 15
+            let (data, spendResponse) = try await session.data(for: spendRequest)
+            guard let spendHTTP = spendResponse as? HTTPURLResponse, spendHTTP.statusCode == 200,
+                  let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                  let spent = json["spent"] as? Bool
+            else { return Self.verdict(txExistsOnBitcoin: true, spent: nil) }
+            return Self.verdict(txExistsOnBitcoin: true, spent: spent)
         } catch {
             return .unknown   // offline, timeout, TLS failure — all "we don't know", never "safe"
         }
