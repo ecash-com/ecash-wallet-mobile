@@ -41,16 +41,26 @@ struct WebNewsScreen: View {
     @ViewBuilder
     private var content: some View {
         #if os(iOS) || os(Android)
-        WebView(configuration: configuration,
-                navigator: navigator,
-                url: url,
-                state: $state,
-                shouldOverrideUrlLoading: { candidate in
-                    guard opensExternally(candidate) else { return false }
-                    openURL(candidate)
-                    return true   // true = "we handled it"; the web view does not navigate
-                })
-            .ignoresSafeArea(edges: .bottom)
+        let web = WebView(configuration: configuration,
+                          navigator: navigator,
+                          url: url,
+                          state: $state,
+                          shouldOverrideUrlLoading: { candidate in
+                              guard opensExternally(candidate) else { return false }
+                              openURL(candidate)
+                              return true   // true = "we handled it"; the web view does not navigate
+                          })
+        #if os(Android)
+        // No `ignoresSafeArea` here. Extending the page under the bottom inset let the web content
+        // draw through the tab bar, which rendered transparent — its items were still visible and
+        // tappable, but the bar had no background. Letting the safe area do its job gives the bar
+        // back its own surface to draw on.
+        web
+        #else
+        // iOS keeps it: the page runs to the bottom edge under the home indicator, and UIKit still
+        // composites the tab bar opaquely above it.
+        web.ignoresSafeArea(edges: .bottom)
+        #endif
         #else
         // macOS host only (tests / transpile target) — never a shipping path.
         ZStack {
