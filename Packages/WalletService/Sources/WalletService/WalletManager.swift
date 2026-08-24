@@ -501,6 +501,18 @@ public final class WalletManager: @unchecked Sendable {
         return try engine.splitSummary()
     }
 
+    /// Split status with outpoints already resolved against the other chain ("txid:vout" keys).
+    public func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.splitSummary(knownShared: knownShared, knownSafe: knownSafe)
+    }
+
+    /// The spendable UTXOs a split would move — what the on-chain check asks Bitcoin about.
+    public func splitCandidates(walletId: String) throws -> [Utxo] {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.splitCandidates()
+    }
+
     /// Publish a CoinNews (or any) `OP_RETURN` message. The payload crosses the bridge as a hex
     /// string (bridge-safe) and is decoded to bytes here; the app builds it with `CoinNewsCodec`.
     /// Funds the fee from spendable coins, signs, broadcasts. Returns the optimistic pending tx.

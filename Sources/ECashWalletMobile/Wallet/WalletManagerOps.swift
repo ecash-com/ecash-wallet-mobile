@@ -35,4 +35,10 @@ final class WalletManagerOps: WalletOps {
     func splitSummary(walletId: String) throws -> SplitSummary {
         try manager.splitSummary(walletId: walletId)
     }
+    func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary {
+        try manager.splitSummary(walletId: walletId, knownShared: knownShared, knownSafe: knownSafe)
+    }
+    func splitCandidates(walletId: String) throws -> [Utxo] {
+        try manager.splitCandidates(walletId: walletId)
+    }
 }

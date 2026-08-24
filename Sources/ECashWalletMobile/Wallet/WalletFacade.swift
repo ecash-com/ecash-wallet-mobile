@@ -50,4 +50,10 @@ final class WalletFacade: WalletOps {
     func splitSummary(walletId: String) throws -> SplitSummary {
         try route(walletId).splitSummary(walletId: walletId)
     }
+    func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary {
+        try route(walletId).splitSummary(walletId: walletId, knownShared: knownShared, knownSafe: knownSafe)
+    }
+    func splitCandidates(walletId: String) throws -> [Utxo] {
+        try route(walletId).splitCandidates(walletId: walletId)
+    }
 }

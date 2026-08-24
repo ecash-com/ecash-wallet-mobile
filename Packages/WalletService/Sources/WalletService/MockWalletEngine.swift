@@ -122,6 +122,25 @@ public final class MockWalletEngine: WalletEngineProtocol {
         return splitSummaryToReturn
     }
 
+    /// Records what the on-chain check resolved so tests can assert it reaches the engine.
+    public private(set) var lastKnownShared: [String] = []
+    public private(set) var lastKnownSafe: [String] = []
+
+    public func splitSummary(knownShared: [String], knownSafe: [String]) throws -> SplitSummary {
+        if let error = errorToThrow { throw error }
+        lastKnownShared = knownShared
+        lastKnownSafe = knownSafe
+        return splitSummaryToReturn
+    }
+
+    /// Stubbed spendable set the on-chain check would ask Bitcoin about.
+    public var splitCandidatesToReturn: [Utxo] = []
+
+    public func splitCandidates() throws -> [Utxo] {
+        if let error = errorToThrow { throw error }
+        return splitCandidatesToReturn
+    }
+
     public func publishData(_ data: Data, feeRate: FeeRate) throws -> WalletTx {
         if let error = errorToThrow { throw error }
         lastPublishedData = data

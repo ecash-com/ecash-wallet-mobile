@@ -168,6 +168,14 @@ final class ThunderService: WalletOps {
         SplitSummary(spendableSats: 0, needsSplitSats: 0, needsSplitCount: 0)
     }
 
+    /// Same zeros regardless of what the Bitcoin check found — Thunder coins are ed25519/BLAKE3 and
+    /// share no outpoints with Bitcoin, so nothing here can be a split candidate.
+    func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary {
+        try splitSummary(walletId: walletId)
+    }
+
+    func splitCandidates(walletId: String) throws -> [Utxo] { [] }
+
     // MARK: - Internals
 
     private func requireMnemonic(walletId: String) throws -> String {

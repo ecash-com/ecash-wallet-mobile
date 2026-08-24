@@ -368,7 +368,7 @@ final class AppState {
     /// which wallet is drained). The `split` seam derives its own destination — no address is passed.
     func makeSplitViewModel() -> SplitViewModel? {
         guard let id = selectedWalletId, let wallet = selectedWallet else { return nil }
-        let summary = splitSummary ?? (try? walletOps.splitSummary(walletId: id))
+        let summary = splitSummary ?? (try? splitSummaryUsingCachedChecks(walletId: id))
         guard let summary, summary.spendableSats > 0 else { return nil }
         let params = NetworkRegistry.params(for: wallet.network)
         return SplitViewModel(
@@ -418,6 +418,14 @@ final class AppState {
 
     /// Which wallets have ever completed a sync here — see `WalletBalanceSummary`.
     @ObservationIgnored private let syncStore = WalletSyncStore()
+
+    /// Cached verdicts from the Bitcoin check, per wallet.
+    @ObservationIgnored private let splitCheckStore = SplitCheckStore()
+
+    /// True while the on-demand Bitcoin check is running (drives the Settings row's spinner).
+    private(set) var isCheckingSplittableCoins = false
+    /// Outcome of the last check, for the Settings row. nil = never run this session.
+    private(set) var splitCheckMessage: String?
 
     /// Guards against overlapping `sync()` runs. `@ObservationIgnored` on purpose — it's internal
     /// bookkeeping, and the UI already has `syncState` to render from; observing this too would
@@ -685,6 +693,7 @@ final class AppState {
         // Purge every artifact keyed to this wallet (Golden Rule §5) — including its sync marker,
         // so a later wallet can't inherit a stale "already synced" claim.
         syncStore.forget(walletId: id)
+        splitCheckStore.forget(walletId: id)
         if wasSelected { resetPerWalletState() }
         refresh()
         if wasSelected && selectedWalletId != nil {
@@ -716,7 +725,59 @@ final class AppState {
         if let pending = try? walletOps.pendingBalance(walletId: id) { pendingBalance = pending }
         if let cachedTxs = try? walletOps.transactions(walletId: id) { transactions = sorted(cachedTxs) }
         if selectedWallet?.network == .ecash {
-            splitSummary = try? walletOps.splitSummary(walletId: id)
+            splitSummary = try? splitSummaryUsingCachedChecks(walletId: id)
+        }
+    }
+
+    /// Split status with any verdicts a previous Bitcoin check established already applied, so the
+    /// answer doesn't silently regress to the height heuristic between checks.
+    private func splitSummaryUsingCachedChecks(walletId id: String) throws -> SplitSummary {
+        let known = splitCheckStore.partitioned(walletId: id)
+        return try walletOps.splitSummary(walletId: id, knownShared: known.shared, knownSafe: known.safe)
+    }
+
+    /// Ask **Bitcoin** whether this wallet's eCash coins still exist there — the only authoritative
+    /// test for whether they need splitting (`SplitCheckService` explains why height isn't).
+    ///
+    /// On demand rather than automatic: it costs a request per coin against a backend for a chain
+    /// this wallet otherwise never talks to, and it hands that operator the wallet's addresses. The
+    /// cheap height heuristic keeps driving the Home nudge; this is how a user gets certainty.
+    ///
+    /// Read-only — HTTP GETs against a Bitcoin Esplora. No key is touched and nothing is broadcast,
+    /// so it cannot move anyone's BTC.
+    func checkSplittableCoins() async {
+        guard let id = selectedWalletId, selectedWallet?.network == .ecash else { return }
+        guard !isCheckingSplittableCoins else { return }
+        isCheckingSplittableCoins = true
+        defer { isCheckingSplittableCoins = false }
+        splitCheckMessage = nil
+
+        // Needs an Esplora HTTP endpoint for Bitcoin. The bundled Bitcoin default is Electrum, so
+        // this normally comes from the remote config — say so plainly rather than failing silently.
+        guard manager.backendKind(for: .bitcoin) == "esplora" else {
+            splitCheckMessage = "Needs a Bitcoin Esplora endpoint. Set one in Settings → Network → Bitcoin."
+            return
+        }
+        let service = SplitCheckService(esploraBaseURL: manager.backendURL(for: .bitcoin))
+        guard let candidates = try? walletOps.splitCandidates(walletId: id), !candidates.isEmpty else {
+            splitCheckMessage = "No spendable coins to check."
+            return
+        }
+        let results = await service.statuses(for: candidates)
+        splitCheckStore.merge(results, walletId: id)
+        splitSummary = try? splitSummaryUsingCachedChecks(walletId: id)
+
+        let shared = results.values.filter { $0 == .shared }.count
+        let unknown = results.values.filter { $0 == .unknown }.count
+        if shared > 0 {
+            splitCheckMessage = shared == 1
+                ? "1 coin is still shared with Bitcoin and needs splitting."
+                : "\(shared) coins are still shared with Bitcoin and need splitting."
+        } else if unknown > 0 {
+            // Never round "couldn't reach the backend" up to "you're fine".
+            splitCheckMessage = "Couldn't check \(unknown) of \(results.count) coins. Try again."
+        } else {
+            splitCheckMessage = "No coins are shared with Bitcoin."
         }
     }
 
@@ -727,6 +788,7 @@ final class AppState {
         pendingBalance = .zero
         transactions = []
         splitSummary = nil
+        splitCheckMessage = nil
         syncState = .idle
     }
 

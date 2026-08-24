@@ -41,6 +41,14 @@ import WalletService
             calls.append("summary:\(walletId)")
             return SplitSummary(spendableSats: 0, needsSplitSats: 0, needsSplitCount: 0)
         }
+        func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary {
+            calls.append("summaryChecked:\(walletId)")
+            return SplitSummary(spendableSats: 0, needsSplitSats: 0, needsSplitCount: 0)
+        }
+        func splitCandidates(walletId: String) throws -> [Utxo] {
+            calls.append("candidates:\(walletId)")
+            return []
+        }
     }
 
     /// Facade with recording BDK + Thunder sides; only "thunder-id" routes to Thunder.

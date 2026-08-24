@@ -35,4 +35,6 @@ protocol WalletOps {
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx
     /// Read-only split status (total spendable vs pre-fork amount that needs splitting).
     func splitSummary(walletId: String) throws -> SplitSummary
+    func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary
+    func splitCandidates(walletId: String) throws -> [Utxo]
 }

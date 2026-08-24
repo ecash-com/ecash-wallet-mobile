@@ -79,6 +79,8 @@ public protocol WalletEngineProtocol: AnyObject {
     /// Read-only split status (total spendable vs pre-fork amount needing a split). No I/O beyond the
     /// local UTXO set; drives the split nudge + the amount shown in the flow.
     func splitSummary() throws -> SplitSummary
+    func splitSummary(knownShared: [String], knownSafe: [String]) throws -> SplitSummary
+    func splitCandidates() throws -> [Utxo]
 
     /// Publish an `OP_RETURN` data output (e.g. a CoinNews message). Funds the fee from the wallet's
     /// spendable coins, adds change, signs, and broadcasts. Returns the optimistic pending tx.
@@ -475,6 +477,12 @@ public final class WalletEngine: WalletEngineProtocol {
     /// each spendable UTXO by its confirmation height against `NetworkRegistry.forkHeight`. Excludes
     /// untrusted 0-conf (not drainable), matching what `splitToSelf` would actually move.
     public func splitSummary() throws -> SplitSummary {
+        try splitSummary(knownShared: [], knownSafe: [])
+    }
+
+    /// As above, but with outpoints already resolved against the other chain — "txid:vout" keys.
+    /// See `SplitSummary.classify` for why those override the height heuristic in both directions.
+    public func splitSummary(knownShared: [String], knownSafe: [String]) throws -> SplitSummary {
         // Remote-config value when the app has applied one, else the bundled default. The height
         // differs per dry-run chain (drynet2/3 957_600, drynet4 961_632), so pinning it here would
         // misclassify after a config-driven rollover.
@@ -485,9 +493,29 @@ public final class WalletEngine: WalletEngineProtocol {
         for out in wallet.listUnspent() {
             if untrustedKeys.contains("\(out.outpoint.txid):\(out.outpoint.vout)") { continue }
             spendable.append(SplitUtxo(height: confirmationHeight(of: out),
-                                       sats: Int64(out.txout.value.toSat())))
+                                       sats: Int64(out.txout.value.toSat()),
+                                       txid: "\(out.outpoint.txid)",
+                                       vout: Int32(out.outpoint.vout)))
         }
-        return SplitSummary.classify(spendable, forkHeight: fork)
+        return SplitSummary.classify(spendable, forkHeight: fork,
+                                     knownShared: knownShared, knownSafe: knownSafe)
+    }
+
+    /// The spendable UTXOs a split would move — the exact set the on-chain check asks Bitcoin about.
+    /// Same filtering as `splitSummary` (untrusted 0-conf excluded) so the two can't disagree about
+    /// which coins are in scope.
+    public func splitCandidates() throws -> [Utxo] {
+        var untrustedKeys = Set<String>()
+        for op in untrustedUnconfirmedOutpoints() { untrustedKeys.insert("\(op.txid):\(op.vout)") }
+        var result: [Utxo] = []
+        for out in wallet.listUnspent() {
+            let key = "\(out.outpoint.txid):\(out.outpoint.vout)"
+            if untrustedKeys.contains(key) { continue }
+            result.append(Utxo(txid: "\(out.outpoint.txid)",
+                               vout: Int32(out.outpoint.vout),
+                               amount: Amount(sats: Int64(out.txout.value.toSat()))))
+        }
+        return result
     }
 
     /// The confirmation block height of a UTXO, or nil if unconfirmed. ChainPosition diverges (Swift

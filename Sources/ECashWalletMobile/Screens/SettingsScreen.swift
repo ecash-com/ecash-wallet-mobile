@@ -60,6 +60,36 @@ struct SettingsScreen: View {
                             }
                         }
                     }
+                    // Ask Bitcoin directly whether this wallet's coins still exist there. On
+                    // demand, not automatic: it's a request per coin against a chain this wallet
+                    // otherwise never contacts, and it reveals these addresses to that operator.
+                    // Shown for every eCash wallet, not just ones the height heuristic flagged —
+                    // the whole point is that the heuristic can say "nothing to split" and be wrong.
+                    if wallet.network == .ecash {
+                        Button { Task { await app.checkSplittableCoins() } } label: {
+                            HStack {
+                                Text("Check for splittable coins", bundle: .module,
+                                     comment: "settings: verify split status against Bitcoin")
+                                    .textStyle(.body)
+                                    .foregroundStyle(Theme.Colors.text0)
+                                Spacer()
+                                if app.isCheckingSplittableCoins {
+                                    Text("Checking…", bundle: .module, comment: "split check in progress")
+                                        .textStyle(.xs)
+                                        .foregroundStyle(Theme.Colors.text2)
+                                } else {
+                                    disclosureChevron
+                                }
+                            }
+                        }
+                        .disabled(app.isCheckingSplittableCoins)
+
+                        if let message = app.splitCheckMessage {
+                            Text(verbatim: message)
+                                .textStyle(.xs)
+                                .foregroundStyle(Theme.Colors.text2)
+                        }
+                    }
                 }
                 Toggle(isOn: Binding(
                     get: { app.appLock.enabled },

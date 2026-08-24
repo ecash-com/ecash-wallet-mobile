@@ -10,7 +10,9 @@ import XCTest
 /// is the money-adjacent correctness core, so it's exhaustively unit-tested away from BDK.
 final class SplitSummaryTests: XCTestCase {
 
-    private func utxo(_ height: Int64?, _ sats: Int64) -> SplitUtxo { SplitUtxo(height: height, sats: sats) }
+    private func utxo(_ height: Int64?, _ sats: Int64, _ txid: String = "t", _ vout: Int32 = Int32(0)) -> SplitUtxo {
+        SplitUtxo(height: height, sats: sats, txid: txid, vout: vout)
+    }
 
     func testBelowForkHeightNeedsSplit() {
         // fork = 957_600 (drynet3). 957_599 is pre-fork; 957_600 is the first post-fork block.
@@ -21,12 +23,55 @@ final class SplitSummaryTests: XCTestCase {
         XCTAssertEqual(s.needsSplitCount, 1)
     }
 
-    func testUnconfirmedIsPostForkSafe() {
-        // Unconfirmed (height nil) = recent = post-fork; never counts as needing a split.
+    func testUnconfirmedIsUnverifiedNotSafe() {
+        // Unconfirmed used to be treated as "recent, therefore post-fork, therefore safe". It isn't
+        // knowable: an unconfirmed coin can be the output of a replayed, non-protected spend. It
+        // still doesn't drive the nudge, but it lands in `unverified` rather than vanishing.
         let s = SplitSummary.classify([utxo(nil, 500), utxo(900_000, 100)], forkHeight: 957_600)
         XCTAssertEqual(s.spendableSats, 600)
         XCTAssertEqual(s.needsSplitSats, 100)      // only the confirmed pre-fork coin
         XCTAssertEqual(s.needsSplitCount, 1)
+        XCTAssertEqual(s.unverifiedSats, 500)
+        XCTAssertEqual(s.unverifiedCount, 1)
+    }
+
+    /// The dangerous direction. A post-fork coin created by a spend that DIDN'T carry the replay
+    /// marker exists on both chains, so height alone would call it safe and the user would be told
+    /// they're separated when they aren't — their next spend moving their BTC too.
+    func testKnownSharedOverridesAPostForkHeight() {
+        let coin = utxo(1_000_000, 700, "abc", Int32(1))       // well above the fork
+        let plain = SplitSummary.classify([coin], forkHeight: 957_600)
+        XCTAssertEqual(plain.needsSplitCount, 0)               // height alone: "safe"
+        XCTAssertEqual(plain.unverifiedCount, 1)               // …but only unverified
+
+        let checked = SplitSummary.classify([coin], forkHeight: 957_600, knownShared: ["abc:1"])
+        XCTAssertEqual(checked.needsSplitSats, 700)
+        XCTAssertEqual(checked.needsSplitCount, 1)
+        XCTAssertEqual(checked.unverifiedCount, 0)
+    }
+
+    /// The other direction: a PRE-fork coin already spent on Bitcoin can't be replayed onto — that
+    /// would be a double-spend — so it needs no split despite its height saying otherwise.
+    func testKnownSafeOverridesAPreForkHeight() {
+        let coin = utxo(900_000, 400, "def", Int32(0))         // below the fork
+        XCTAssertEqual(SplitSummary.classify([coin], forkHeight: 957_600).needsSplitCount, 1)
+
+        let checked = SplitSummary.classify([coin], forkHeight: 957_600, knownSafe: ["def:0"])
+        XCTAssertEqual(checked.needsSplitCount, 0)
+        XCTAssertEqual(checked.needsSplitSats, 0)
+        XCTAssertEqual(checked.unverifiedCount, 0)             // verified, not merely unchecked
+        XCTAssertEqual(checked.spendableSats, 400)             // still spendable either way
+    }
+
+    /// Verified answers must not leak between coins — matching is per outpoint, and a shared txid
+    /// with a different vout is a different coin.
+    func testVerdictsMatchPerOutpointNotPerTxid() {
+        let a = utxo(1_000_000, 100, "same", Int32(0))
+        let b = utxo(1_000_000, 200, "same", Int32(1))
+        let s = SplitSummary.classify([a, b], forkHeight: 957_600, knownShared: ["same:1"])
+        XCTAssertEqual(s.needsSplitSats, 200)                  // only vout 1
+        XCTAssertEqual(s.needsSplitCount, 1)
+        XCTAssertEqual(s.unverifiedSats, 100)                  // vout 0 remains unchecked
     }
 
     func testNilForkHeightMeansNothingNeedsSplitting() {
