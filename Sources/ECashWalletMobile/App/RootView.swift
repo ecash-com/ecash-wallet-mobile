@@ -82,7 +82,26 @@ struct RootView: View {
                 // background → inactive → active, so we can't rely on the previous phase here.
                 if wasBackgrounded {
                     wasBackgrounded = false
-                    Task { await app.refreshRemoteEndpoints() }
+                    Task {
+                        await app.refreshRemoteEndpoints()
+                        // Then re-sync the selected wallet. `.task` on Home does NOT cover this:
+                        // it fires when a view APPEARS, and Home never disappears while the app is
+                        // backgrounded, so nothing re-checked the chain on resume. A wallet left
+                        // backgrounded overnight came back with yesterday's UTXO set, and the next
+                        // send built against spent inputs and stale change — the reported "can't
+                        // send" failures.
+                        //
+                        // Ordered after the config refresh on purpose: if a backend rotated, that
+                        // call already kicks its own sync, and `sync()`'s re-entrancy guard turns
+                        // this into a no-op rather than a second concurrent pass over the same
+                        // wallet.
+                        //
+                        // Runs even if the app re-locked. The everyday engine is watch-only
+                        // (§7 — the mnemonic is only read at signing), so refreshing behind the
+                        // lock screen exposes nothing and means the balance is current the moment
+                        // the user unlocks.
+                        await app.sync()
+                    }
                 }
             default:
                 break

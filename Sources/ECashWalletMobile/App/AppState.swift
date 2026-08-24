@@ -419,6 +419,11 @@ final class AppState {
     /// Which wallets have ever completed a sync here — see `WalletBalanceSummary`.
     @ObservationIgnored private let syncStore = WalletSyncStore()
 
+    /// Guards against overlapping `sync()` runs. `@ObservationIgnored` on purpose — it's internal
+    /// bookkeeping, and the UI already has `syncState` to render from; observing this too would
+    /// invalidate views for a value they don't display.
+    @ObservationIgnored private var isSyncing = false
+
     /// The last-known balance for any wallet, selected or not. A cached read of BDK's persisted
     /// chain data (no network, safe on the main actor), or `.unknown` when the wallet has never
     /// synced on this device and `0` would be a guess rather than a fact.
@@ -436,7 +441,19 @@ final class AppState {
 
     /// Discard any cached Send VM so the next `makeSendViewModel()` builds a fresh flow. Call when
     /// the user opens Send (before presenting the cover).
-    func beginSendFlow() { activeSendVM = nil }
+    func beginSendFlow() {
+        activeSendVM = nil
+        // Re-check the chain on the way into Send. This is the last moment before money moves, and
+        // coin selection is only as good as the UTXO set behind it: a long session on one screen
+        // goes stale even with the resume sync in place, and building against spent inputs or
+        // missing change is what surfaces as "the send failed".
+        //
+        // Deliberately NOT awaited — Send opens immediately and the user still has to enter an
+        // address and amount, which is ample time for this to land. Blocking the sheet on a network
+        // round-trip would make Send feel broken on a slow connection, which is a worse trade than
+        // the rare case of building against data a few seconds old.
+        Task { await sync() }
+    }
 
     /// Vend a `SendViewModel` for the selected wallet, or nil if none is selected. Returns the
     /// cached in-flight instance if one exists (survives recreation); otherwise builds + caches one.
@@ -729,6 +746,16 @@ final class AppState {
     /// observable mutations hop back to the main actor.
     func sync() async {
         guard let id = selectedWalletId else { return }
+        // Coalesce concurrent syncs. Triggers now cluster in time — a foreground resume can fire the
+        // scene-phase sync, an app-lock unlock, and a Send tap within the same second — and two
+        // concurrent syncs on one BDK wallet means two writers against the same SQLite store, which
+        // is a persistence race, not merely wasted work. Later callers return immediately rather
+        // than queueing: the in-flight sync is already fetching current chain state, so a second
+        // pass right behind it would ask the same question again.
+        guard !isSyncing else { return }
+        isSyncing = true
+        defer { isSyncing = false }
+
         loadCachedStateIfNeeded(walletId: id)
         syncState = .syncing
         do {
