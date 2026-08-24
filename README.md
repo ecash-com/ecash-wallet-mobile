@@ -196,6 +196,7 @@ automatic.
 - `PLAN.md` — full build plan + tracked checklist.
 - `DESIGN.md` — visual spec (tokens, type, components, voice).
 - `docs/release.md` — build / sign / ship to App Store + Google Play.
+- `docs/coin-splitting.md` — how shared coins are detected and separated (the money-critical one).
 - `docs/` — decision records: key storage & derivation, wallet/network model, accounts & labels, backends & endpoints, CoinNews, and more.
 
 ## Open source & acknowledgements
