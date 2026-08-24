@@ -163,6 +163,33 @@ Your keys stay on your device, and the app is built to keep them exposed as litt
 The decision records behind this live in `docs/key-storage.md` and `docs/key-derivation.md`; the
 non-negotiable rules are CLAUDE.md §2 (Golden Rules) and §7 (Security model).
 
+## Splitting eCash from Bitcoin
+
+eCash forked from Bitcoin, so every coin that existed before the fork exists on **both** chains at
+the same address — one coin, two ledgers. Spend it carelessly and you can move your BTC along with
+your ECX. **Splitting** fixes that: the wallet sends your eCash to a fresh address of the same
+wallet in a transaction Bitcoin will not accept (`nLockTime = 499999999` with non-final inputs,
+which Bitcoin reads as a lock ~9,500 years out). Afterwards the two chains hold genuinely separate
+coins. Only eCash moves; your Bitcoin is untouched and only an eCash fee is paid.
+
+Working out *which* coins need this takes two steps:
+
+**1. Block height — free, automatic.** A coin confirmed below the fork height predates the split, so
+it's shared. This runs on every sync and drives the prompt on the home screen.
+
+**2. Asking Bitcoin — on demand.** Height alone isn't proof. eCash *permits* the replay marker but
+doesn't require it, so an ordinary transaction from any other wallet is valid on both chains, and
+its outputs land on both at post-fork heights. Height would call those safe when they aren't.
+**Settings → Check for splittable coins** resolves it by asking a Bitcoin backend about each coin's
+exact outpoint: unknown to Bitcoin means chain-specific; present and unspent means still shared;
+already spent there means a replay would be a double-spend, so it's separated regardless of height.
+
+Coins that height can't vouch for and no check has resolved are reported as **unverified** rather
+than safe — the app won't tell you you're separated when it doesn't know. The check is read-only
+(HTTP requests to a Bitcoin backend; nothing is signed or broadcast), it's a point-in-time answer,
+and it does reveal your addresses to that backend — which is why it's a button rather than
+automatic.
+
 ## Docs
 
 - `CLAUDE.md` — architecture bible (the *what* and *why*; wins on conflicts).
