@@ -17,9 +17,19 @@ struct SettingsScreen: View {
         List {
             Section(header: sectionHeader(Text("Security", bundle: .module, comment: "settings section: security"))) {
                 if let wallet = app.selectedWallet {
+                    // A noun, not an imperative: "Back up recovery phrase" urges an action already
+                    // done once the wallet IS backed up, while the row still has somewhere to go
+                    // (re-reveal, re-verify). "recovery phrase" over "seed" deliberately — every
+                    // other user-facing string in the app says phrase, and it's the less
+                    // jargon-heavy term for the people most likely to need this screen.
+                    //
+                    // The chevron is the important part. Users reported not realising this was
+                    // tappable: it sat between rows that DO signal interactivity (`menuRowLabel`
+                    // adds a trailing indicator), wore the same `text0` as the non-interactive
+                    // toggle labels, and ended in a STATUS — which reads as a value, not an action.
                     Button { showBackup = true } label: {
                         HStack {
-                            Text("Back up recovery phrase", bundle: .module, comment: "settings security row")
+                            Text("Recovery phrase", bundle: .module, comment: "settings security row")
                                 .textStyle(.body)
                                 .foregroundStyle(Theme.Colors.text0)
                             Spacer()
@@ -28,6 +38,7 @@ struct SettingsScreen: View {
                                 : Text("Not backed up", bundle: .module, comment: "wallet backup status"))
                                 .textStyle(.xs)
                                 .foregroundStyle(wallet.isBackedUp ? Theme.Colors.positive : Theme.Colors.warning)
+                            disclosureChevron
                         }
                     }
 
@@ -45,6 +56,7 @@ struct SettingsScreen: View {
                                         : "\(summary.needsSplitCount) coins to split")
                                     .textStyle(.xs)
                                     .foregroundStyle(Theme.Colors.text2)
+                                disclosureChevron   // same affordance gap as the row above
                             }
                         }
                     }
@@ -218,6 +230,16 @@ struct SettingsScreen: View {
     /// `.overline` is the design system's section-overline style (JetBrains Mono, uppercase).
     private func sectionHeader(_ text: Text) -> some View {
         text.textStyle(.overline).foregroundStyle(Theme.Colors.text1)
+    }
+
+    /// Trailing "this row goes somewhere" indicator, matching the trailing glyph the Menu rows
+    /// (`menuRowLabel`) already carry — without it, a Button row is visually indistinguishable
+    /// from a static label.
+    private var disclosureChevron: some View {
+        Image(icon: Icon.disclosure)
+            .resizable().scaledToFit()
+            .frame(width: 14, height: 14)
+            .foregroundStyle(Theme.Colors.text2)
     }
 
     private func menuRowLabel(_ title: Text, _ value: Text) -> some View {
