@@ -19,6 +19,9 @@ struct WalletManagerSheet: View {
     @State var renameTarget: ManagedWallet? = nil
     @State var renameText = ""
     @State var removeTarget: ManagedWallet? = nil
+    /// Presentation is its OWN state, deliberately not derived from `removeTarget` — see
+    /// `confirmationDialog` below for why deriving it silently broke removal on Android.
+    @State var isRemovingWallet = false
     @State var path: [WalletManagerRoute] = []
 
     var body: some View {
@@ -63,14 +66,21 @@ struct WalletManagerSheet: View {
             renameSheet(wallet)
         }
         // Remove: explicit confirmation, extra-loud when not backed up.
+        // `isPresented` is a plain Bool, NOT a binding derived from `removeTarget`, because SkipUI
+        // dismisses BEFORE it runs the button action (`Presentation.swift`):
+        //
+        //     ConfirmationDialogButton(action: { isPresented.set(false); button.action() })
+        //
+        // With a derived binding, that first call ran our setter, cleared `removeTarget`, and the
+        // action then found nil and did nothing — the dialog closed and the wallet stayed. SwiftUI
+        // runs the action first, so iOS worked and Android silently didn't. Keeping the payload in
+        // its own state means dismissal order can't erase what we're about to act on.
         .confirmationDialog(removeTitle,
-                            isPresented: removeBinding,
+                            isPresented: $isRemovingWallet,
                             titleVisibility: .visible) {
             Button("Remove wallet", role: .destructive) {
-                if let wallet = removeTarget {
-                    app.removeWallet(id: wallet.id)
-                    removeTarget = nil
-                }
+                if let wallet = removeTarget { app.removeWallet(id: wallet.id) }
+                removeTarget = nil
             }
             Button("Cancel", role: .cancel) { removeTarget = nil }
         } message: {
@@ -138,6 +148,7 @@ struct WalletManagerSheet: View {
 
             Button {
                 removeTarget = wallet
+                isRemovingWallet = true
             } label: {
                 Image(icon: Icon.remove)
                     .resizable().scaledToFit()
@@ -196,10 +207,6 @@ struct WalletManagerSheet: View {
                 }
             }
         }
-    }
-
-    private var removeBinding: Binding<Bool> {
-        Binding(get: { removeTarget != nil }, set: { if !$0 { removeTarget = nil } })
     }
 
     // LocalizedStringKey for the confirmationDialog title (%@ is the wallet name).
