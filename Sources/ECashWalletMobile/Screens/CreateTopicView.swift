@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import SwiftUI
+import WalletService   // NetworkRegistry — fee labels are network-derived
 
 /// Create a new CoinNews topic (§5). The user supplies a name + retention; the 4-byte topic ID is
 /// prefilled with a random default (so picking it isn't required) but stays editable for power users.
@@ -102,7 +103,7 @@ struct CreateTopicView: View {
                             #endif
                             .fieldBoxInset()
                             .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
-                        Text(verbatim: "sat/vB").textStyle(.sm).foregroundStyle(Theme.Colors.text2)
+                        Text(verbatim: "\(subUnit)/vB").textStyle(.sm).foregroundStyle(Theme.Colors.text2)
                     }
                 }
 
@@ -143,10 +144,15 @@ struct CreateTopicView: View {
     }
 
     private var isPublishing: Bool { if case .publishing = vm.step { return true }; return false }
-    private var feeTitle: String { "\(vm.tier.label) · \(vm.effectiveSatPerVByte) sat/vB" }
+    private var feeTitle: String { "\(vm.tier.label) · \(vm.effectiveSatPerVByte) \(subUnit)/vB" }
     private func feeOptionLabel(_ tier: PostStoryViewModel.FeeTier) -> String {
-        tier == .custom ? "Custom…" : "\(tier.label) · \(tier.satPerVByte) sat/vB"
+        tier == .custom ? "Custom…" : "\(tier.label) · \(tier.satPerVByte) \(subUnit)/vB"
     }
+
+    /// Smallest-unit label for THIS wallet's network — "sat" on Bitcoin, "szat" on eCash.
+    /// Never hardcode it: an eCash fee shown as "sat/vB" borrows Bitcoin's unit for another
+    /// chain's money.
+    private var subUnit: String { NetworkRegistry.params(for: vm.network).subUnitLabel }
 
     private func fieldLabel(_ key: LocalizedStringKey) -> some View {
         Text(key, bundle: .module).textStyle(.overline).foregroundStyle(Theme.Colors.text2)

@@ -25,6 +25,18 @@ final class NetworkRegistryTests: XCTestCase {
         XCTAssertEqual(NetworkRegistry.params(for: .signet).addressHRP, "tb")
     }
 
+    /// The smallest-unit label is eCash-only: "szat" there, "sat" on the Bitcoin-family networks.
+    /// Asserted as a pair because the failure that matters is the two BLEEDING into each other —
+    /// labelling a Bitcoin fee "szat/vB", or an eCash fee "sat/vB", borrows one chain's unit for
+    /// another chain's money (Golden Rule §6, the same confusion the network chip prevents).
+    func testSubUnitLabelIsECashOnly() {
+        XCTAssertEqual(NetworkRegistry.params(for: .bitcoin).subUnitLabel, "sat")
+        XCTAssertEqual(NetworkRegistry.params(for: .signet).subUnitLabel, "sat")
+        XCTAssertEqual(NetworkRegistry.params(for: .ecash).subUnitLabel, "szat")
+        // Thunder holds eCash value deposited from the eCash mainchain, so it inherits the unit.
+        XCTAssertEqual(NetworkRegistry.params(for: .thunder).subUnitLabel, "szat")
+    }
+
     func testUnitLabel() {
         XCTAssertEqual(NetworkRegistry.params(for: .bitcoin).unitLabel, "BTC")
         XCTAssertEqual(NetworkRegistry.params(for: .signet).unitLabel, "sBTC")

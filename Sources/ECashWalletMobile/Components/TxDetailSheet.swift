@@ -45,6 +45,11 @@ struct TxDetailSheet: View {
 
     // MARK: - Hero
 
+    /// Smallest-unit label for THIS network — "sat" on Bitcoin, "szat" on eCash.
+    /// Never hardcode it: an eCash fee shown as "sat/vB" borrows Bitcoin's unit for
+    /// another chain's money.
+    private var subUnit: String { NetworkRegistry.params(for: network).subUnitLabel }
+
     private var hero: some View {
         VStack(spacing: Theme.Space.x3) {
             ZStack {
@@ -178,7 +183,7 @@ struct TxDetailSheet: View {
             row("Amount", "\(amountCoin) \(unitLabel)")
             if !tx.isReceived, let fee = tx.feeSats {
                 hairline
-                row("Network fee", "\(fee) sats")
+                row("Network fee", "\(fee) \(subUnit)s")
                 hairline
                 row("Total", "\(totalCoin) \(unitLabel)")
                 if let rate = tx.feeRatePerVByte() {
@@ -313,7 +318,7 @@ struct TxDetailSheet: View {
         let hundredths = Int((rate * 100).rounded())
         let frac = hundredths % 100
         let fracStr = frac < 10 ? "0\(frac)" : "\(frac)"
-        return "\(hundredths / 100).\(fracStr) sat/vB"
+        return "\(hundredths / 100).\(fracStr) \(subUnit)/vB"
     }
 
     private static func fullDate(_ epoch: Int64) -> String {

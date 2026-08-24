@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import SwiftUI
+import WalletService   // NetworkRegistry — fee labels are network-derived
 
 /// Compose + publish a CoinNews Story (§6, unsigned). Topic picker (fetched topics + Global),
 /// headline, optional link, body, fee tier, and a live **estimated cost** so the user sees what
@@ -42,6 +43,11 @@ struct PostStoryView: View {
     }
 
     // MARK: - Compose
+
+    /// Smallest-unit label for THIS network — "sat" on Bitcoin, "szat" on eCash.
+    /// Never hardcode it: an eCash fee shown as "sat/vB" borrows Bitcoin's unit for
+    /// another chain's money.
+    private var subUnit: String { NetworkRegistry.params(for: vm.network).subUnitLabel }
 
     private var composeForm: some View {
         ScrollView {
@@ -122,7 +128,7 @@ struct PostStoryView: View {
                             #endif
                             .fieldBoxInset()
                             .background(Theme.Colors.bg2, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
-                        Text(verbatim: "sat/vB")
+                        Text(verbatim: "\(subUnit)/vB")
                             .textStyle(.sm)
                             .foregroundStyle(Theme.Colors.text2)
                     }
@@ -192,9 +198,9 @@ struct PostStoryView: View {
     // MARK: - Bits
 
     private var isPublishing: Bool { if case .publishing = vm.step { return true }; return false }
-    private var feeTitle: String { "\(vm.tier.label) · \(vm.effectiveSatPerVByte) sat/vB" }
+    private var feeTitle: String { "\(vm.tier.label) · \(vm.effectiveSatPerVByte) \(subUnit)/vB" }
     private func feeOptionLabel(_ tier: PostStoryViewModel.FeeTier) -> String {
-        tier == .custom ? "Custom…" : "\(tier.label) · \(tier.satPerVByte) sat/vB"
+        tier == .custom ? "Custom…" : "\(tier.label) · \(tier.satPerVByte) \(subUnit)/vB"
     }
 
     private func fieldLabel(_ key: LocalizedStringKey) -> some View {

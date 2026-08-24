@@ -299,6 +299,11 @@ struct SendScreen: View {
         .padding(Theme.Space.gutter)
     }
 
+    /// Smallest-unit label for THIS wallet's network — "sat" on Bitcoin, "szat" on eCash.
+    /// Never hardcode it: an eCash fee shown as "sat/vB" borrows Bitcoin's unit for another
+    /// chain's money.
+    private var subUnit: String { NetworkRegistry.params(for: vm.network).subUnitLabel }
+
     /// Middle-ellipsis truncation for the recipient recap (`tb1qab…k4f2`); full address on review.
     private static func shortAddress(_ address: String) -> String {
         guard address.count > 16 else { return address }
@@ -342,7 +347,7 @@ struct SendScreen: View {
             VStack(alignment: .leading, spacing: Theme.Space.x3) {
                 reviewRow(label: "To", value: vm.reviewAddress)
                 reviewRow(label: "Network", value: vm.networkDisplayName)
-                reviewRow(label: "Fee", value: "\(vm.tier.label) · \(vm.tier.feeRate.satPerVByte) sat/vB")
+                reviewRow(label: "Fee", value: "\(vm.tier.label) · \(vm.tier.feeRate.satPerVByte) \(subUnit)/vB")
                 Text("The network fee is set by rate; the exact fee is deducted at send.",
                      bundle: .module, comment: "send review fee explainer")
                     .textStyle(.xs)

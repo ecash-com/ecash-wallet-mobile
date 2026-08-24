@@ -15,6 +15,12 @@ public struct NetworkParams: Equatable, Sendable {
     public let addressHRP: String
     /// Display unit label for amounts (e.g. "BTC", later "eCash").
     public let unitLabel: String
+    /// Label for the smallest unit — "sat" on Bitcoin-family networks, **"szat"** on eCash ones.
+    /// Used for fee rates ("3 szat/vB") and raw-amount displays. Network-derived rather than a
+    /// constant precisely because the two must not be mixed: calling an eCash fee "sat/vB" borrows
+    /// Bitcoin's unit for a different chain's money, which is the same class of error the network
+    /// chip exists to prevent (Golden Rule §6). Append "s" for the plural at the call site.
+    public let subUnitLabel: String
     /// Default Electrum/Esplora endpoint (overridable per network in Settings).
     public let defaultBackend: String
     /// Kind of the default backend — `"electrum"` (`ssl://`/`tcp://`) or `"esplora"`
@@ -28,11 +34,13 @@ public struct NetworkParams: Equatable, Sendable {
     public let displayName: String
 
     public init(coinType: Int32, addressHRP: String, unitLabel: String,
+                subUnitLabel: String = "sat",
                 defaultBackend: String, defaultBackendKind: String = "electrum",
                 explorerTxTemplate: String, displayName: String) {
         self.coinType = coinType
         self.addressHRP = addressHRP
         self.unitLabel = unitLabel
+        self.subUnitLabel = subUnitLabel
         self.defaultBackend = defaultBackend
         self.defaultBackendKind = defaultBackendKind
         self.explorerTxTemplate = explorerTxTemplate
@@ -60,6 +68,7 @@ public enum NetworkRegistry {
         return NetworkParams(coinType: base.coinType,
                              addressHRP: base.addressHRP,
                              unitLabel: base.unitLabel,
+                             subUnitLabel: base.subUnitLabel,
                              defaultBackend: base.defaultBackend,
                              defaultBackendKind: base.defaultBackendKind,
                              explorerTxTemplate: base.explorerTxTemplate,
@@ -101,6 +110,7 @@ public enum NetworkRegistry {
                 coinType: Int32(0),
                 addressHRP: "bc",
                 unitLabel: "ECX",
+                subUnitLabel: "szat",
                 defaultBackend: "https://esplora.drynet3.drivechain.dev",
                 defaultBackendKind: "esplora",
                 explorerTxTemplate: "https://explorer.drynet3.drivechain.dev/tx/{txid}",
@@ -116,6 +126,9 @@ public enum NetworkRegistry {
                 coinType: Int32(1),
                 addressHRP: "",
                 unitLabel: "ECX",
+                // Thunder holds eCash value deposited from the eCash mainchain, so it's ECX-
+                // denominated and takes eCash's sub-unit too.
+                subUnitLabel: "szat",
                 defaultBackend: "https://thunder.drivechain.dev/rpc",
                 defaultBackendKind: "thunder",
                 explorerTxTemplate: "https://thunder.drivechain.dev/tx/{txid}",
