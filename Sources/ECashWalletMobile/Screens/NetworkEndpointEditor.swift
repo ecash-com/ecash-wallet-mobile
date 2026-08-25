@@ -77,9 +77,14 @@ struct NetworkEndpointEditor: View {
 
     private var trimmedURL: String { url.trimmingCharacters(in: .whitespacesAndNewlines) }
 
-    /// True when the form already matches the bundled default (apply is a no-op / nothing to reset).
+    /// True when the form already matches what this network resolves to with no override.
+    ///
+    /// Compares against the EFFECTIVE default, not the bundled one: since remote config landed,
+    /// clearing an override lands you on the remote default, so the bundled value is just another
+    /// URL a user might legitimately want to pin.
     private var isDefault: Bool {
-        kind == "electrum" && trimmedURL == app.defaultBackendURL(for: network)
+        kind == app.effectiveDefaultBackendKind(for: network)
+            && trimmedURL == app.effectiveDefaultBackendURL(for: network)
     }
 
     private var testRow: some View {
@@ -115,7 +120,11 @@ struct NetworkEndpointEditor: View {
     }
 
     private func save() {
-        if trimmedURL.isEmpty || trimmedURL == app.defaultBackendURL(for: network) {
+        // Clear the override only when the form matches what no-override already resolves to.
+        // Comparing against the BUNDLED default instead is the bug that made Bitcoin unsettable:
+        // its bundled default is Blockstream, so entering that URL deleted the override and let the
+        // remote Esplora default take over — indistinguishable from "it didn't save".
+        if trimmedURL.isEmpty || isDefault {
             app.resetBackend(for: network)
         } else {
             app.setBackend(network: network, kind: kind, url: trimmedURL)
@@ -129,8 +138,10 @@ struct NetworkEndpointEditor: View {
     /// Repopulate the form with the bundled default. Doesn't persist — the user applies with the
     /// checkmark (which, since the URL now equals the default, clears any override via `save`).
     private func reset() {
-        kind = "electrum"
-        url = app.defaultBackendURL(for: network)
+        // Populate with the EFFECTIVE default so applying afterwards clears the override rather
+        // than pinning the bundled URL as a new one.
+        kind = app.effectiveDefaultBackendKind(for: network)
+        url = app.effectiveDefaultBackendURL(for: network)
         testResult = nil
     }
 }

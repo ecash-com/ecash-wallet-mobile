@@ -889,6 +889,9 @@ final class AppState {
     func backendKind(for network: WalletNetwork) -> String { manager.backendKind(for: network) }
     func backendURL(for network: WalletNetwork) -> String { manager.backendURL(for: network) }
     func defaultBackendURL(for network: WalletNetwork) -> String { manager.defaultBackendURL(for: network) }
+    /// What you'd get with no override — remote default if applied, else bundled. See the manager.
+    func effectiveDefaultBackendURL(for network: WalletNetwork) -> String { manager.effectiveDefaultBackendURL(for: network) }
+    func effectiveDefaultBackendKind(for network: WalletNetwork) -> String { manager.effectiveDefaultBackendKind(for: network) }
     func hasBackendOverride(for network: WalletNetwork) -> Bool { manager.hasBackendOverride(for: network) }
     var proxy: String? { manager.proxyValue() }
 

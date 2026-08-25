@@ -157,6 +157,47 @@ final class WalletManagerTests: XCTestCase {
 
     // MARK: - Backend resolution precedence (user override → remote default → bundled)
 
+    /// `effectiveDefaultBackendURL` is what a network resolves to with NO user override — the remote
+    /// default when applied, else the bundled one.
+    ///
+    /// It exists because the Settings editor decides "is the user still on the default?" by
+    /// comparison, and comparing against the BUNDLED value is wrong once a remote default is in
+    /// play. That bug made Bitcoin unsettable: its bundled default is Blockstream, so entering that
+    /// URL was read as "back to default", the override was deleted, and the remote Esplora took
+    /// over — looking exactly like the setting refusing to save.
+    func testEffectiveDefaultFollowsTheRemoteDefaultNotTheBundledOne() throws {
+        let manager = WalletManager(keyStore: InMemoryKeyStore(),
+                                    walletStore: InMemoryWalletStore(),
+                                    factory: MockWalletEngineFactory())
+        manager.clearBackendOverride(network: WalletNetwork.ecash)
+        manager.clearRemoteBackendDefaults()
+        defer {
+            manager.clearBackendOverride(network: WalletNetwork.ecash)
+            manager.clearRemoteBackendDefaults()
+        }
+
+        // No remote default yet → the bundled value.
+        XCTAssertEqual(manager.effectiveDefaultBackendURL(for: WalletNetwork.ecash),
+                       "https://esplora.drynet3.drivechain.dev")
+
+        // Once a remote default lands, THAT is what "no override" means.
+        manager.setRemoteBackendDefault(network: WalletNetwork.ecash,
+                                        kind: "electrum", url: "ssl://remote.example.test:50002")
+        XCTAssertEqual(manager.effectiveDefaultBackendURL(for: WalletNetwork.ecash),
+                       "ssl://remote.example.test:50002")
+        XCTAssertEqual(manager.effectiveDefaultBackendKind(for: WalletNetwork.ecash), "electrum")
+        // The bundled accessor keeps reporting the bundled value — the two are different questions.
+        XCTAssertEqual(manager.defaultBackendURL(for: WalletNetwork.ecash),
+                       "https://esplora.drynet3.drivechain.dev")
+
+        // And the bundled URL is now just another URL a user may pin as an override.
+        manager.setBackendOverride(network: WalletNetwork.ecash,
+                                   kind: "esplora", url: "https://esplora.drynet3.drivechain.dev")
+        XCTAssertEqual(manager.resolvedBackend(for: WalletNetwork.ecash).url,
+                       "https://esplora.drynet3.drivechain.dev")
+        XCTAssertTrue(manager.hasBackendOverride(for: WalletNetwork.ecash))
+    }
+
     /// The remote endpoints config applies BELOW a user override and ABOVE the bundled default, and
     /// a malformed remote entry is a safe no-op. Exercised on `.ecash` to avoid other tests' state.
     func testBackendResolutionPrecedence() throws {

@@ -396,6 +396,27 @@ public final class WalletManager: @unchecked Sendable {
     public func backendKind(for network: WalletNetwork) -> String { resolvedBackend(for: network).kind.rawValue }
     public func backendURL(for network: WalletNetwork) -> String { resolvedBackend(for: network).url }
     public func defaultBackendURL(for network: WalletNetwork) -> String { NetworkRegistry.params(for: network).defaultBackend }
+
+    /// What this network would resolve to with **no user override** — the remote default when one
+    /// has been applied, otherwise the bundled one.
+    ///
+    /// Distinct from `defaultBackendURL` on purpose. Callers deciding "is the user still on the
+    /// default?" must compare against THIS, because since remote config landed, clearing an override
+    /// no longer lands you on the bundled value. Comparing against the bundled one instead is what
+    /// made setting Bitcoin to Blockstream — which IS the bundled default — delete the override and
+    /// silently fall through to the remote Esplora.
+    public func effectiveDefaultBackendURL(for network: WalletNetwork) -> String {
+        trimmedOrNil(UserDefaults.standard.string(forKey: remoteUrlKey(network)))
+            ?? NetworkRegistry.params(for: network).defaultBackend
+    }
+
+    public func effectiveDefaultBackendKind(for network: WalletNetwork) -> String {
+        if trimmedOrNil(UserDefaults.standard.string(forKey: remoteUrlKey(network))) != nil,
+           let kind = WalletBackend.Kind.from(UserDefaults.standard.string(forKey: remoteKindKey(network)) ?? "") {
+            return kind.rawValue
+        }
+        return NetworkRegistry.params(for: network).defaultBackendKind
+    }
     public func hasBackendOverride(for network: WalletNetwork) -> Bool {
         trimmedOrNil(UserDefaults.standard.string(forKey: urlKey(network))) != nil
     }
