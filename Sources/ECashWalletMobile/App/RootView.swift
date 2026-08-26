@@ -65,6 +65,19 @@ struct RootView: View {
         //    grace clock (we don't lock yet — a quick round-trip skips re-auth).
         //  • returning (`.active`) → re-lock iff we were away past the grace window, and FADE the
         //    cover out so the reveal isn't abrupt.
+        // Payment links from outside the app.
+        //
+        // Handled at the ROOT so a link works whether the app was launched by it (cold start) or
+        // was already running (warm start, via onNewIntent — which needs the manifest's
+        // launchMode="singleTask"). It only ever prefills; nothing sends without confirmation.
+        // iOS: real SwiftUI, so this works. On Fuse-Android it compiles to a no-op (SkipUI's
+        // non-SKIP branch returns self) — verified on device — so Android reads the intent directly
+        // via PlatformBridge below.
+        .onOpenURL { app.handlePaymentLink($0.absoluteString) }
+        // Android's path. Checked when the root appears (cold start, link on activity.intent) and on
+        // every foreground (warm start, captured from onNewIntent). Consuming clears it, so a link
+        // fires once and can't replay on the next resume.
+        .onAppear { app.checkAndroidPaymentLink() }
         .onChange(of: scenePhase) { _, phase in
             switch phase {
             case .inactive:
@@ -75,6 +88,7 @@ struct RootView: View {
                 app.appLock.markBackgrounded()
             case .active:
                 app.appLock.applyForegroundLock()
+                app.checkAndroidPaymentLink()
                 withAnimation(.easeOut(duration: 0.28)) { privacyCovered = false }
                 // Returning from a real background trip: re-pull the remote endpoints config so a
                 // rotation takes effect without a cold launch. Guarded by `wasBackgrounded` so this

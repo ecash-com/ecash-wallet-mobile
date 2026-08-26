@@ -46,6 +46,29 @@ public enum PlatformBridge {
         #endif
     }
 
+    /// Take a payment link delivered by an Android VIEW intent, or nil. Consuming clears it, so a
+    /// link is acted on exactly once and can't replay on the next resume.
+    ///
+    /// **Why not SwiftUI's `onOpenURL`.** SkipUI implements it under `#if SKIP`; on the Fuse-Android
+    /// path the app compiles against the native-Swift declaration whose body is `return self`. It
+    /// compiles cleanly and silently does nothing — verified on device, twice.
+    ///
+    /// **Why the capture lives in Main.kt.** Reading the intent here needs
+    /// `addOnNewIntentListener(Consumer<Intent>)` for warm starts, and `androidx.activity` isn't on
+    /// this module's classpath. Main.kt already has it (it's where `AndroidActivityHolder` is set),
+    /// so it captures on create AND on new intent, and this just drains what it stored — the same
+    /// division of labour as the rest of the Android glue.
+    public static func takePaymentLink() -> String? {
+        #if SKIP
+        let link = PendingPaymentLinkHolder.current
+        PendingPaymentLinkHolder.current = nil
+        guard let link, !link.isEmpty else { return nil }
+        return link
+        #else
+        return nil
+        #endif
+    }
+
     /// Block (or unblock) screen capture for the whole window — Android `FLAG_SECURE`.
     /// Used by seed-bearing screens (Backup reveal/verify, Import). No-op off Android and when
     /// no activity is tracked (fail-safe: the screen still shows; capture just isn't blocked).
@@ -150,6 +173,13 @@ public final class BiometricCallback: android.hardware.biometrics.BiometricPromp
 /// The current foreground Activity, set by the app's `Main.kt` lifecycle glue (the transpiled
 /// module can't reach `skip.ui.UIApplication`; the app CAN reach this class). Android-only.
 // SKIP @nobridge
+/// Set by `Main.kt` when a `bitcoin:`/`ecash:` VIEW intent arrives — on create (cold start) and in
+/// `onNewIntent` (warm start). Drained by `PlatformBridge.takePaymentLink`.
+public final class PendingPaymentLinkHolder {
+    public static var current: String? = nil
+    public init() {}
+}
+
 public final class AndroidActivityHolder {
     public static var current: android.app.Activity? = nil
     public init() {}

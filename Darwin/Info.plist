@@ -5,6 +5,18 @@
 	<!-- Allow cleartext HTTP to localhost / .local. Lets the iOS Simulator reach a dev CoinNews
 	     indexer on the host (e.g. BitWindow at http://127.0.0.1:30301). NSAllowsLocalNetworking is
 	     the App-Store-sanctioned ATS exception (local only) — production endpoints are https. -->
+	<key>CFBundleURLTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleURLName</key>
+			<string>com.ecash.mobile.wallet</string>
+			<key>CFBundleURLSchemes</key>
+			<array>
+				<string>bitcoin</string>
+				<string>ecash</string>
+			</array>
+		</dict>
+	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
 		<key>NSAllowsLocalNetworking</key>

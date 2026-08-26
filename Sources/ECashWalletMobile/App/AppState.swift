@@ -466,6 +466,102 @@ final class AppState {
         return .unknown
     }
 
+    // MARK: - Payment links (bitcoin: / ecash:)
+
+    /// A payment link waiting to be paid: the BIP21 body, once we know a wallet can pay it.
+    /// Home observes this and opens Send prefilled.
+    private(set) var pendingPaymentLink: String?
+
+    /// Wallets offered for an incoming link when there's a genuine choice to make. Empty = no prompt.
+    private(set) var paymentLinkChoices: [ManagedWallet] = []
+    /// The BIP21 body waiting on that choice.
+    private(set) var paymentLinkChoiceBody: String?
+    /// True when the link didn't name a chain, so the picker must say so — a `bc1…` address is
+    /// valid on Bitcoin AND eCash, and only the user knows which the payee is watching.
+    private(set) var paymentLinkIsAmbiguous = false
+
+    /// Explains why an incoming link can't be paid — wrong chain, or no wallet for it. Shown as an
+    /// alert rather than silently dropping the link.
+    private(set) var paymentLinkProblem: String?
+
+    /// Handle a `bitcoin:`/`ecash:` link (or a bare address) opened from outside the app.
+    ///
+    /// The scheme is the ONLY way a sender can say which chain they mean — eCash is byte-identical
+    /// to Bitcoin, so `bc1q…` is valid on both. `PaymentLink.routing` applies that strictly; here we
+    /// just match it against the wallets that exist.
+    ///
+    /// Never auto-sends and never auto-switches to a wallet the user didn't pick: a link arrives
+    /// from any app or web page, so it prefills and stops (Golden Rule §7).
+    func handlePaymentLink(_ raw: String) {
+        paymentLinkProblem = nil
+        let scheme = PaymentLink.scheme(of: raw)
+        let body = PaymentLink.body(of: raw)
+        guard let parsed = BIP21.parse(body) else {
+            paymentLinkProblem = "That payment link isn't valid."
+            return
+        }
+        let routing = PaymentLink.routing(scheme: scheme, address: parsed.address)
+        let candidates = wallets.filter { routing.networks.contains($0.network) }
+        guard !candidates.isEmpty else {
+            paymentLinkProblem = PaymentLink.noWalletMessage(for: routing)
+            return
+        }
+        // If the selected wallet can pay it, use it. Otherwise switch to the only candidate — but
+        // when the link is ambiguous (bare mainnet-class address, payable by both a Bitcoin and an
+        // eCash wallet) never choose for the user: picking wrong sends real value to a chain the
+        // payee will never watch.
+        // Ask whenever there's an actual choice, and only then. One candidate means no decision to
+        // make — even for a link that didn't name a chain, since there's nothing to choose between
+        // and the Send review still shows the network before anything is broadcast.
+        //
+        // With several candidates we never pick, not even the currently-selected wallet: on an
+        // ambiguous link the wrong choice sends real value to a chain the payee will never watch,
+        // and on a named chain the user still knows better than we do which wallet should pay.
+        if candidates.count == 1 {
+            if candidates[0].id != selectedWalletId { selectWallet(id: candidates[0].id) }
+            pendingPaymentLink = body
+        } else {
+            paymentLinkChoices = candidates
+            paymentLinkChoiceBody = body
+            paymentLinkIsAmbiguous = routing.isAmbiguous
+        }
+    }
+
+    /// Drain any payment link Android delivered as a VIEW intent. No-op on iOS, where SwiftUI's
+    /// `onOpenURL` already works — see `PlatformBridge.takePaymentLink` for why Android can't use it.
+    func checkAndroidPaymentLink() {
+        guard let link = PlatformBridge.takePaymentLink(), !link.isEmpty else { return }
+        handlePaymentLink(link)
+    }
+
+    /// Drain again once the UI is up. `.onAppear` alone isn't enough on a cold start: Compose runs
+    /// the root inside `onCreate`, and `scenePhase` is already `.active`, so neither fires after the
+    /// intent is captured. Called from Home's `.task`, which runs after the first render.
+    func recheckPaymentLinkAfterLaunch() { checkAndroidPaymentLink() }
+
+    /// Pay the pending link from a chosen wallet.
+    func choosePaymentLinkWallet(id: String) {
+        guard let body = paymentLinkChoiceBody else { return }
+        clearPaymentLinkChoice()
+        if id != selectedWalletId { selectWallet(id: id) }
+        pendingPaymentLink = body
+    }
+
+    func clearPaymentLinkChoice() {
+        paymentLinkChoices = []
+        paymentLinkChoiceBody = nil
+        paymentLinkIsAmbiguous = false
+    }
+
+    /// Consume the pending link (Home calls this once it has opened Send).
+    func takePendingPaymentLink() -> String? {
+        let link = pendingPaymentLink
+        pendingPaymentLink = nil
+        return link
+    }
+
+    func clearPaymentLinkProblem() { paymentLinkProblem = nil }
+
     /// Discard any cached Send VM so the next `makeSendViewModel()` builds a fresh flow. Call when
     /// the user opens Send (before presenting the cover).
     func beginSendFlow() {

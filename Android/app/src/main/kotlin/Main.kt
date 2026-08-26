@@ -66,6 +66,10 @@ open class MainActivity: AppCompatActivity {
     override fun onCreate(savedInstanceState: android.os.Bundle?) {
         super.onCreate(savedInstanceState)
         logger.info("starting activity")
+        // BEFORE setContent. setContent runs the Compose root inline, so RootView's .onAppear —
+        // which drains this — executes during onCreate, well before onResume. Capturing in
+        // onResume meant the drain always ran first and found nothing.
+        capturePaymentLink(getIntent())
         UIApplication.launch(this)
         enableEdgeToEdge()
 
@@ -95,7 +99,30 @@ open class MainActivity: AppCompatActivity {
         // Expose the foreground activity to WalletService's platform glue (FLAG_SECURE on
         // seed-bearing screens, BiometricPrompt) — the transpiled module can't reach skip.ui.
         wallet.service.AndroidActivityHolder.current = this
+        capturePaymentLink(getIntent())
         AppDelegate.shared.onResume()
+    }
+
+    /// A bitcoin:/ecash: link arriving while the app is ALREADY running. Android delivers it here
+    /// rather than updating getIntent(), so setIntent() is required or onResume would keep seeing
+    /// the original launch intent.
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        capturePaymentLink(intent)
+    }
+
+    /// Hand a payment link to WalletService, which the Swift side drains via
+    /// PlatformBridge.takePaymentLink(). Done in Kotlin because reading VIEW intents needs
+    /// androidx.activity, which the transpiled module doesn't have on its classpath — and because
+    /// SwiftUI's onOpenURL is a no-op on the Fuse-Android path.
+    private fun capturePaymentLink(intent: android.content.Intent?) {
+        if (intent?.action != android.content.Intent.ACTION_VIEW) return
+        val data = intent.dataString
+        if (data.isNullOrEmpty()) return
+        wallet.service.PendingPaymentLinkHolder.current = data
+        // Clear so the same link isn't re-delivered on the next resume.
+        setIntent(android.content.Intent(android.content.Intent.ACTION_MAIN))
     }
 
     override fun onPause() {

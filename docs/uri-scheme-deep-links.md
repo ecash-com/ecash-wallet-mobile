@@ -1,10 +1,9 @@
 # URI Scheme Deep Links (`bitcoin:` / `ecash:`) — design
 
-**Status:** 🟡 DESIGNED, NOT BUILT — 2026-08-14. Requested in
-[issue #6](https://github.com/ecash-com/ecash-wallet-mobile/issues/6) by @nyusternie. The decisions in
-§3 are made; §5 is the implementation plan; §8 lists what's still open. Nothing here is in the code
-yet **except** the `req-` fix (§5.4), which shipped separately because it was a live bug in the QR
-scanner.
+**Status:** 🟢 BUILT 2026-08-26, verified on an iPhone 17 Pro simulator and a Solana Saga. Requested
+in [issue #6](https://github.com/ecash-com/ecash-wallet-mobile/issues/6) by @nyusternie. §3 records
+the decisions; §4a documents three Android traps that cost several build cycles and are worth reading
+before touching this again.
 
 Related: `docs/key-derivation.md` (eCash = Bitcoin params — the root of the whole problem),
 CLAUDE.md Golden Rules §2 / §6 / §7 and §9 (Send).
@@ -78,6 +77,44 @@ and the message is what makes it diagnosable rather than baffling.
 
 When the switcher does appear, the network chip is the safety mechanism (Golden Rule §6) — and for
 the ambiguous row it should say outright that the link didn't specify a chain.
+
+## 4a. As built — the Android traps
+
+iOS was straightforward: `CFBundleURLTypes` plus SwiftUI's `onOpenURL`, working first try. Android
+needed three separate fixes, each of which **compiled cleanly and silently did nothing**.
+
+**1. `onOpenURL` is a no-op on Fuse-Android.** SkipUI implements it under `#if SKIP`; the Fuse app
+compiles against the native-Swift declaration whose body is `return self`. `onOpenURLString` IS
+bridged, but only onto the bridged `any View`, which a `some View` modifier chain can't reach. So the
+intent has to be read outside SwiftUI entirely. (skip-kit doesn't help — its `urlSchemes` is
+read-only and iOS-only.)
+
+**2. The read belongs in `Main.kt`, before `setContent`.** Reading VIEW intents needs
+`androidx.activity` for `addOnNewIntentListener`, which isn't on WalletService's classpath but is
+already imported in `Main.kt` — the same place `AndroidActivityHolder` is set. It must run *before*
+`setContent`, because Compose runs the root inline: RootView's `.onAppear`, which drains the value,
+executes during `onCreate` and would otherwise always run first and find nothing. `onNewIntent` also
+calls `setIntent`, or a warm-start link is lost.
+
+**3. `.onChange` never fires for a value set before the view mounts.** With the link handled during
+RootView's `.onAppear`, `pendingPaymentLink` is already non-nil by the time Home appears, and
+`onChange` only reports *subsequent* changes. Home therefore consumes it from `.task` as well. iOS
+masked this entirely, because there the URL arrives after the UI is up — a genuine change.
+
+The through-line: on this stack, "it compiles" says nothing about whether an Android path is wired.
+Only running it on a device does. Each of these was found by logging to logcat at every stage, not by
+reasoning about the code.
+
+## 4b. As built — the wallet picker
+
+`PaymentLinkWalletPicker` appears when **more than one** wallet could pay the link, and only then.
+One candidate opens Send directly, even for a link that names no chain — there's nothing to choose
+between, and Send still shows the network before anything is broadcast.
+
+With several candidates we never pick, not even the currently-selected wallet: on an ambiguous link
+the wrong choice sends real value to a chain the payee will never watch, and on a named chain the
+user knows better than we do which wallet should pay. Each row carries the network chip, and the
+ambiguous case says outright that the link didn't specify a chain.
 
 ## 5. Implementation plan
 

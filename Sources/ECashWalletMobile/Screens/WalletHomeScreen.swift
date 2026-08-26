@@ -16,6 +16,8 @@ struct WalletHomeScreen: View {
     // without a changing `.id` the next Send reopened on the previous flow's "Sent" step with stale
     // data (iOS recreates the cover, so it was Android-only). See SendScreen `.id(sendToken)`.
     @State var sendToken = 0
+    /// BIP21 body from an incoming payment link, handed to the Send flow as its starting address.
+    @State var prefilledSendLink: String? = nil
     @State var showBackup = false
     @State var showWalletManager = false
     @State var showFaucet = false
@@ -41,13 +43,49 @@ struct WalletHomeScreen: View {
             }
         }
         // Sync the selected wallet against its backend when Home appears (cached balance shows first).
-        .task { await app.sync() }
+        .task {
+            // Drain the bridge (Android cold start), THEN consume anything already pending.
+            // `.onChange` alone can't cover this: on Android the link is handled during RootView's
+            // .onAppear, so `pendingPaymentLink` is already set before Home mounts, and onChange
+            // only fires on a SUBSEQUENT change — never the initial value. iOS didn't show it
+            // because there the URL arrives after the UI is up, which is a genuine change.
+            app.recheckPaymentLinkAfterLaunch()
+            openSendForPendingLinkIfAny()
+            await app.sync()
+        }
+        // A payment link arrived from outside the app — open Send prefilled with it. Deliberately
+        // stops at the recipient step: the link is untrusted input, so the user still confirms
+        // recipient, amount, fee and network before anything is broadcast (Golden Rule §7).
+        .onChange(of: app.pendingPaymentLink) { _, _ in openSendForPendingLinkIfAny() }
+        // Which wallet should pay? Only presented when more than one can — see AppState.
+        .sheet(isPresented: Binding(
+            get: { !app.paymentLinkChoices.isEmpty },
+            set: { if !$0 { app.clearPaymentLinkChoice() } })) {
+            PaymentLinkWalletPicker()
+        }
+        .alert("Can't open that link", isPresented: Binding(
+            get: { app.paymentLinkProblem != nil },
+            set: { if !$0 { app.clearPaymentLinkProblem() } })) {
+            Button("OK", role: .cancel) { app.clearPaymentLinkProblem() }
+        } message: {
+            Text(verbatim: app.paymentLinkProblem ?? "")
+        }
         // Receive is a modal sheet (grab-an-address-and-dismiss), not a navigation push.
         .sheet(isPresented: $showReceive) { ReceiveScreen() }
         // Send is a full-screen cover — a focused, multi-step money flow, not a peek-and-dismiss.
         .fullScreenFlow(isPresented: $showSend) {
             if let vm = app.makeSendViewModel() {
-                SendScreen(viewModel: vm).id(sendToken)
+                SendScreen(viewModel: vm)
+                    .id(sendToken)
+                    .onAppear {
+                        // Prefill from an incoming payment link. Set here rather than at
+                        // construction because `makeSendViewModel` caches an in-flight VM; this
+                        // fills the recipient field and leaves every confirmation step intact.
+                        if let link = prefilledSendLink {
+                            vm.addressText = link
+                            prefilledSendLink = nil
+                        }
+                    }
             }
         }
         // Backup: gate → reveal → verify; clears the warning below on success.
@@ -81,6 +119,16 @@ struct WalletHomeScreen: View {
     /// eCash-only nudge shown when the wallet holds pre-fork coins (shared with Bitcoin). Tapping
     /// opens the split flow; the ✕ dismisses it for this session (it also clears itself once split,
     /// since the summary recomputes `needsSplitCount == 0`).
+    /// Open Send prefilled from an incoming payment link, if one is waiting. Called from BOTH
+    /// `.task` and `.onChange` — see the note in `.task` for why either alone misses a case.
+    private func openSendForPendingLinkIfAny() {
+        guard let body = app.takePendingPaymentLink() else { return }
+        app.beginSendFlow()
+        prefilledSendLink = body
+        sendToken += 1
+        showSend = true
+    }
+
     private var splitNudge: some View {
         HStack(alignment: .top, spacing: Theme.Space.x2) {
             Button {
