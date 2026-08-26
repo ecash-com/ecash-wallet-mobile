@@ -78,6 +78,7 @@ public protocol WalletEngineProtocol: AnyObject {
 
     /// Read-only split status (total spendable vs pre-fork amount needing a split). No I/O beyond the
     /// local UTXO set; drives the split nudge + the amount shown in the flow.
+    func sync(forceFullScan: Bool) async throws
     func splitSummary() throws -> SplitSummary
     func splitSummary(knownShared: [String], knownSafe: [String]) throws -> SplitSummary
     func splitCandidates() throws -> [Utxo]
@@ -518,6 +519,37 @@ public final class WalletEngine: WalletEngineProtocol {
         return result
     }
 
+    /// Keep `gapLimit` unused addresses revealed beyond the lowest unused one, on BOTH keychains.
+    ///
+    /// **This is what makes a revealed-spks sync equivalent to a full scan.** After the first sync we
+    /// use `startSyncWithRevealedSpks`, which asks the server only about addresses we have already
+    /// revealed — and `nextUnusedAddress` reveals one only when nothing unused exists, so the window
+    /// can be a single address wide. A payment to any index beyond it is invisible, and stays
+    /// invisible forever, because `isFresh` is false so we never full-scan again.
+    ///
+    /// That isn't hypothetical: the same seed loaded in another wallet hands out a receive address at
+    /// an index we've never revealed (that app has its own lookahead), the user is paid there, and our
+    /// balance silently omits it. Reported 2026-08-25 — a wallet reading 0.00000000 while another app
+    /// on the same seed showed the deposit.
+    ///
+    /// 20 is the BIP-44 gap limit, matching `stopGap` on the full-scan path so both modes cover the
+    /// same ground. Revealing is cheap (a derivation plus one persist) and converges: the target only
+    /// moves when an address is actually used.
+    private func ensureGapLimitLookahead(gapLimit: UInt32 = UInt32(20)) throws {
+        var revealed = false
+        for keychain in [BDKSeam.externalKeychain(), BDKSeam.internalKeychain()] {
+            let lowestUnused = wallet.nextUnusedAddress(keychain: keychain).index
+            let target = lowestUnused + gapLimit
+            if (wallet.derivationIndex(keychain: keychain) ?? UInt32(0)) < target {
+                _ = wallet.revealAddressesTo(keychain: keychain, index: target)
+                revealed = true
+            }
+        }
+        // Persist so the widened window survives a restart — otherwise every cold start narrows it
+        // back and the same deposit goes missing again.
+        if revealed { _ = try? wallet.persist(persister: persister) }
+    }
+
     /// The confirmation block height of a UTXO, or nil if unconfirmed. ChainPosition diverges (Swift
     /// enum with associated values vs Kotlin sealed class) — same split as `transactions()`.
     private func confirmationHeight(of output: LocalOutput) -> Int64? {
@@ -710,12 +742,23 @@ public final class WalletEngine: WalletEngineProtocol {
     /// The BDK Electrum calls here are synchronous; callers must invoke `sync()` off the main
     /// actor. It's `async` so the call site can `await` it on a background task.
     public func sync() async throws {
+        try await sync(forceFullScan: false)
+    }
+
+    /// - Parameter forceFullScan: re-walk the derivation path from index 0 with the gap limit, as on
+    ///   a first sync. Needed to DISCOVER coins at indices this wallet has never revealed — see
+    ///   `ensureGapLimitLookahead` for how they get there. Costs a full rescan, so it's user-invoked.
+    public func sync(forceFullScan: Bool) async throws {
         do {
+            // Widen the watched window BEFORE building the request, or a revealed-spks sync asks
+            // about the handful of addresses we happen to have revealed and nothing else.
+            try ensureGapLimitLookahead()
+
             // Fresh wallet (genesis checkpoint only) → full scan (gap limit 20); else revealed-spks
-            // sync (no gap-limit blind spots). Branch by backend type — the two BDK clients have
-            // different scan/sync signatures (Electrum: batchSize+fetchPrevTxouts; Esplora:
-            // parallelRequests). Both take an optional SOCKS5/proxy for Tor.
-            let isFresh = wallet.latestCheckpoint().height == UInt32(0)
+            // sync. Branch by backend type — the two BDK clients have different scan/sync signatures
+            // (Electrum: batchSize+fetchPrevTxouts; Esplora: parallelRequests). Both take an
+            // optional SOCKS5/proxy for Tor.
+            let isFresh = forceFullScan || wallet.latestCheckpoint().height == UInt32(0)
             switch backend.kind {
             case .electrum:
                 let client = try ElectrumClient(url: backend.url, socks5: backend.socks5)

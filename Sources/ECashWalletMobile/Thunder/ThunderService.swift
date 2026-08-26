@@ -102,6 +102,16 @@ final class ThunderService: WalletOps {
 
     /// Scan this wallet's addresses (0 ..< revealed + gap limit), refresh the cached UTXO set, and
     /// rebuild history from the unspent + spent reads.
+    /// Thunder derives its own address window on every sync (no BDK revealed-spk model), so a
+    /// rescan is just a sync — there is no narrower window to widen.
+    func balanceAsync(walletId: String) async throws -> Amount { try balance(walletId: walletId) }
+    func pendingBalanceAsync(walletId: String) async throws -> Amount { try pendingBalance(walletId: walletId) }
+    func transactionsAsync(walletId: String) async throws -> [WalletTx] { try transactions(walletId: walletId) }
+
+    func rescan(walletId: String) async throws -> Amount {
+        try await sync(walletId: walletId)
+    }
+
     func sync(walletId: String) async throws -> Amount {
         let addresses = try await addressWindow(walletId: walletId)
         let client = makeClient()

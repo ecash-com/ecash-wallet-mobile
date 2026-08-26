@@ -22,6 +22,10 @@ protocol WalletOps {
     func balance(walletId: String) throws -> Amount
     func pendingBalance(walletId: String) throws -> Amount
     func sync(walletId: String) async throws -> Amount
+    func rescan(walletId: String) async throws -> Amount
+    func balanceAsync(walletId: String) async throws -> Amount
+    func pendingBalanceAsync(walletId: String) async throws -> Amount
+    func transactionsAsync(walletId: String) async throws -> [WalletTx]
     /// A receive address: `unused: true` = the default (lowest unused, doesn't advance); `false` =
     /// reveal a fresh one ("New address"). **Async** so an engine whose derivation is heavy (Thunder:
     /// Keychain read + PBKDF2 + SLIP-0010 + BLAKE3) can run it OFF the main actor and not jank the

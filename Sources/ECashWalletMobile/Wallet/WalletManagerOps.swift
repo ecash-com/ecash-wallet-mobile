@@ -17,6 +17,10 @@ final class WalletManagerOps: WalletOps {
     func balance(walletId: String) throws -> Amount { try manager.balance(walletId: walletId) }
     func pendingBalance(walletId: String) throws -> Amount { try manager.pendingBalance(walletId: walletId) }
     func sync(walletId: String) async throws -> Amount { try await manager.sync(walletId: walletId) }
+    func rescan(walletId: String) async throws -> Amount { try await manager.rescan(walletId: walletId) }
+    func balanceAsync(walletId: String) async throws -> Amount { try await manager.balanceAsync(walletId: walletId) }
+    func pendingBalanceAsync(walletId: String) async throws -> Amount { try await manager.pendingBalanceAsync(walletId: walletId) }
+    func transactionsAsync(walletId: String) async throws -> [WalletTx] { try await manager.transactionsAsync(walletId: walletId) }
     func receiveAddress(walletId: String, unused: Bool) async throws -> AddressInfo {
         // BDK derivation is a fast watch-only lookup — no need to leave the main actor.
         unused ? try manager.nextUnusedAddress(walletId: walletId)

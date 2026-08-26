@@ -90,6 +90,32 @@ struct SettingsScreen: View {
                                 .foregroundStyle(Theme.Colors.text2)
                         }
                     }
+
+                    // Recovery for coins received at an address this wallet never revealed —
+                    // normal syncs only ask about revealed ones, so those deposits are invisible
+                    // regardless of backend. Happens when the same seed is used in another wallet.
+                    Button { Task { await app.rescanWallet() } } label: {
+                        HStack {
+                            Text("Rescan wallet", bundle: .module,
+                                 comment: "settings: full rescan of the derivation path")
+                                .textStyle(.body)
+                                .foregroundStyle(Theme.Colors.text0)
+                            Spacer()
+                            if app.isRescanning {
+                                Text("Scanning…", bundle: .module, comment: "rescan in progress")
+                                    .textStyle(.xs)
+                                    .foregroundStyle(Theme.Colors.text2)
+                            } else {
+                                disclosureChevron
+                            }
+                        }
+                    }
+                    .disabled(app.isRescanning)
+
+                    Text("Looks for coins sent to addresses this wallet hasn't handed out yet — use it if a balance looks wrong after receiving in another wallet on the same recovery phrase.",
+                         bundle: .module, comment: "rescan explainer")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.text2)
                 }
                 Toggle(isOn: Binding(
                     get: { app.appLock.enabled },

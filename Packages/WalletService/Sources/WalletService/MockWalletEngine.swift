@@ -117,6 +117,14 @@ public final class MockWalletEngine: WalletEngineProtocol {
                         confirmations: 0, timestampEpochSeconds: nil, isRBF: true)
     }
 
+    /// Records whether a rescan was requested, so tests can assert the recovery path is wired.
+    public private(set) var lastForceFullScan: Bool? = nil
+
+    public func sync(forceFullScan: Bool) async throws {
+        lastForceFullScan = forceFullScan
+        try await sync()
+    }
+
     public func splitSummary() throws -> SplitSummary {
         if let error = errorToThrow { throw error }
         return splitSummaryToReturn

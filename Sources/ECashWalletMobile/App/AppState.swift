@@ -428,6 +428,9 @@ final class AppState {
     /// Cached verdicts from the Bitcoin check, per wallet.
     @ObservationIgnored private let splitCheckStore = SplitCheckStore()
 
+    /// True while a full rescan is running (drives the Settings row's spinner).
+    private(set) var isRescanning = false
+
     /// True while the on-demand Bitcoin check is running (drives the Settings row's spinner).
     private(set) var isCheckingSplittableCoins = false
     /// Outcome of the last check, for the Settings row. nil = never run this session.
@@ -725,13 +728,46 @@ final class AppState {
     /// overwrites fresher values with older ones. `refresh()` deliberately avoids these calls
     /// because they build the BDK engine; this is the same synchronous read `balanceSummary` already
     /// performs on the main actor for every row of the wallet list, so it adds no new class of risk.
-    private func loadCachedStateIfNeeded(walletId id: String) {
+    private func loadCachedStateIfNeeded(walletId id: String) async {
         guard transactions.isEmpty, balance.sats == 0 else { return }
-        if let cached = try? walletOps.balance(walletId: id) { balance = cached }
-        if let pending = try? walletOps.pendingBalance(walletId: id) { pendingBalance = pending }
-        if let cachedTxs = try? walletOps.transactions(walletId: id) { transactions = sorted(cachedTxs) }
+        // AWAITED, not called directly: these reads may build the BDK engine (open SQLite, parse
+        // descriptors) and parse the whole transaction list. `AppState` is @MainActor, so the
+        // synchronous versions ran that on the main thread — and the guard above means it fired on
+        // exactly the cold-start path, i.e. the moment the user unlocks. The async variants are
+        // non-isolated, so they run on the cooperative pool (CLAUDE.md §10) and only the
+        // assignments come back to main.
+        if let cached = try? await walletOps.balanceAsync(walletId: id) { balance = cached }
+        if let pending = try? await walletOps.pendingBalanceAsync(walletId: id) { pendingBalance = pending }
+        if let cachedTxs = try? await walletOps.transactionsAsync(walletId: id) { transactions = sorted(cachedTxs) }
         if selectedWallet?.network == .ecash {
             splitSummary = try? splitSummaryUsingCachedChecks(walletId: id)
+        }
+    }
+
+    /// Re-walk the derivation path from index 0 with the gap limit — the recovery path for coins
+    /// received at an address this wallet never revealed.
+    ///
+    /// Normal syncs ask the server only about REVEALED addresses, so a payment to an index we've
+    /// never handed out is invisible to them no matter which backend is used. That happens whenever
+    /// the same seed is loaded in another wallet, which hands out addresses from its own lookahead.
+    /// `ensureGapLimitLookahead` stops it recurring; this finds what was already missed.
+    func rescanWallet() async {
+        guard let id = selectedWalletId, !isRescanning, !isSyncing else { return }
+        isRescanning = true
+        syncState = .syncing
+        defer { isRescanning = false }
+        do {
+            balance = try await walletOps.rescan(walletId: id)
+            syncStore.markSynced(walletId: id, at: Int64(Date().timeIntervalSince1970))
+            pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
+            transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
+            splitSummary = (selectedWallet?.network == .ecash) ? (try? splitSummaryUsingCachedChecks(walletId: id)) : nil
+            syncState = .idle
+            Task { await refreshPrice() }
+        } catch let error as WalletError {
+            syncState = .failed(error.userMessage)
+        } catch {
+            syncState = .failed(WalletError.syncFailed.userMessage)
         }
     }
 
@@ -828,7 +864,7 @@ final class AppState {
         isSyncing = true
         defer { isSyncing = false }
 
-        loadCachedStateIfNeeded(walletId: id)
+        await loadCachedStateIfNeeded(walletId: id)
         syncState = .syncing
         do {
             // `manager.sync` is a non-isolated async method, so the BDK network work runs off the

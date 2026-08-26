@@ -37,6 +37,22 @@ import WalletService
             calls.append("split:\(walletId)")
             return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
         }
+        func balanceAsync(walletId: String) async throws -> Amount {
+            calls.append("balanceAsync:\(walletId)")
+            return Amount(sats: 0)
+        }
+        func pendingBalanceAsync(walletId: String) async throws -> Amount {
+            calls.append("pendingAsync:\(walletId)")
+            return Amount(sats: 0)
+        }
+        func transactionsAsync(walletId: String) async throws -> [WalletTx] {
+            calls.append("txsAsync:\(walletId)")
+            return []
+        }
+        func rescan(walletId: String) async throws -> Amount {
+            calls.append("rescan:\(walletId)")
+            return Amount(sats: 0)
+        }
         func splitSummary(walletId: String) throws -> SplitSummary {
             calls.append("summary:\(walletId)")
             return SplitSummary(spendableSats: 0, needsSplitSats: 0, needsSplitCount: 0)
@@ -86,7 +102,14 @@ import WalletService
         _ = try await facade.sweep(walletId: "thunder-id", to: "x", feeRate: FeeRate(satPerVByte: 1))
         _ = try await facade.splitToSelf(walletId: "thunder-id", feeRate: FeeRate(satPerVByte: 1))
         _ = try facade.splitSummary(walletId: "thunder-id")
-        #expect(thunder.calls.count == 10)    // all ten ops routed to Thunder
+        // The off-main read variants and the rescan recovery path route too — a Thunder wallet must
+        // never reach the BDK ops, and an op added to the protocol without a route here would send
+        // it to the wrong engine.
+        _ = try await facade.rescan(walletId: "thunder-id")
+        _ = try await facade.balanceAsync(walletId: "thunder-id")
+        _ = try await facade.pendingBalanceAsync(walletId: "thunder-id")
+        _ = try await facade.transactionsAsync(walletId: "thunder-id")
+        #expect(thunder.calls.count == 14)    // every op routed to Thunder
         #expect(primary.calls.isEmpty)
     }
 

@@ -264,6 +264,10 @@ public final class WalletManager: @unchecked Sendable {
 
     /// Set a per-network custom endpoint. `kind` is `"electrum"`/`"esplora"`.
     public func setBackendOverride(network: WalletNetwork, kind: String, url: String) {
+        // Backstop: never persist an override the clients can't use. The editor blocks this at the
+        // field, but an override reaches BDK directly and a mismatched scheme fails as a dead
+        // server rather than a config error — worth refusing at the boundary too.
+        guard BackendURLValidator.isAcceptable(kind: kind, url: url) else { return }
         let defaults = UserDefaults.standard
         defaults.set(kind, forKey: kindKey(network))
         defaults.set(url, forKey: urlKey(network))
@@ -468,6 +472,38 @@ public final class WalletManager: @unchecked Sendable {
     public func sync(walletId: String) async throws -> Amount {
         let engine = try liveEngine(walletId: walletId)
         try await engine.sync()
+        return try engine.balance()
+    }
+
+    // MARK: - Off-main cached reads
+    //
+    // `WalletManager` is a plain class, so these `async` methods run on the cooperative pool rather
+    // than the caller's actor — the same mechanism that keeps `sync` off the main thread. That
+    // matters because each one may BUILD the BDK engine (open SQLite, parse descriptors) and parse
+    // the whole transaction list, which on a wallet with real history is far too slow for the main
+    // thread. CLAUDE.md §10: BDK work stays off the main actor.
+
+    public func balanceAsync(walletId: String) async throws -> Amount {
+        try balance(walletId: walletId)
+    }
+
+    public func pendingBalanceAsync(walletId: String) async throws -> Amount {
+        try pendingBalance(walletId: walletId)
+    }
+
+    public func transactionsAsync(walletId: String) async throws -> [WalletTx] {
+        try transactions(walletId: walletId)
+    }
+
+    /// Re-walk the derivation path from index 0 with the gap limit, as on a first sync.
+    ///
+    /// The recovery path for coins received at an index this wallet never revealed — typically the
+    /// same seed being used in another wallet, which hands out addresses from its own lookahead. A
+    /// revealed-spks sync can't find those (it only asks about what we've revealed); a full scan
+    /// discovers them by walking. Slow, so it's user-invoked rather than automatic.
+    public func rescan(walletId: String) async throws -> Amount {
+        let engine = try liveEngine(walletId: walletId)
+        try await engine.sync(forceFullScan: true)
         return try engine.balance()
     }
 
