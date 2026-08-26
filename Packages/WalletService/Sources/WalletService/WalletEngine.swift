@@ -741,6 +741,15 @@ public final class WalletEngine: WalletEngineProtocol {
     ///
     /// The BDK Electrum calls here are synchronous; callers must invoke `sync()` off the main
     /// actor. It's `async` so the call site can `await` it on a background task.
+    /// Transport throughput. Purely concurrency dials — they change how fast the SAME set of
+    /// scripts is queried, never which ones, so they can't affect what the wallet finds.
+    ///
+    /// Raised from 10/4 because the gap-limit lookahead widened every request by ~40 scripts, and
+    /// the round-trips dominate. If a public server starts rate-limiting (syncs failing rather than
+    /// slowing), these are the first values to walk back.
+    private static let electrumBatchSize = UInt64(25)
+    private static let esploraParallelRequests = UInt64(10)
+
     public func sync() async throws {
         try await sync(forceFullScan: false)
     }
@@ -765,11 +774,11 @@ public final class WalletEngine: WalletEngineProtocol {
                 if isFresh {
                     let request = try wallet.startFullScan().build()
                     let update = try client.fullScan(request: request, stopGap: UInt64(20),
-                                                     batchSize: UInt64(10), fetchPrevTxouts: true)
+                                                     batchSize: Self.electrumBatchSize, fetchPrevTxouts: true)
                     try wallet.applyUpdate(update: update)
                 } else {
                     let request = try wallet.startSyncWithRevealedSpks().build()
-                    let update = try client.sync(request: request, batchSize: UInt64(10),
+                    let update = try client.sync(request: request, batchSize: Self.electrumBatchSize,
                                                  fetchPrevTxouts: true)
                     try wallet.applyUpdate(update: update)
                 }
@@ -778,11 +787,11 @@ public final class WalletEngine: WalletEngineProtocol {
                 if isFresh {
                     let request = try wallet.startFullScan().build()
                     let update = try client.fullScan(request: request, stopGap: UInt64(20),
-                                                     parallelRequests: UInt64(4))
+                                                     parallelRequests: Self.esploraParallelRequests)
                     try wallet.applyUpdate(update: update)
                 } else {
                     let request = try wallet.startSyncWithRevealedSpks().build()
-                    let update = try client.sync(request: request, parallelRequests: UInt64(4))
+                    let update = try client.sync(request: request, parallelRequests: Self.esploraParallelRequests)
                     try wallet.applyUpdate(update: update)
                 }
             }

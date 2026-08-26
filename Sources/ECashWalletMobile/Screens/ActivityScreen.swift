@@ -33,7 +33,7 @@ struct ActivityScreen: View {
                     }
                 }
                 .listStyle(.plain)
-                .refreshable { await app.sync() }
+                .refreshable { await app.sync(force: true) }
             }
         }
         .navigationTitle(Text("Activity", bundle: .module, comment: "activity screen title"))

@@ -34,7 +34,7 @@ struct WalletHomeScreen: View {
                     content(for: wallet)
                 }
                 .scrollIndicators(.hidden)
-                .refreshable { await app.sync() }
+                .refreshable { await app.sync(force: true) }
             } else {
                 PlaceholderScreen(heading: "Your wallet",
                                   note: "No wallet selected.")
@@ -269,7 +269,7 @@ struct WalletHomeScreen: View {
 
             if case .failed(let message) = app.syncState {
                 Button {
-                    Task { await app.sync() }
+                    Task { await app.sync(force: true) }
                 } label: {
                     HStack(spacing: Theme.Space.x1) {
                         Image(icon: Icon.refresh).resizable().scaledToFit().frame(width: 14, height: 14)

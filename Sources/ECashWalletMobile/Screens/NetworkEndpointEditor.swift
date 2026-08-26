@@ -145,7 +145,7 @@ struct NetworkEndpointEditor: View {
         }
         // Only the selected wallet syncs; re-sync just when its current network is the one we changed.
         if network == app.selectedWallet?.network {
-            Task { await app.sync() }
+            Task { await app.sync(force: true) }
         }
     }
 

@@ -52,6 +52,6 @@ struct ProxySettingsEditor: View {
     private func save() {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         app.setProxy(enabled && !trimmed.isEmpty ? trimmed : nil)
-        Task { await app.sync() }   // proxy is global; re-sync the selected wallet to pick it up
+        Task { await app.sync(force: true) }   // proxy is global; re-sync the selected wallet to pick it up
     }
 }

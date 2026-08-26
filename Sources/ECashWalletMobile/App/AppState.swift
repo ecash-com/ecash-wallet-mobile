@@ -53,6 +53,10 @@ final class AppState {
         didSet { UserDefaults.standard.set(newWalletWordCount, forKey: Self.newWalletWordCountKey) }
     }
 
+    /// How long a completed sync counts as fresh for ambient triggers. Short enough that the app
+    /// still feels live, long enough to collapse the resume/unlock/open-Send cluster into one.
+    private static let syncFreshnessWindow: TimeInterval = 30
+
     private static let selectedWalletKey = "selectedWalletId"
     private static let appLockKey = "appLockEnabled"
     private static let appLockGraceKey = "appLockGraceSeconds"
@@ -253,7 +257,9 @@ final class AppState {
         // If a wallet is showing, re-sync in case the winning backend changed (engines are evicted
         // only on an actual change, so this is a no-op when the config matched what we already had).
         if manager.selectedWalletId != nil {
-            await sync()
+            // Forced: this only runs when the config ACTUALLY changed, which can repoint the
+            // backend — the previous sync's results came from a different server.
+            await sync(force: true)
         }
     }
 
@@ -435,6 +441,10 @@ final class AppState {
     private(set) var isCheckingSplittableCoins = false
     /// Outcome of the last check, for the Settings row. nil = never run this session.
     private(set) var splitCheckMessage: String?
+
+    /// When each wallet last completed a sync, for the throttle in `sync(force:)`. Per wallet, so
+    /// switching wallets is never throttled by the previous one's timestamp.
+    @ObservationIgnored private var lastSyncedAt: [String: Date] = [:]
 
     /// Guards against overlapping `sync()` runs. `@ObservationIgnored` on purpose — it's internal
     /// bookkeeping, and the UI already has `syncState` to render from; observing this too would
@@ -672,7 +682,9 @@ final class AppState {
 
         // Then reconcile with the backend in the background — confirmations, fee, and the split
         // summary (a split-coins tx should clear the Home nudge without a manual refresh).
-        Task { await sync() }
+        // Forced: we've just changed the wallet's state, so a throttled skip would leave the user
+        // looking at pre-broadcast numbers.
+        Task { await sync(force: true) }
     }
 
     /// Switch the active wallet. Clears the previous wallet's on-screen state immediately and
@@ -729,7 +741,10 @@ final class AppState {
     /// because they build the BDK engine; this is the same synchronous read `balanceSummary` already
     /// performs on the main actor for every row of the wallet list, so it adds no new class of risk.
     private func loadCachedStateIfNeeded(walletId id: String) async {
-        guard transactions.isEmpty, balance.sats == 0 else { return }
+        // Either being empty is enough. Requiring BOTH meant that once a wallet was showing history
+        // with a zero balance — the exact state users reported — the cached read never ran again and
+        // couldn't self-heal.
+        guard transactions.isEmpty || balance.sats == 0 else { return }
         // AWAITED, not called directly: these reads may build the BDK engine (open SQLite, parse
         // descriptors) and parse the whole transaction list. `AppState` is @MainActor, so the
         // synchronous versions ran that on the main thread — and the guard above means it fired on
@@ -852,8 +867,18 @@ final class AppState {
     /// The BDK network work runs OFF the main actor (`manager.sync` is a non-isolated async method,
     /// so it runs on the cooperative pool — required, since Android throws on network-on-main); the
     /// observable mutations hop back to the main actor.
-    func sync() async {
+    /// - Parameter force: bypass the freshness throttle. Pass true for anything the user explicitly
+    ///   asked for (pull-to-refresh, retry) or where staleness would mislead (right after a
+    ///   broadcast, or a backend change).
+    func sync(force: Bool = false) async {
         guard let id = selectedWalletId else { return }
+        // Ambient triggers cluster: a foreground resume can fire the scene-phase sync, an app-lock
+        // unlock, and a Send tap within seconds, each doing a full-window query for a chain that
+        // hasn't meaningfully changed. The re-entrancy guard below only collapses CONCURRENT runs;
+        // this collapses back-to-back ones. Explicit user actions always pass `force`.
+        if !force, let last = lastSyncedAt[id], Date().timeIntervalSince(last) < Self.syncFreshnessWindow {
+            return
+        }
         // Coalesce concurrent syncs. Triggers now cluster in time — a foreground resume can fire the
         // scene-phase sync, an app-lock unlock, and a Send tap within the same second — and two
         // concurrent syncs on one BDK wallet means two writers against the same SQLite store, which
@@ -873,6 +898,7 @@ final class AppState {
             balance = updated
             // Record that this wallet's balance is now a fact rather than an unsynced default.
             syncStore.markSynced(walletId: id, at: Int64(Date().timeIntervalSince1970))
+            lastSyncedAt[id] = Date()
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             // Coin-split status (local, no I/O) — drives the Home nudge. eCash only; nil elsewhere.
