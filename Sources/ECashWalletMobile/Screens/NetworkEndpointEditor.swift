@@ -40,6 +40,12 @@ struct NetworkEndpointEditor: View {
                     .noAutocapitalization()
                     .onChange(of: url) { _, _ in testResult = nil }
 
+                if let problem = validationMessage {
+                    Text(verbatim: problem)
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.negative)
+                }
+
                 testRow
             } header: {
                 Text("Endpoint", bundle: .module, comment: "endpoint section header")
@@ -65,6 +71,7 @@ struct NetworkEndpointEditor: View {
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
                 ConfirmToolbarButton { save(); dismiss() }
+                    .disabled(validationMessage != nil)
             }
         }
         .task {
@@ -76,6 +83,13 @@ struct NetworkEndpointEditor: View {
     }
 
     private var trimmedURL: String { url.trimmingCharacters(in: .whitespacesAndNewlines) }
+
+    /// Why the current entry can't be saved, or nil when it's acceptable. Syntax only — whether the
+    /// server answers, and on the right chain, is what Test connection is for. Empty is allowed: it
+    /// means "clear my override", not "invalid".
+    private var validationMessage: String? {
+        BackendURLValidator.validationMessage(kind: kind, url: trimmedURL)
+    }
 
     /// True when the form already matches what this network resolves to with no override.
     ///
