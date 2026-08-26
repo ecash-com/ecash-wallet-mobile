@@ -89,12 +89,25 @@ struct ThunderRPCOutPoint: Codable, Equatable {
                 throw ThunderRPCError.malformedResponse("outpoint merkle_root")
             }
             outPoint = .coinbase(merkleRoot: root, vout: try coinbase.decode(UInt32.self, forKey: .vout))
+        } else if let flat = try? container.decode(String.self, forKey: .deposit) {
+            // A live node serializes Deposit as the STRING "txid:vout" — bitcoin::OutPoint's Display
+            // — not as the {"txid":…,"vout":…} object the other two variants use. Verified against
+            // 157.180.96.24:16009 on 2026-08-26, the first Thunder node with real UTXOs; before that
+            // every response was empty, so nothing exercised this branch.
+            let parts = flat.components(separatedBy: ":")
+            guard parts.count == 2, let vout = UInt32(parts[1]),
+                  let displayOrder = ThunderHex.decode(parts[0]), displayOrder.count == 32 else {
+                throw ThunderRPCError.malformedResponse("deposit outpoint")
+            }
+            // bitcoin::Txid display hex is reversed relative to the internal bytes Borsh writes.
+            outPoint = .deposit(txid: displayOrder.reversed(), vout: vout)
         } else if let deposit = try? container.nestedContainer(keyedBy: DepositKeys.self, forKey: .deposit) {
+            // Object form kept as a fallback: it's what the type's Rust definition suggests, and
+            // costs nothing to accept in case a node build emits it.
             let hex = try deposit.decode(String.self, forKey: .txid)
             guard let displayOrder = ThunderHex.decode(hex), displayOrder.count == 32 else {
                 throw ThunderRPCError.malformedResponse("deposit txid")
             }
-            // bitcoin::Txid display hex is reversed relative to the internal bytes Borsh writes.
             outPoint = .deposit(txid: displayOrder.reversed(), vout: try deposit.decode(UInt32.self, forKey: .vout))
         } else {
             throw ThunderRPCError.malformedResponse("unknown outpoint variant")

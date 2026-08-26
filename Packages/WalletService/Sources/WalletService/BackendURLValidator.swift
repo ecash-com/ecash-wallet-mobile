@@ -51,6 +51,16 @@ public enum BackendURLValidator {
             // `String.init` function reference doesn't transpile ("actual type is String.Companion").
             let host = rest.components(separatedBy: "/").first ?? ""
             return host.isEmpty ? "Add a server address after \(scheme)://" : nil
+        case "thunder":
+            // Thunder speaks JSON-RPC over HTTP, so the same rules as Esplora. Without this branch
+            // the switch fell to "Unknown server type" and setBackendOverride silently refused every
+            // Thunder endpoint — harmless while Thunder was hidden from the pickers, a silent
+            // failure the moment it wasn't.
+            guard scheme == "https" || scheme == "http" else {
+                return "Thunder nodes use https:// or http://, not \(scheme)://"
+            }
+            let host = rest.components(separatedBy: "/").first ?? ""
+            return host.isEmpty ? "Add a server address after \(scheme)://" : nil
         default:
             return "Unknown server type."
         }
