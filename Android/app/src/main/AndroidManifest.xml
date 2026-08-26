@@ -24,12 +24,18 @@
          "before the first wallet" on what looked like a fresh install (a seedless zombie wallet).
          allowBackup=false makes a reinstall a true clean slate. The rules files below are kept as
          defense-in-depth in case backup is ever re-enabled. -->
+    <!-- TEMPORARY (2026-08-26): `usesCleartextTraffic` is paired with the .thunder entry in
+         WalletNetwork.selectable — REVERT BOTH TOGETHER. Android blocks cleartext at targetSdk 28+,
+         and the Thunder test node is plain HTTP on a bare IP. Unneeded once it has a domain with
+         TLS. A narrower networkSecurityConfig would be the shipping answer if this ever became
+         permanent. -->
     <application
         android:label="eCash.com"
         android:icon="@mipmap/ic_launcher"
         android:name=".AndroidAppMain"
         android:supportsRtl="true"
         android:allowBackup="false"
+        android:usesCleartextTraffic="true"
         android:fullBackupContent="@xml/backup_rules"
         android:dataExtractionRules="@xml/data_extraction_rules"
         >

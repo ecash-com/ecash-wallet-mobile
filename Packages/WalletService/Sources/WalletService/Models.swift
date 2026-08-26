@@ -129,9 +129,13 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
         .bitcoin,
         .signet,
         .ecash,
-        // .thunder,   // HIDDEN until the Thunder node RPC is ready (2026-07-24). The `.thunder` case
-        //             // still exists so any already-created Thunder wallet keeps resolving; this just
-        //             // removes it from the create/import + Settings network pickers. Uncomment to re-enable.
+        // TEMPORARY (2026-08-26): Thunder is exposed for hands-on testing now that a node with a
+        // real chain, a peer and funds is finally up (157.180.96.24:16009). It is NOT ready to
+        // ship — the endpoint is one operator's box on a non-default port, and the send path has
+        // never been exercised against a funded wallet. Re-comment before any release build.
+        .thunder,   // ←← COMMENT OUT THIS ONE LINE to hide Thunder again. Nothing else needs
+                    // reverting: the `.thunder` case stays, so any wallet already created keeps
+                    // resolving, and this only controls the create/import + Settings pickers.
     ]
 
     /// True for everything that is NOT Bitcoin mainnet. Drives the persistent network

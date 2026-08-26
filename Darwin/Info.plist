@@ -19,7 +19,23 @@
 	</array>
 	<key>NSAppTransportSecurity</key>
 	<dict>
-		<key>NSAllowsLocalNetworking</key>
+		<!-- NOTE: NSAllowsLocalNetworking is deliberately ABSENT while the blanket allow below is
+		     in place. iOS 10+ IGNORES NSAllowsArbitraryLoads (treating it as NO) whenever
+		     NSAllowsLocalNetworking, NSAllowsArbitraryLoadsInWebContent or
+		     NSAllowsArbitraryLoadsForMedia is also present — the more specific key wins. Having
+		     both is why the exception silently did nothing on the first attempt. Arbitrary loads
+		     covers local networking anyway; restore this key when the blanket allow is reverted. -->
+		<!-- TEMPORARY (2026-08-26), paired with the .thunder entry in WalletNetwork.selectable:
+		     REVERT BOTH TOGETHER. The Thunder test node is plain HTTP on a bare IP
+		     (http://157.180.96.24:16009), and ATS refuses cleartext with error -1022.
+		     NSExceptionDomains can't help — ATS exceptions match domain NAMES, never IP
+		     literals — so a blanket allow is the only option until the node gets a domain
+		     with TLS, which is expected shortly.
+
+		     This disables ATS for EVERY request the app makes, not just Thunder. It must not
+		     ship: App Store review asks for justification, and it would weaken the Esplora,
+		     CoinNews and price-feed connections too. -->
+		<key>NSAllowsArbitraryLoads</key>
 		<true/>
 	</dict>
 </dict>
