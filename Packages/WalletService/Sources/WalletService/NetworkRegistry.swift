@@ -129,11 +129,7 @@ public enum NetworkRegistry {
                 // Thunder holds eCash value deposited from the eCash mainchain, so it's ECX-
                 // denominated and takes eCash's sub-unit too.
                 subUnitLabel: "szat",
-                // Live alphanet Thunder node (2026-08-26). NOT the default port: thunder-rust binds
-                // RPC to 127.0.0.1:6000+THIS_SIDECHAIN (6009), so this operator exposes it on
-                // 16009. The earlier :14009 endpoint on the same host is dead, and 157.180.96.42
-                // times out — different box, port not open.
-                defaultBackend: "http://157.180.96.24:16009",
+                defaultBackend: "https://thunder.drivechain.dev/rpc",
                 defaultBackendKind: "thunder",
                 explorerTxTemplate: "https://thunder.drivechain.dev/tx/{txid}",
                 displayName: "Thunder")
