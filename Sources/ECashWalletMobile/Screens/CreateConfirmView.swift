@@ -14,7 +14,14 @@ struct CreateConfirmView: View {
     let defaultName: String
     @Environment(AppState.self) var app
     @State var vm: CreateViewModel   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
-    @State var network: WalletNetwork = .signet   // default to a testnet-class net; mainnet is deliberate
+    // Default: eCash (alphanet). Changed from .signet 2026-08-28 — eCash is the network this app
+    // exists for, and a signet default meant most users' first wallet was on the wrong chain.
+    // Still never Bitcoin: mainnet stays a deliberate choice (Golden Rule §4).
+    //
+    // NOTE for whoever moves `.ecash` off the dry-run chain: the case follows the remote config,
+    // which points at alphanet today (test value). When it rolls to real eCash mainnet, THIS LINE
+    // silently becomes "default to real money" — revisit it then.
+    @State var network: WalletNetwork = .ecash
     @State var advancedExpanded = false           // Advanced: derivation script type
 
     init(viewModel: CreateViewModel, defaultName: String) {
