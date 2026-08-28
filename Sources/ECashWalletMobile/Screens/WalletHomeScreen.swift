@@ -18,6 +18,10 @@ struct WalletHomeScreen: View {
     @State var sendToken = 0
     /// BIP21 body from an incoming payment link, handed to the Send flow as its starting address.
     @State var prefilledSendLink: String? = nil
+    /// Set when Send is opened from the claim nudge, so it starts on the destination picker with
+    /// the full balance selected.
+    @State var sweepPrefill = false
+    @State var claimSweepDismissed = false
     @State var showBackup = false
     @State var showWalletManager = false
     @State var showFaucet = false
@@ -84,6 +88,15 @@ struct WalletHomeScreen: View {
                         if let link = prefilledSendLink {
                             vm.addressText = link
                             prefilledSendLink = nil
+                        }
+                        // From the claim nudge: preselect the whole balance so "move it all" is
+                        // the default rather than something the user has to know to ask for. It's
+                        // a true BDK drain (no change, exact fee deducted), which is what empties
+                        // a single-key wallet cleanly. The user still picks the destination and
+                        // confirms — Max is a starting amount, not a decision made for them.
+                        if sweepPrefill {
+                            vm.tapMax()
+                            sweepPrefill = false
                         }
                     }
             }
@@ -216,6 +229,13 @@ struct WalletHomeScreen: View {
                 backupNudge
             }
 
+            // Claimed-key nudge: a single-key (WIF) wallet holding funds. Gated on keyType rather
+            // than the "ECX Claim" label so renaming the wallet can't hide it, and so a key
+            // imported the long way (Advanced → Private key) gets the same offer.
+            if claimSweepAvailable, !claimSweepDismissed {
+                claimSweepNudge
+            }
+
             // Split-coins nudge: eCash wallet holding pre-fork (shared-with-Bitcoin) coins.
             if let s = app.splitSummary, s.needsSplitCount > 0, !splitDismissed {
                 splitNudge
@@ -331,6 +351,47 @@ struct WalletHomeScreen: View {
 
     /// Persistent "not backed up" nudge (Golden Rule §7) — taps into the Backup flow; the
     /// `!wallet.isBackedUp` condition above removes it once the verify step succeeds.
+    /// A claimed key is a single address whose private key existed on paper before it reached this
+    /// device — and, for an investor letter, possibly passed through other hands. Moving the funds
+    /// into a wallet whose seed only ever existed here is the point of claiming, so offer it
+    /// directly instead of leaving the user to work out Send → Max → pick a wallet.
+    ///
+    /// Shown only when there's somewhere to sweep TO and something to move; an investor with a
+    /// single wallet sees nothing until they create one.
+    private var claimSweepAvailable: Bool {
+        guard let wallet = app.selectedWallet, wallet.keyType == .wif else { return false }
+        guard app.balance.sats > 0 else { return false }
+        return app.wallets.contains { $0.network == wallet.network && $0.id != wallet.id }
+    }
+
+    private var claimSweepNudge: some View {
+        Button {
+            app.beginSendFlow()
+            sweepPrefill = true
+            sendToken += 1
+            showSend = true
+        } label: {
+            VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                Text("Move your ECX to another wallet", bundle: .module,
+                     comment: "home claim sweep nudge title")
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.text0)
+                Text("This key came from your letter, so it may exist elsewhere. Send the full balance to one of your own wallets to hold it securely.",
+                     bundle: .module, comment: "home claim sweep nudge body")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.x4)
+            .background(Theme.Colors.accentTint, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                    .stroke(Theme.Colors.accent.opacity(0.4), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
     private var backupNudge: some View {
         Button {
             showBackup = true
