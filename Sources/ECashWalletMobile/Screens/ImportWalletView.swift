@@ -16,7 +16,14 @@ struct ImportWalletView: View {
     let defaultName: String
     @State var vm: ImportViewModel   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
     @State var walletName = ""
-    @State var network: WalletNetwork = .signet   // default to a testnet-class net; mainnet is deliberate
+    // Default: eCash (alphanet). Changed from .signet 2026-08-28 — eCash is the network this app
+    // exists for, and a signet default meant most users' first wallet was on the wrong chain.
+    // Still never Bitcoin: mainnet stays a deliberate choice (Golden Rule §4).
+    //
+    // NOTE for whoever moves `.ecash` off the dry-run chain: the case follows the remote config,
+    // which points at alphanet today (test value). When it rolls to real eCash mainnet, THIS LINE
+    // silently becomes "default to real money" — revisit it then.
+    @State var network: WalletNetwork = .ecash
     @State var advancedExpanded = false           // Advanced: import type (+ later, derivation path)
 
     // iOS-only keyboard ergonomics (focus advance + scroll-to-dismiss). Guarded so the Android
@@ -26,10 +33,22 @@ struct ImportWalletView: View {
     private enum Field { case phrase, name }
     #endif
 
-    init(viewModel: ImportViewModel, defaultName: String) {
+    /// - Parameters:
+    ///   - claimMode: enter straight into the investor-claim flow — private-key input, with the
+    ///     network picker and Advanced hidden entirely. Both paths default to eCash now, so this
+    ///     only pins the import TYPE; a claimant was handed a key, not a recovery phrase.
+    init(viewModel: ImportViewModel, defaultName: String, claimMode: Bool = false) {
         self.defaultName = defaultName
+        viewModel.kind = claimMode ? .privateKey : .recoveryPhrase
         _vm = State(initialValue: viewModel)
+        _network = State(initialValue: .ecash)
+        _advancedExpanded = State(initialValue: claimMode)
+        _isClaim = State(initialValue: claimMode)
     }
+
+    /// Drives the claim-specific copy. Held as state rather than a `let` so the initializer above
+    /// stays the single place the mode is decided.
+    @State var isClaim = false
 
     var body: some View {
         ZStack {
@@ -40,22 +59,42 @@ struct ImportWalletView: View {
             // scroll view. Content scrolls clear of the keyboard; the button lives at the end.
             ScrollView {
             VStack(alignment: .leading, spacing: Theme.Space.x4) {
-                // Network is chosen up front (it fixes the address set) and unmistakable (Golden Rule §4/§6).
-                NetworkSelector(network: $network)
-                    .onChange(of: network) { _, newNet in
-                        // Thunder has a fixed ed25519 derivation and no WIF/script-type concept —
-                        // force the phrase path so a stale WIF/type selection can't carry over.
-                        if newNet == .thunder { vm.kind = .recoveryPhrase }
-                        vm.updatePreview(network: newNet)
-                        vm.updateSeedPreview(network: newNet)
-                    }
+                if isClaim {
+                    // Says what the key is, what will happen, and — the part that actually reassures
+                    // — that importing only reads. Someone pasting a key from a letter is deciding
+                    // whether to trust an app with it; "nothing moves" is the honest answer, since
+                    // this derives an address and looks up a balance, and a send is a separate,
+                    // confirmed action afterwards.
+                    Text("Paste the private key from your investor letter. We'll show the balance it controls. Nothing moves until you choose to send.",
+                         bundle: .module, comment: "investor claim explainer at top of the screen")
+                        .textStyle(.sm)
+                        .foregroundStyle(Theme.Colors.text1)
+                }
+                // A claim shows ONE input and nothing else. Everything below is a choice this user
+                // doesn't have: the network is fixed (their coins are on eCash), the import type is
+                // fixed (they were given a key, not a phrase), and the script type is fixed (a WIF
+                // is a single key with no derivation). Showing a recovery-phrase control to someone
+                // holding a private key invites them to paste it in the wrong box.
+                if !isClaim {
+                    // Network is chosen up front (it fixes the address set) and unmistakable
+                    // (Golden Rule §4/§6).
+                    NetworkSelector(network: $network)
+                        .onChange(of: network) { _, newNet in
+                            // Thunder has a fixed ed25519 derivation and no WIF/script-type concept
+                            // — force the phrase path so a stale WIF/type selection can't carry over.
+                            if newNet == .thunder { vm.kind = .recoveryPhrase }
+                            vm.updatePreview(network: newNet)
+                            vm.updateSeedPreview(network: newNet)
+                        }
 
-                // Advanced (import type + BIP script-type derivation) applies only to BDK/secp256k1
-                // networks. Thunder is ed25519 with a fixed derivation (m/1'/0'/0'/i') — no choice to
-                // make — so hide Advanced entirely for it (recovery phrase only).
-                if network != .thunder { advancedSection }
+                    // Advanced (import type + BIP script-type derivation) applies only to
+                    // BDK/secp256k1 networks. Thunder is ed25519 with a fixed derivation
+                    // (m/1'/0'/0'/i') — no choice to make — so hide Advanced entirely for it.
+                    if network != .thunder { advancedSection }
+                }
 
-                // Input depends on the chosen import type.
+                // Input depends on the chosen import type. In claim mode `kind` is pinned to
+                // .privateKey by the initializer, so this is always the key field.
                 if vm.kind == .privateKey {
                     privateKeyInput
                 } else {
@@ -63,6 +102,9 @@ struct ImportWalletView: View {
                 }
 
                 // Optional name (labels are device-local; restoring a seed can't bring one back).
+                // Hidden for a claim: one fewer decision, and the default name is fine — renaming
+                // is a tap away in the wallet list afterwards.
+                if !isClaim {
                 TextField("Wallet name (optional — \"\(defaultName)\")", text: $walletName)
                     .textFieldStyle(.plain)
                     .textStyle(.body)
@@ -75,6 +117,7 @@ struct ImportWalletView: View {
                     .submitLabel(.go)
                     .onSubmit { if vm.canSubmit { submitImport() } }
                     #endif
+                }
 
                 if let error = vm.errorMessage {
                     Text(error)
@@ -84,7 +127,8 @@ struct ImportWalletView: View {
 
                 WalletButton(title: vm.isImporting
                                 ? "Importing…"
-                                : (vm.kind == .privateKey ? "Import private key" : "Import wallet")) {
+                                : (isClaim ? "Claim"
+                                   : (vm.kind == .privateKey ? "Import private key" : "Import wallet"))) {
                     submitImport()
                 }
                 .disabled(!vm.canSubmit)
@@ -97,7 +141,9 @@ struct ImportWalletView: View {
             .scrollDismissesKeyboard(.interactively)   // swipe the content down to dismiss
             #endif
         }
-        .navigationTitle(Text("Import wallet", bundle: .module, comment: "import wallet screen title"))
+        .navigationTitle(isClaim
+            ? Text("Claim your ECX", bundle: .module, comment: "investor claim screen title")
+            : Text("Import wallet", bundle: .module, comment: "import wallet screen title"))
         // Screenshots intentionally allowed (the user's call); app-switcher snapshot still obscured.
         .obscuredWhenBackgrounded()
     }
@@ -218,10 +264,16 @@ struct ImportWalletView: View {
     /// The legacy single-key (WIF) input + live address preview (Advanced → Private key).
     private var privateKeyInput: some View {
         VStack(alignment: .leading, spacing: Theme.Space.x4) {
-            Text("Paste a legacy private key (WIF). It becomes a single-address wallet on this device.",
-                 bundle: .module, comment: "import private key instructions")
-                .textStyle(.body)
-                .foregroundStyle(Theme.Colors.text1)
+            // Suppressed in claim mode: the screen already opens with a "paste the private key
+            // from your investor letter" explainer, so this repeated the instruction and
+            // reintroduced the jargon ("legacy", "WIF", "single-address wallet") that the claim
+            // copy deliberately avoids.
+            if !isClaim {
+                Text("Paste a legacy private key (WIF). It becomes a single-address wallet on this device.",
+                     bundle: .module, comment: "import private key instructions")
+                    .textStyle(.body)
+                    .foregroundStyle(Theme.Colors.text1)
+            }
 
             TextField("Private key (WIF)", text: $vm.wif)
                 .textFieldStyle(.plain)

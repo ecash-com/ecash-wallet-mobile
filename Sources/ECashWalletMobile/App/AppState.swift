@@ -345,6 +345,15 @@ final class AppState {
     /// A default label for the next wallet ("Wallet 1", "Wallet 2", …). Renameable later (Slice 7).
     var nextDefaultWalletName: String { "Wallet \(wallets.count + 1)" }
 
+    /// Default name for an investor claim. "Wallet 4" says nothing about where the coins came from,
+    /// and an investor holding several letters would end up with a list they can't tell apart.
+    /// Numbered only from the second one on, so the common single-claim case stays clean.
+    var nextClaimWalletName: String {
+        let base = "ECX Claim"
+        let existing = wallets.filter { $0.label == base || $0.label.hasPrefix("\(base) ") }.count
+        return existing == 0 ? base : "\(base) \(existing + 1)"
+    }
+
     /// Vend a `CreateViewModel` wired to this manager (used by the Create flow). The VM is owned by
     /// the view; capturing `self` here is safe (no retain cycle — AppState doesn't hold the VM).
     func makeCreateViewModel() -> CreateViewModel {

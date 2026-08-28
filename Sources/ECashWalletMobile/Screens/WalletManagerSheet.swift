@@ -32,6 +32,45 @@ struct WalletManagerSheet: View {
                         walletRow(wallet)
                     }
                 }
+                // The investor claim gets its own prominent card ABOVE the ordinary actions.
+                // Previously this flow was Import wallet → Advanced → Private key: three taps and a
+                // disclosure labelled "Advanced", which is exactly where someone who was handed a
+                // key in a letter stops looking. Everyone receiving one of those letters needs this
+                // single path, so it says what it does in their words rather than ours.
+                Section {
+                    Button { path.append(.claim) } label: {
+                        HStack(spacing: Theme.Space.x3) {
+                            ZStack {
+                                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                                    .fill(Theme.Colors.accentTint)
+                                Image(icon: Icon.key)
+                                    .resizable().scaledToFit()
+                                    .frame(width: 20, height: 20)
+                                    .foregroundStyle(Theme.Colors.accent)
+                            }
+                            .frame(width: 44, height: 44)
+
+                            VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                                Text("Claim your ECX", bundle: .module,
+                                     comment: "investor claim entry point")
+                                    .font(.grotesk(17, .semibold))
+                                    .foregroundStyle(Theme.Colors.text0)
+                                // "Nothing moves until you see the amount" is the reassurance that
+                                // matters: importing is read-only, and the balance appears before
+                                // any send is possible.
+                                Text("Paste the private key from your investor letter. Nothing moves until you see the amount.",
+                                     bundle: .module, comment: "investor claim explainer")
+                                    .textStyle(.xs)
+                                    .foregroundStyle(Theme.Colors.text2)
+                                    .multilineTextAlignment(.leading)
+                            }
+
+                            Spacer(minLength: Theme.Space.x2)
+                            disclosureChevron
+                        }
+                    }
+                }
+
                 Section {
                     Button { path.append(.create) } label: {
                         actionRowLabel(icon: Icon.add, title: "New wallet")
@@ -56,6 +95,10 @@ struct WalletManagerSheet: View {
                 case .importWallet:
                     ImportWalletView(viewModel: app.makeImportViewModel(),
                                      defaultName: app.nextDefaultWalletName)
+                case .claim:
+                    ImportWalletView(viewModel: app.makeImportViewModel(),
+                                     defaultName: app.nextClaimWalletName,
+                                     claimMode: true)
                 }
             }
         }
@@ -92,6 +135,14 @@ struct WalletManagerSheet: View {
                      bundle: .module, comment: "remove not-backed-up wallet warning")
             }
         }
+    }
+
+    /// Trailing "this row goes somewhere" indicator, matching the Settings rows.
+    private var disclosureChevron: some View {
+        Image(icon: Icon.disclosure)
+            .resizable().scaledToFit()
+            .frame(width: 14, height: 14)
+            .foregroundStyle(Theme.Colors.text2)
     }
 
     private func walletRow(_ wallet: ManagedWallet) -> some View {
@@ -218,4 +269,7 @@ struct WalletManagerSheet: View {
 enum WalletManagerRoute: Hashable {
     case create
     case importWallet
+    /// The investor claim — the same import screen, opened straight into private-key entry on
+    /// eCash. Its own route so the entry point can be discoverable rather than three taps deep.
+    case claim
 }
