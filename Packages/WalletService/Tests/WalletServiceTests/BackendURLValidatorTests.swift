@@ -79,4 +79,31 @@ final class BackendURLValidatorTests: XCTestCase {
         XCTAssertNil(BackendURLValidator.validationMessage(kind: "electrum", url: ""))
         XCTAssertNil(BackendURLValidator.validationMessage(kind: "esplora", url: "   "))
     }
+
+    // MARK: - Thunder
+
+    /// Both Thunder kinds are HTTP. The index is mounted under a PATH (`https://host/thunder`), so —
+    /// unlike Electrum — a path must be accepted, not treated as a pasted-in-the-wrong-box mistake.
+    func testThunderKindsAcceptHTTPWithAMountPath() {
+        XCTAssertNil(BackendURLValidator.validationMessage(
+            kind: "thunder-esplora", url: "https://seed.alpha.ecash.eu.com/thunder"))
+        XCTAssertNil(BackendURLValidator.validationMessage(
+            kind: "thunder", url: "http://127.0.0.1:6009"))
+    }
+
+    /// A rejected override is *silently* dropped by `setBackendOverride`, so an unrecognised kind here
+    /// reads to the user as "my setting didn't save". Both kinds must be known.
+    func testThunderKindsAreRecognised() {
+        for kind in ["thunder", "thunder-esplora"] {
+            XCTAssertNotEqual(BackendURLValidator.validationMessage(kind: kind, url: "https://x.example"),
+                              "Unknown server type.")
+        }
+    }
+
+    func testThunderRejectsNonHTTPSchemes() {
+        let message = BackendURLValidator.validationMessage(
+            kind: "thunder-esplora", url: "ssl://index.example:50002")
+        XCTAssertNotNil(message)
+        XCTAssertTrue(message?.contains("https://") == true)
+    }
 }

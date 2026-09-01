@@ -117,11 +117,16 @@ public enum NetworkRegistry {
                 displayName: "Drynet3")
         case .thunder:
             // Thunder sidechain — ed25519/BLAKE3, NOT BDK. `coinType`/`addressHRP` are unused fillers
-            // (the Thunder engine never derives via BDK). Backend is a PLACEHOLDER Thunder-node RPC
-            // until the real endpoint ships (docs/thunder-sidechain-support.md); `kind: "thunder"`
-            // marks it as neither Electrum nor Esplora. Unit is **ECX** — Thunder holds eCash value
+            // (the Thunder engine never derives via BDK). Unit is **ECX** — Thunder holds eCash value
             // (deposited from the eCash mainchain); thunder-rust itself uses `bitcoin::Amount`/₿ (it's
             // the generic sidechain template, no eCash branding), so the ECX label is ours.
+            //
+            // Backend is a **drivechain-esplora** index (github.com/octobocto/drivechain-esplora),
+            // not the node's own JSON-RPC. The node keys its state by outpoint only, so an address
+            // query there scans the whole UTXO table in memory, and it can answer no height, time or
+            // fee for a transaction. The index answers all three from Postgres over the Esplora REST
+            // shape. `kind: "thunder-esplora"` selects that wire layer; `"thunder"` still selects the
+            // node RPC, which stays supported (docs/thunder-sidechain-support.md §8b).
             return NetworkParams(
                 coinType: Int32(1),
                 addressHRP: "",
@@ -129,9 +134,11 @@ public enum NetworkRegistry {
                 // Thunder holds eCash value deposited from the eCash mainchain, so it's ECX-
                 // denominated and takes eCash's sub-unit too.
                 subUnitLabel: "szat",
-                defaultBackend: "https://thunder.drivechain.dev/rpc",
-                defaultBackendKind: "thunder",
-                explorerTxTemplate: "https://thunder.drivechain.dev/tx/{txid}",
+                defaultBackend: "https://seed.alpha.ecash.eu.com/thunder",
+                defaultBackendKind: "thunder-esplora",
+                // No human-facing Thunder explorer exists yet; the index's own /tx route serves JSON,
+                // which is still better than a link to a host that 404s. Swap this the moment one ships.
+                explorerTxTemplate: "https://seed.alpha.ecash.eu.com/thunder/tx/{txid}",
                 displayName: "Thunder")
         }
     }

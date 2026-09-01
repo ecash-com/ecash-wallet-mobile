@@ -129,9 +129,12 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
         .bitcoin,
         .signet,
         .ecash,
-        // .thunder,   // HIDDEN until the Thunder node RPC is ready (2026-07-24). The `.thunder` case
-        //             // still exists so any already-created Thunder wallet keeps resolving; this just
-        //             // removes it from the create/import + Settings network pickers. Uncomment to re-enable.
+        // .thunder,   // HIDDEN until the drivechain-esplora index has walked blocks (2026-09-01).
+        //             // The backend itself is done and verified against the live service, but the
+        //             // index reports an empty chain, so a Thunder wallet would derive and hand out
+        //             // real addresses while showing a zero balance and no history — a user could
+        //             // receive real ECX and see nothing. Verified working with this uncommented;
+        //             // uncomment again once the index syncs (docs/thunder-sidechain-support.md §8e).
     ]
 
     /// True for everything that is NOT Bitcoin mainnet. Drives the persistent network

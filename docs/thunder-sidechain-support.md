@@ -369,6 +369,149 @@ All of `Sources/ECashWalletMobile/Thunder/`. Pure Swift; no `thunder_types`/FFI 
 netting `get_utxos` + `get_stxos` per txid (received = outputs to us keyed by `outpoint.txid`; sent =
 ours spent, keyed by `inpoint.txid`). Nothing else needs to change.
 
+## 8e. The backend layer — drivechain-esplora (2026-09-01)
+
+**Decision: the default Thunder backend is an Esplora-compatible index, not the node's own JSON-RPC.**
+The node RPC path is kept and still works; the endpoint's `kind` picks between them
+(`ThunderBackendFactory`).
+
+### Why
+
+[`octobocto/drivechain-esplora`](https://github.com/octobocto/drivechain-esplora) walks a rust
+sidechain block by block, writes an address index into Postgres, and answers every request from
+Postgres. It exists because the node cannot do this job:
+
+- The node's state DB keys by **outpoint only**. `get_utxos(addresses)` / `get_stxos(addresses)` take
+  an arbitrary address set but iterate the whole table and filter in memory. That does not improve as
+  the chain grows.
+- The node exposes **no height for a transaction**. `Header` carries none, `get_block` returns none,
+  and `getblockcount` gives only the tip. This is the root cause of every compromise documented in
+  `ThunderHistory`: no fee, no confirmation depth, no chronological ordering.
+
+The index answers all of it. What we gain, concretely:
+
+| Was, on the node RPC | Is, on the index |
+|---|---|
+| `blockHeight` nil, `confirmations` pinned at 1 | `status.block_height` + `/blocks/tip/height` → real depth |
+| ordering faked from a local first-seen record | `status.block_time` → real chronological order |
+| `feeSats` nil (not derivable from our half of the tx) | `Tx.fee`, computed over the whole transaction |
+| history inferred from unspent-vs-spent evidence | `/address/{a}/txs/chain` — full txs with `vin[].prevout` |
+| deposits invisible | `/deposit/{mainchain_txid}`, `/address/{a}/deposits` |
+| CTIP needs a mainchain/enforcer client of our own | `/drivechain/sidechain/9` returns slot + treasury |
+
+That last row matters for §8's deposit flow: the CTIP an M5 spends is readable without us shipping a
+mainchain client.
+
+### What it costs
+
+**Request count.** There is no batch-address route — Blockstream's Esplora has none and this is
+faithful to it — so a sync is one request per address instead of one for the whole window. Managed in
+`ThunderEsploraBackend`:
+- `/address/{a}` (a few integers) probes each address first; only addresses with `tx_count > 0` cost a
+  UTXO + history fetch. A gap-limit window is mostly unused addresses, so this is the difference
+  between ~42 requests and ~21 small ones plus a handful of real ones.
+- Requests run 6 at a time.
+- **Worth asking the operator for a multi-address route.** It is a small addition on their side and
+  would take a sync back to a couple of round trips.
+
+**No mempool**, ever: `/address/{a}/txs/mempool` is always `[]` and `/mempool` is all zeros. Same as the
+node RPC (`get_utxos` reads connected-block state only), so `pendingBalance` stays honestly 0 — not a
+regression, but not fixed either.
+
+**Trust.** One indexer sees the whole address window and is taken at its word for balances. That is the
+same trust the node RPC already required, and the endpoint stays overridable in Settings.
+
+### Wire-shape notes (all verified against the Go source)
+
+- **`POST /tx` relays its body into `submit_transaction` unchanged** — the index signs nothing and
+  rewrites nothing (`internal/index/broadcast.go` → `node.SubmitTransaction` → `Call("submit_transaction",
+  []any{tx})`). So the body is byte-for-byte the object `ThunderRPCAuthorizedTransaction` already
+  encodes as `params[0]`, and the whole authorization/Borsh path is shared. It answers the txid as
+  **plain text**, not JSON.
+- **Hashes are not reversed**, except a *mainchain* txid inside a deposit, which keeps Bitcoin display
+  order — the same split `ThunderRPCOutPoint` already handles. `ThunderEsploraUTXO.outPoint()` flips it
+  back for Borsh.
+- **A UTXO row carries no address** — the route is the key. `pointedOutput(address:)` takes the queried
+  address, which is also exactly what signing needs.
+- **A withdrawal's reported `value` folds in the mainchain fee**, so it could not be reconstructed into
+  an exact `Content`. It is dropped from the spending path — which was already required (consensus
+  rejects spending one) but is now *also* what stops us computing a wrong utreexo leaf hash.
+- `version`, `locktime` and `sequence` are always 0; these chains have no such fields.
+
+### The consensus-critical bit
+
+Every input carries `BLAKE3(borsh(PointedOutput))` as its utreexo leaf. Rebuilding that from an Esplora
+row means rebuilding both the outpoint *and* the full output (20-byte address + content). The invariant
+is pinned by `ThunderEsploraTypesTests.esploraAndRPCAgreeOnTheUtxoHash` (and the deposit variant): the
+same coin, described in both wire shapes, must hash identically. As long as that holds, which backend
+is in use cannot change what the node validates.
+
+### Adding other sidechains
+
+`internal/chain/block.go` states it outright: *"Everything else in a rust sidechain block is identical
+across chains."* The per-chain `Decoder` interface is two methods, and only the **output content**
+varies. That is the same shared shape our Thunder stack is built on — `ThunderKey`, `ThunderAddress`,
+`BorshWriter`, `ThunderAuthorization`, `ThunderPointedOutput`, `ThunderCoinSelector` are not
+Thunder-specific. Adding BitNames or Truthcoin as a value-transfer network would be a registry entry,
+an endpoint, a chip colour and a content decoder.
+
+Two caveats. The seven-chain table in the README is aspirational — `register.go` registers exactly one
+decoder (thunder); the rest return *"chain has no output decoder yet"*. And "moves plain value"
+is not "correct wallet for that chain": the index reduces every output to `{ValueSats, Type}`, which is
+the whole truth for Thunder but not for BitNames (names), BitAssets (assets), Truthcoin (market
+positions) or ZSide (shielded outputs).
+
+### Gap-limit discovery (what the per-address probe unlocked)
+
+`revealedIndex` is local device state — a UserDefaults integer. A wallet **restored onto a new phone
+starts at 0**, so the old fixed `revealed + gap limit` window covered only indices 0…20 and a wallet
+used further down its chain would show a partial balance. Thunder has no watch-only xpub and no
+BDK-style revealed-SPK store to recover the count from, so the app has to go and look — and the cheap
+`/address/{a}` probe is what finally makes looking affordable.
+
+`ThunderService.discoverWindow` applies BIP44's rule: keep walking in gap-limit batches while any
+address in the trailing stretch has been used; stop once a whole stretch is untouched (capped at
+`maxDiscoveryRounds` = 20 batches, so a server calling everything "used" can't make us derive forever).
+Whatever it finds is **persisted back to `revealedIndex`**, so the wider window is free from then on —
+including for the send path, which never runs discovery.
+
+**This does not abolish the gap limit.** Coins past 20 consecutive unused addresses stay
+undiscoverable, exactly as they are for BDK on the Bitcoin side. What it fixes is the common shape: a
+wallet used progressively down its chain, where each extension keeps finding more. Only a backend that
+can answer "used?" cheaply takes part — `ThunderRPCBackend.usedAddresses` returns nil, because probing
+the node batch by batch would cost a full UTXO-table scan each time, so that path keeps its fixed
+window.
+
+### Status
+
+- ✅ `ThunderEsploraClient` / `ThunderEsploraTypes` / `ThunderEsploraHistory` / `ThunderEsploraBackend`,
+  behind a `ThunderBackend` protocol with the node RPC as the other implementation.
+- ✅ `NetworkRegistry.thunder` defaults to `https://seed.alpha.ecash.eu.com/thunder`, kind
+  `thunder-esplora`. `WalletBackend.Kind` and `BackendURLValidator` know both kinds.
+- ✅ Gap-limit **discovery** with the result persisted (see above).
+- ✅ 48 new host tests (wire decode, the utxo-hash cross-check, history arithmetic, route composition,
+  request shaping, paging, failure, discovery walk/stop/cap).
+- ✅ **Live-verified against the real deployment** — `ThunderEsploraLiveTests`, opt-in via
+  `THUNDER_ESPLORA_ENDPOINT`. Proves what a stub cannot: routes compose against a service mounted
+  under a path (including with a trailing slash), the empty-index 404 really is a 404 that maps to
+  `.indexEmpty` and not `.network`, a bad address really is a 400 surfaced as `.server`, and the
+  address-stats JSON really carries the fields we decode. All true today, with nothing indexed.
+- ✅ **Verified with Thunder un-hidden, then re-hidden** (2026-09-01). Uncommenting `.thunder` in
+  `WalletNetwork.selectable` builds and runs clean on both platforms — create still defaults to eCash,
+  and the pricing/faucet/CoinNews registries already return off/nil for `.thunder`, so nothing else
+  gates on it. **Left commented out** because while the index reports an empty chain a Thunder wallet
+  would derive and hand out real, correct addresses while showing a zero balance and no history — a
+  user could receive real ECX and see nothing. One line to flip once the index syncs.
+- ⏳ **The live index holds no blocks yet.** `/blocks/tip/height` answers 404 *"the index holds no
+  blocks yet"*; `/fee-estimates` and the `/drivechain/*` routes work (an enforcer is attached), and the
+  address routes answer zeros. That case is handled as `ThunderBackendError.indexEmpty` → an empty sync
+  rather than a connection error, but nothing on this path has met real indexed data.
+- ⏳ **Open with the operator — written up in `docs/drivechain-esplora-request.md`** (same form as
+  `docs/thunder-rpc-request.md`): when the index syncs and against which chain; a batch address route
+  (nice-to-have, not blocking); rate limits; whether the enforcer behind `/drivechain/*` is permanent;
+  and whether a human-facing explorer will exist (`explorerTxTemplate` currently points at the index's
+  own JSON `/tx` route).
+
 ## 8. Bottom line
 
 Thunder is a genuinely separate chain: **ed25519 keys (BIP32 `m/1'/0'/0'/i'`), BLAKE3-hashed base58
@@ -388,10 +531,13 @@ plugged into the per-network engine abstraction (`WalletOps`/`WalletFacade`) as 
   builds. Pure Swift throughout — NOT using the dev's `thunder_types`/FFI crate.
 - ✅ **UI** — create/import/backup/receive work; crimson chip; ECX unit. Thunder is **commented out of
   `WalletNetwork.selectable`**, so it is not reachable until the flow is proven end to end.
-- ⏳ **History** — blocked on `get_stxos` (§8c); `transactions()` throws `.historyUnavailable`.
+- ✅ **History** — two paths now. On the node RPC it is reconstructed from `get_utxos` + `get_stxos`
+  (`ThunderHistory`), undated and pinned at 1 confirmation. On the **drivechain-esplora index** (the
+  default since 2026-09-01, §8e) it arrives with real heights, times and fees.
 - ✅ **Borsh cross-checked against real thunder-rust** (2026-08-01): two golden vectors generated by
   running `borsh::to_vec()` on thunder-rust's own `types::Transaction` (branch `2026-07-24-refactor`)
   and pinned in `ThunderBorshTests` — a simple Regular/Value tx, and one covering a **Deposit**
   outpoint + **Withdrawal** output. Bytes and txids match exactly.
-- ⏳ **Before real funds:** a live endpoint to run against. The RPC layer is still exercised only
-  against stubbed JSON — no byte of it has met a real node.
+- ⏳ **Before real funds:** a live endpoint with data to run against. Both wire layers are still
+  exercised only against stubbed JSON. The index at `seed.alpha.ecash.eu.com/thunder` is up and
+  healthy but has walked no blocks yet (§8e).

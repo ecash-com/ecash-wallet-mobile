@@ -7,10 +7,13 @@ import Foundation
 import WalletService
 @testable import ECashWalletMobile
 
-/// `ThunderService` end to end against a stubbed node: address derivation and the revealed-index
-/// discipline are local, while balance / sync / send run the real thin-node flow (derive → `get_utxos`
-/// → select → sign → `submit_transaction`) with the RPC replaced by canned JSON. History is the one op
-/// still gated on the node.
+/// `ThunderService` end to end over the **node-RPC backend**, against a stubbed node: address
+/// derivation and the revealed-index discipline are local, while balance / sync / send run the real
+/// thin-client flow (derive → `get_utxos` → select → sign → `submit_transaction`) with the RPC replaced
+/// by canned JSON.
+///
+/// The Esplora backend is covered by `ThunderEsploraBackendTests`; both suites drive the same
+/// `ThunderService`, which is the point of the `ThunderBackend` seam.
 @MainActor
 @Suite struct ThunderServiceTests {
 
@@ -30,8 +33,8 @@ import WalletService
                                 mnemonic: String? = mnemonic) -> ThunderService {
         ThunderService(
             loadMnemonic: { _ in mnemonic },
-            makeClient: {
-                ThunderRPCClient(endpoint: "http://127.0.0.1:6009") { request in
+            makeBackend: {
+                ThunderRPCBackend(client: ThunderRPCClient(endpoint: "http://127.0.0.1:6009") { request in
                     let body = request.httpBody ?? Data()
                     requests.append(body)
                     let method = (try? JSONSerialization.jsonObject(with: body) as? [String: Any])?
@@ -49,7 +52,7 @@ import WalletService
                     default:
                         return (Data(#"{"jsonrpc":"2.0","id":1,"result":0}"#.utf8), 200)
                     }
-                }
+                })
             },
             indexStore: indexStore)
     }

@@ -38,12 +38,16 @@ enum ThunderHistory {
 
     /// Build the wallet's transactions from its unspent and spent outputs.
     ///
-    /// `firstSeen` supplies the ordering key per txid (epoch seconds); a txid absent from it sorts
-    /// oldest. Entries whose transaction we can't name — coinbase and mainchain-deposit outpoints, and
+    /// Entries whose transaction we can't name — coinbase and mainchain-deposit outpoints, and
     /// withdrawal inpoints — are skipped rather than attributed to a fabricated txid.
+    ///
+    /// `firstSeen` supplies the ordering key per txid (epoch seconds); a txid absent from it sorts
+    /// oldest. It defaults to empty because `ThunderService` now applies that stamping uniformly to
+    /// any row *any* backend couldn't date, so this builder no longer has to know about it — the
+    /// parameter stays for the tests that assert the ordering rule directly.
     static func build(utxos: [ThunderRPCPointedOutput],
                       stxos: [ThunderRPCPointedSpentOutput],
-                      firstSeen: [String: Int64]) -> [WalletTx] {
+                      firstSeen: [String: Int64] = [:]) -> [WalletTx] {
         var received: [String: Int64] = [:]
         var spent: [String: Int64] = [:]
 
@@ -94,21 +98,5 @@ enum ThunderHistory {
         case let .regular(txid, _): return ThunderHex.encode(txid)
         case .coinbase, .deposit: return nil
         }
-    }
-
-    /// Txids referenced by these reads, for stamping first-seen times.
-    static func txids(utxos: [ThunderRPCPointedOutput],
-                      stxos: [ThunderRPCPointedSpentOutput]) -> Set<String> {
-        var out = Set<String>()
-        for utxo in utxos {
-            if let txid = creatingTxid(utxo.outpoint.outPoint) { out.insert(txid) }
-        }
-        for stxo in stxos {
-            if let txid = creatingTxid(stxo.outpoint.outPoint) { out.insert(txid) }
-            if case let .regular(txidBytes, _) = stxo.output.inpoint {
-                out.insert(ThunderHex.encode(txidBytes))
-            }
-        }
-        return out
     }
 }

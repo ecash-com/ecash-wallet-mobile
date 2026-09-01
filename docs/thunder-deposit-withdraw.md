@@ -43,9 +43,17 @@ treasury grows and the sidechain credits the address in the OP_RETURN.
 own. The treasury is anyone-can-spend by consensus rule, so no signature is required, but we would
 need to:
 
-- **learn the current ctip** — it changes with every deposit and withdrawal, and it isn't in our
-  Esplora/Electrum view of the chain. thunder-rust gets it from the enforcer over gRPC
-  (`--mainchain-grpc-url`), which we don't speak.
+- ~~**learn the current ctip**~~ — **SOLVED 2026-09-01.** It changes with every deposit and
+  withdrawal and isn't in a Bitcoin Esplora/Electrum view of the chain; thunder-rust gets it from the
+  enforcer over gRPC (`--mainchain-grpc-url`), which we don't speak. But the **drivechain-esplora**
+  index we now use for Thunder reads through to an enforcer and serves it over plain HTTPS:
+  `GET /drivechain/sidechain/9` returns the slot, its M1 declaration, and the treasury as
+  `{"txid", "vout", "value_sats"}` — which is the ctip. **Verified live** against
+  `seed.alpha.ecash.eu.com/thunder` (it answers today, even with the index holding no blocks, because
+  these two routes read the mainchain rather than the sidechain index). A slot with no treasury
+  answers `"treasury": null` rather than zero sats, so "nothing deposited yet" is distinguishable from
+  "a treasury holding nothing". Caveat: these routes are only as available as the enforcer behind
+  them, and a deployment without one answers 503. See `docs/thunder-sidechain-support.md` §8e.
 - **add it as a foreign input** — BDK supports this (`add_foreign_utxo`), so it's possible, but it's
   well outside the "build a normal send" path everything else uses.
 - **get the recreate-value exactly right**, or the transaction isn't a valid M5 at all.
@@ -186,14 +194,18 @@ keys-on-device model (Golden Rule §2) — we would not have used them regardles
 3. **Withdrawal status.** Poll `pending_withdrawal_bundle` for our outpoint, and
    `latest_failed_withdrawal_bundle_height` for expiry. Render as a long-running operation.
 4. **Deposits — decide the approach.** Building M5 ourselves means learning the ctip and adding a
-   foreign input (§2). The alternatives are routing users to a tool that already does it
+   foreign input (§2). **The ctip half is no longer a blocker** — the drivechain-esplora index serves
+   it over HTTPS (§2), so the remaining work is the foreign input, the exact recreate-value, and the
+   depositor race. The alternatives are still routing users to a tool that already does it
    (BitWindow), or asking L2L for a thin deposit-construction endpoint. **This is the decision to
    make before any deposit work starts.**
 
 ## 6. Open questions
 
 1. Does the `s9_…` string go in the OP_RETURN verbatim, or is it a UI-level encoding?
-2. How do we learn the current ctip without speaking enforcer gRPC?
+2. ~~How do we learn the current ctip without speaking enforcer gRPC?~~ **ANSWERED** —
+   `GET /drivechain/sidechain/9` on the drivechain-esplora index (§2). Not yet wired into the app:
+   nothing consumes it, because deposits remain out of v1 scope (CLAUDE.md §12).
 3. Are alphanet's SHORT thresholds short enough to test a full withdrawal round trip in a session?
 4. Does a withdrawal need a minimum value to be worth bundling (dust at mainchain payout time)?
 5. What does the user see if the sidechain operator simply never proposes a bundle?

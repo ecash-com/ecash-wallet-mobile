@@ -37,6 +37,60 @@ final class NetworkRegistryTests: XCTestCase {
         XCTAssertEqual(NetworkRegistry.params(for: .thunder).subUnitLabel, "szat")
     }
 
+    /// Thunder's default backend is a **drivechain-esplora index**, not the node's own JSON-RPC.
+    /// The kind is what picks the wire layer app-side (`ThunderBackendFactory`), so a silent drift back
+    /// to "thunder" would send Esplora-shaped expectations at a JSON-RPC server, and the reverse.
+    func testThunderDefaultsToTheEsploraIndex() {
+        let params = NetworkRegistry.params(for: WalletNetwork.thunder)
+        XCTAssertEqual(params.defaultBackendKind, "thunder-esplora")
+        XCTAssertEqual(params.defaultBackend, "https://seed.alpha.ecash.eu.com/thunder")
+        // The index mounts its routes at this base, so a trailing slash would break every route.
+        XCTAssertFalse(params.defaultBackend.hasSuffix("/"))
+        // Whatever the endpoint, the wallet must accept its own default.
+        XCTAssertTrue(BackendURLValidator.isAcceptable(kind: params.defaultBackendKind,
+                                                       url: params.defaultBackend))
+    }
+
+    /// Both Thunder wire kinds must survive the string round-trip `resolvedBackend` puts them through:
+    /// a kind `WalletBackend.Kind.from` doesn't recognise makes a user's Settings override silently
+    /// fall through to the bundled default instead of being honoured.
+    func testBothThunderBackendKindsParse() {
+        XCTAssertEqual(WalletBackend.Kind.from("thunder"), WalletBackend.Kind.thunder)
+        XCTAssertEqual(WalletBackend.Kind.from("thunder-esplora"), WalletBackend.Kind.thunderEsplora)
+        XCTAssertEqual(WalletBackend.Kind.thunderEsplora.rawValue, "thunder-esplora")
+        XCTAssertNil(WalletBackend.Kind.from("thunder-rpc"))
+    }
+
+    /// Every network a user can reach in Settings must resolve to a backend kind the app can parse.
+    ///
+    /// This is the silent-failure guard: `resolvedBackend` runs each override through
+    /// `WalletBackend.Kind.from`, and a kind it doesn't recognise makes a user's saved endpoint fall
+    /// through to the bundled default with no error — a setting that looks saved and isn't. It also
+    /// covers `NetworkEndpointEditor`, which offers Electrum/Esplora or the two Thunder kinds by
+    /// switching on `defaultBackendKind.hasPrefix("thunder")`: whichever branch a network takes, the
+    /// kind it starts on has to be one the picker can actually represent.
+    func testEverySelectableNetworkResolvesToAParseableBackendKind() {
+        for network in WalletNetwork.selectable {
+            let kind = NetworkRegistry.params(for: network).defaultBackendKind
+            XCTAssertNotNil(WalletBackend.Kind.from(kind), "\(network) has an unparseable kind \(kind)")
+            XCTAssertTrue(BackendURLValidator.isAcceptable(kind: kind,
+                                                           url: NetworkRegistry.params(for: network).defaultBackend),
+                          "\(network) ships a default endpoint its own validator rejects")
+        }
+    }
+
+    /// Thunder is the ONLY network served by something other than BDK — asserted over `allCases`, not
+    /// `selectable`, so it holds whether or not Thunder is currently shown in the pickers (a product
+    /// decision that has flipped more than once). The split itself is load-bearing: `WalletFacade`
+    /// routes on it, and the four BDK call sites that switch on backend kind treat a Thunder endpoint
+    /// as unreachable-by-construction rather than something to hand an Electrum/Esplora client.
+    func testThunderIsTheOnlyNonBDKNetwork() {
+        let nonBDK = WalletNetwork.allCases.filter {
+            NetworkRegistry.params(for: $0).defaultBackendKind.hasPrefix("thunder")
+        }
+        XCTAssertEqual(nonBDK, [WalletNetwork.thunder])
+    }
+
     func testUnitLabel() {
         XCTAssertEqual(NetworkRegistry.params(for: .bitcoin).unitLabel, "BTC")
         XCTAssertEqual(NetworkRegistry.params(for: .signet).unitLabel, "sBTC")

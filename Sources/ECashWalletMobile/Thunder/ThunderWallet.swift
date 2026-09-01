@@ -41,8 +41,14 @@ struct ThunderWallet {
 
     /// The first `count` addresses (indices `0 ..< count`), from a single seed computation.
     func addresses(count: Int) throws -> [ThunderAddress] {
+        try addresses(indices: UInt32(0)..<UInt32(count))
+    }
+
+    /// The addresses at `indices`, from a single seed computation. Gap-limit discovery walks *past*
+    /// the known window in batches, so it needs an arbitrary range rather than a 0-based prefix.
+    func addresses(indices: Range<UInt32>) throws -> [ThunderAddress] {
         let seed = seed()
-        return try (0..<count).map { try ThunderKey.derive(seed: seed, index: UInt32($0)).address }
+        return try indices.map { try ThunderKey.derive(seed: seed, index: $0).address }
     }
 
     /// Resolve the key controlling `address` by scanning indices `0 ..< searchLimit`; nil if none

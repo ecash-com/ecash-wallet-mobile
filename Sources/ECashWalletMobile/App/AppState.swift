@@ -151,8 +151,13 @@ final class AppState {
             thunder: ThunderService(
                 loadMnemonic: { [manager] id in try manager.mnemonic(for: id) },
                 // Resolved per call so a Settings → Network endpoint change applies immediately
-                // (the same override chain the BDK backends use).
-                makeClient: { [manager] in ThunderRPCClient(endpoint: manager.backendURL(for: .thunder)) }),
+                // (the same override chain the BDK backends use). The KIND is resolved too, not just
+                // the URL: it decides whether we speak to a drivechain-esplora index or a bare
+                // Thunder node's JSON-RPC.
+                makeBackend: { [manager] in
+                    ThunderBackendFactory.make(kind: manager.backendKind(for: .thunder),
+                                               url: manager.backendURL(for: .thunder))
+                }),
             isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network == .thunder })
         balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
         // New-wallet seed length: 24 if explicitly chosen, otherwise 12 (covers unset → default 12).
@@ -1076,8 +1081,34 @@ final class AppState {
 
     /// Validate a candidate endpoint before saving — true if the client connects + fetches the tip.
     func testBackend(kind: String, url: String, socks5: String?) async -> Bool {
+        // Thunder endpoints aren't BDK backends — handing one to `manager.testBackend` builds an
+        // Electrum/Esplora client against a sidechain server and always fails, which would read as
+        // "your endpoint is dead". Probe them over their own wire layer instead.
+        if kind == "thunder" || kind == "thunder-esplora" {
+            return await Self.testThunderBackend(kind: kind, url: url)
+        }
         do { try await manager.testBackend(kind: kind, url: url, socks5: socks5); return true }
         catch { return false }
+    }
+
+    /// Liveness probe for a Thunder endpoint: the chain tip over whichever wire layer `kind` names.
+    ///
+    /// An index that is up but has walked no blocks counts as **reachable** — it answers, it is
+    /// correctly configured, and it will fill in as it syncs. Failing the test there would tell the
+    /// user to go fix an endpoint that is fine.
+    private static func testThunderBackend(kind: String, url: String) async -> Bool {
+        do {
+            if kind == "thunder" {
+                _ = try await ThunderRPCClient(endpoint: url).blockCount()
+            } else {
+                _ = try await ThunderEsploraClient(endpoint: url).tipHeight()
+            }
+            return true
+        } catch ThunderBackendError.indexEmpty {
+            return true
+        } catch {
+            return false
+        }
     }
 
     /// Reveal the selected wallet's NEXT receive address (advances + persists the index) — for

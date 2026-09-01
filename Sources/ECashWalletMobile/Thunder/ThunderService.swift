@@ -10,19 +10,21 @@ import WalletService
 /// Bitcoin (ed25519 keys, BLAKE3 addresses, Borsh serialization, a utreexo UTXO set), so none of BDK
 /// applies; this is built on the Thunder crypto in this folder.
 ///
-/// **The thin-node flow** (agreed with the Thunder dev, docs/thunder-sidechain-support.md §8b — the
+/// **The thin-client flow** (agreed with the Thunder dev, docs/thunder-sidechain-support.md §8b — the
 /// node's half shipped in thunder-rust `2026-07-24-refactor`):
 /// 1. derive addresses locally (`ThunderWallet`),
-/// 2. `get_utxos(addresses)` — the node reads its full chain UTXO state, no seed required,
+/// 2. ask the backend for those addresses' UTXOs — public data only, no seed required,
 /// 3. select coins + build the transaction locally (`ThunderCoinSelector` + `ThunderTransaction`),
 /// 4. sign locally (`ThunderWallet.authorize`),
-/// 5. `submit_transaction`, where the node regenerates the utreexo proof.
-/// The seed never leaves the phone and the node never holds it — the whole point (Golden Rule §2).
+/// 5. submit, where the node regenerates the utreexo proof.
+/// The seed never leaves the phone and no server ever holds it — the whole point (Golden Rule §2).
 ///
-/// **History** is reconstructed from `get_utxos` + `get_stxos` (`ThunderHistory`) — spends are
-/// invisible in the UTXO set alone, so the spent-output read is the other half. Amounts and direction
-/// are exact; confirmation depth and true chronological order are not derivable, because the node
-/// exposes no height per transaction. See `ThunderHistory` for what that costs and how it's handled.
+/// **Where the facts come from is a `ThunderBackend`** — either a drivechain-esplora index (the
+/// registry default: real heights, times and fees) or the node's own JSON-RPC (works against a bare
+/// node, but can date nothing). Steps 1, 3 and 4 are identical either way, and the submitted JSON is
+/// byte-identical, so the choice of backend can never change what gets signed. Rows a backend can't
+/// date are stamped here from a local first-seen record (`datedNewestFirst`), in one place, so the
+/// fallback rule doesn't drift per backend.
 ///
 /// The mnemonic is loaded APP-SIDE, transiently: `loadMnemonic` reads the secure store only when
 /// derivation or signing needs it, and the derived `ThunderWallet` is dropped right after — the same
@@ -30,8 +32,9 @@ import WalletService
 @MainActor
 final class ThunderService: WalletOps {
     private let loadMnemonic: (String) throws -> String?
-    /// Built per call so a Settings endpoint change takes effect without rebuilding the service.
-    private let makeClient: @Sendable () -> ThunderRPCClient
+    /// Built per call so a Settings endpoint change — URL *or* wire kind — takes effect without
+    /// rebuilding the service.
+    private let makeBackend: @Sendable () -> ThunderBackend
     private let indexStore: ThunderAddressIndexStoring
     private let firstSeenStore: ThunderFirstSeenStoring
     /// Clock seam so tests don't depend on the wall clock.
@@ -50,15 +53,21 @@ final class ThunderService: WalletOps {
     /// paid to an address we handed out but never recorded still has to be found.
     static let gapLimit: UInt32 = 20
 
+    /// How many extra gap-limit batches a sync will walk before giving up. 20 rounds = 400 addresses
+    /// past the known window — far beyond any real wallet, and a hard stop so a server that called
+    /// every address "used" could not make us derive forever.
+    static let maxDiscoveryRounds = 20
+
     init(loadMnemonic: @escaping (String) throws -> String?,
-         makeClient: @escaping @Sendable () -> ThunderRPCClient = {
-             ThunderRPCClient(endpoint: NetworkRegistry.params(for: .thunder).defaultBackend)
+         makeBackend: @escaping @Sendable () -> ThunderBackend = {
+             let params = NetworkRegistry.params(for: WalletNetwork.thunder)
+             return ThunderBackendFactory.make(kind: params.defaultBackendKind, url: params.defaultBackend)
          },
          indexStore: ThunderAddressIndexStoring = UserDefaultsThunderAddressIndexStore(),
          firstSeenStore: ThunderFirstSeenStoring = UserDefaultsThunderFirstSeenStore(),
          now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
         self.loadMnemonic = loadMnemonic
-        self.makeClient = makeClient
+        self.makeBackend = makeBackend
         self.indexStore = indexStore
         self.firstSeenStore = firstSeenStore
         self.now = now
@@ -95,9 +104,10 @@ final class ThunderService: WalletOps {
         Amount(sats: Int64(clamping: (utxoCache[walletId] ?? []).reduce(UInt64(0)) { $0 &+ $1.valueSats }))
     }
 
-    /// Always zero: `get_utxos` reads the node's *state*, which only reflects connected blocks, so
-    /// there is no mempool view to report as pending. A tx we just submitted therefore shows up at the
-    /// next sync after it is mined, not before.
+    /// Always zero: neither backend has a mempool to report. The node's `get_utxos` reads its *state*,
+    /// which only reflects connected blocks, and the index serves no mempool view either
+    /// (`/address/{a}/txs/mempool` is always empty — it says so). A tx we just submitted therefore
+    /// shows up at the next sync after it is mined, not before.
     func pendingBalance(walletId: String) throws -> Amount { Amount(sats: 0) }
 
     /// Scan this wallet's addresses (0 ..< revealed + gap limit), refresh the cached UTXO set, and
@@ -113,20 +123,84 @@ final class ThunderService: WalletOps {
     }
 
     func sync(walletId: String) async throws -> Amount {
-        let addresses = try await addressWindow(walletId: walletId)
-        let client = makeClient()
-        let rawUtxos = try await client.getUtxos(addresses: addresses)
-        // Spent outputs are the other half of history; a node without get_stxos still gives a
-        // correct balance, so a failure here must not break syncing.
-        let rawStxos = (try? await client.getStxos(addresses: addresses)) ?? []
-
-        utxoCache[walletId] = rawUtxos.compactMap(\.spendable)
-        firstSeenStore.record(txids: ThunderHistory.txids(utxos: rawUtxos, stxos: rawStxos),
-                              walletId: walletId, now: now())
-        historyCache[walletId] = ThunderHistory.build(
-            utxos: rawUtxos, stxos: rawStxos,
-            firstSeen: firstSeenStore.firstSeen(walletId: walletId))
+        let backend = makeBackend()
+        let discovered = try await discoverWindow(walletId: walletId, backend: backend)
+        let scan = try await backend.scan(addresses: discovered.addresses, knownUsed: discovered.used)
+        utxoCache[walletId] = scan.utxos
+        historyCache[walletId] = datedNewestFirst(scan.transactions, walletId: walletId)
         return try balance(walletId: walletId)
+    }
+
+    /// The window to scan, extended past the known one while coins keep turning up.
+    ///
+    /// **Why this is needed at all.** `revealedIndex` is local device state — a small integer in
+    /// UserDefaults. Restore a wallet onto a new phone and it starts at 0, so the fixed
+    /// `revealed + gap limit` window covers only the first 21 addresses. A wallet that had been used
+    /// further down its address chain would show a *partial balance*. Nothing is ever lost (every
+    /// index re-derives from the one seed), but "my money is gone" is not a thing a wallet should say
+    /// — and Thunder has no watch-only xpub or BDK revealed-SPK store to recover the count from, so
+    /// the app has to go and look.
+    ///
+    /// The rule is BIP44's: keep walking while any address in the trailing gap-limit stretch has been
+    /// used, stop once a whole stretch is untouched. **That limit is real and this does not remove
+    /// it** — coins sitting past 20 consecutive unused addresses stay undiscoverable, exactly as they
+    /// are for BDK on the Bitcoin side. What it fixes is the common shape: a wallet used progressively
+    /// down its chain, where every extension keeps finding more.
+    ///
+    /// Only a backend that can answer "used?" cheaply takes part (`usedAddresses` → nil means don't
+    /// extend); the node RPC keeps the fixed window it has always had, because probing it batch by
+    /// batch would cost a full UTXO-table scan each time.
+    ///
+    /// Whatever it finds is **persisted** to `revealedIndex`, so the wider window is free from then on —
+    /// including for the send path, which never pays for discovery.
+    private func discoverWindow(walletId: String, backend: ThunderBackend)
+    async throws -> (addresses: [String], used: [String]?) {
+        var addresses = try await addressWindow(walletId: walletId)
+        guard var used = try await backend.usedAddresses(addresses) else { return (addresses, nil) }
+
+        for _ in 0..<Self.maxDiscoveryRounds {
+            // Extend only while the trailing stretch shows activity.
+            let tail = Set(addresses.suffix(Int(Self.gapLimit)))
+            guard used.contains(where: { tail.contains($0) }) else { break }
+
+            let start = UInt32(addresses.count)
+            let more = try await derivedAddresses(walletId: walletId,
+                                                  indices: start..<(start + Self.gapLimit))
+            guard let moreUsed = try await backend.usedAddresses(more) else { break }
+            addresses += more
+            used += moreUsed
+        }
+
+        // Record how far the chain actually goes, so this costs nothing next time. `addresses` is
+        // index-ordered from 0, so an address's position IS its derivation index. The store is
+        // monotonic, so this can only ever widen the window, never re-issue an old address.
+        if let highest = used.compactMap({ addresses.firstIndex(of: $0) }).max() {
+            indexStore.setRevealedIndex(UInt32(highest), walletId: walletId)
+        }
+        return (addresses, used)
+    }
+
+    /// Give every row a timestamp, then put the list newest-first.
+    ///
+    /// A backend that reports real block times (the Esplora index) leaves nothing to do here, and the
+    /// list keeps the height-then-time order it already has. One that can't date a transaction at all
+    /// (the node RPC — no per-tx height exists to ask for) returns undated rows, and those fall back
+    /// to when this device first saw the txid: exactly right for a wallet in daily use, and
+    /// arbitrary-but-*stable* for a freshly restored one, which beats reshuffling every launch.
+    private func datedNewestFirst(_ transactions: [WalletTx], walletId: String) -> [WalletTx] {
+        let undated = transactions.filter { $0.timestampEpochSeconds == nil }
+        guard !undated.isEmpty else { return transactions }
+
+        firstSeenStore.record(txids: Set(undated.map(\.txid)), walletId: walletId, now: now())
+        let firstSeen = firstSeenStore.firstSeen(walletId: walletId)
+        let stamped = transactions.map { tx -> WalletTx in
+            guard tx.timestampEpochSeconds == nil, let seen = firstSeen[tx.txid] else { return tx }
+            return WalletTx(txid: tx.txid, netSats: tx.netSats, feeSats: tx.feeSats,
+                            confirmations: tx.confirmations, timestampEpochSeconds: seen,
+                            isRBF: tx.isRBF, blockHeight: tx.blockHeight, vsize: tx.vsize,
+                            coinNewsKind: tx.coinNewsKind, receivedSats: tx.receivedSats)
+        }
+        return stamped.sorted { ($0.timestampEpochSeconds ?? 0) > ($1.timestampEpochSeconds ?? 0) }
     }
 
     /// History rebuilt from `get_utxos` + `get_stxos` at the last sync (see `ThunderHistory` for what
@@ -195,20 +269,26 @@ final class ThunderService: WalletOps {
         return mnemonic
     }
 
-    /// Derive this wallet's address window and ask the node for its UTXOs. Unspendable outputs
-    /// (withdrawals, which consensus refuses to let anyone spend) are dropped here, so they can't
-    /// inflate a balance or be picked by coin selection.
+    /// Derive this wallet's address window and ask the backend for its UTXOs. Unspendable outputs
+    /// (withdrawals, which consensus refuses to let anyone spend) are already dropped by the backend,
+    /// so they can't inflate a balance or be picked by coin selection.
     private func fetchUtxos(walletId: String) async throws -> [ThunderPointedOutput] {
         let addresses = try await addressWindow(walletId: walletId)
-        return try await makeClient().getUtxos(addresses: addresses).compactMap(\.spendable)
+        return try await makeBackend().spendableUTXOs(addresses: addresses)
     }
 
     /// This wallet's address window: 0 ..< revealed + gap limit.
     private func addressWindow(walletId: String) async throws -> [String] {
+        let count = indexStore.revealedIndex(walletId: walletId) + Self.gapLimit + 1
+        return try await derivedAddresses(walletId: walletId, indices: UInt32(0)..<count)
+    }
+
+    /// Addresses at `indices`. The mnemonic is loaded per call and dropped when the task returns —
+    /// discovery derives in batches rather than holding the secret across the whole scan.
+    private func derivedAddresses(walletId: String, indices: Range<UInt32>) async throws -> [String] {
         let mnemonic = try requireMnemonic(walletId: walletId)
-        let window = Int(indexStore.revealedIndex(walletId: walletId) + Self.gapLimit) + 1
         return try await Task.detached(priority: .userInitiated) {
-            try ThunderWallet(mnemonic: mnemonic).addresses(count: window).map(\.base58)
+            try ThunderWallet(mnemonic: mnemonic).addresses(indices: indices).map(\.base58)
         }.value
     }
 
@@ -231,7 +311,7 @@ final class ThunderService: WalletOps {
                                                             searchLimit: max(searchLimit, ThunderWallet.defaultAddressSearchLimit))
         }.value
 
-        let txid = try await makeClient().submitTransaction(authorized)
+        let txid = try await makeBackend().submit(authorized)
 
         // Drop the spent coins from the cache so an immediate second send can't reselect them. The
         // change output isn't added back — it isn't in the node's state until the tx is mined, and

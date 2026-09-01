@@ -180,6 +180,11 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
             case .esplora:
                 let client = EsploraClient(url: backend.url, proxy: backend.socks5)
                 _ = try client.getHeight()
+            case .thunder, .thunderEsplora:
+                // Thunder endpoints aren't BDK backends — a Thunder wallet is served by the
+                // Fuse-native `ThunderService`, and its Test-connection probe belongs there. Reaching
+                // this means the Settings editor offered a Thunder kind to a BDK network.
+                throw WalletError.syncFailed
             }
         } catch {
             throw WalletError.syncFailed

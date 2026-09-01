@@ -16,6 +16,12 @@ struct WalletBackend: Equatable, Sendable {
     enum Kind: String, Sendable {
         case electrum
         case esplora
+        /// Thunder's own node JSON-RPC (`submit_transaction`/`get_utxos`/`get_stxos`).
+        case thunder
+        /// A drivechain-esplora index in front of a Thunder node — the Esplora REST shape, so it
+        /// carries block heights, times and fees the node RPC cannot answer.
+        /// See docs/thunder-sidechain-support.md.
+        case thunderEsplora = "thunder-esplora"
 
         /// Skip-safe parse of a raw kind string. Use this instead of the synthesized
         /// `Kind(rawValue:)` from OTHER files: a *qualified* `WalletBackend.Kind(rawValue:)` gets
@@ -26,6 +32,8 @@ struct WalletBackend: Equatable, Sendable {
             switch raw {
             case "electrum": return .electrum
             case "esplora": return .esplora
+            case "thunder": return .thunder
+            case "thunder-esplora": return .thunderEsplora
             default: return nil
             }
         }

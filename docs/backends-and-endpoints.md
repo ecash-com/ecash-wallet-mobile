@@ -60,6 +60,15 @@ enum WalletBackendKind { case electrum, esplora }          // (+ .cbf in v2)
 struct WalletBackend { let kind: WalletBackendKind; let url: String }
 ```
 
+> **Non-BDK kinds (2026-09-01).** `WalletBackend.Kind` also carries `thunder` and `thunder-esplora`.
+> Neither is a BDK backend: Thunder wallets are served by the Fuse-native `ThunderService`, which
+> picks its wire layer from the kind (`ThunderBackendFactory`) — the node's JSON-RPC, or a
+> drivechain-esplora index. They live in this enum because `resolvedBackend` funnels every override
+> through `Kind.from`, and a kind it doesn't recognise makes a user's Settings override *silently*
+> fall through to the bundled default. The four BDK call sites that switch on `kind` therefore carry
+> an explicit "Thunder never reaches BDK" arm rather than a `default`. See
+> `docs/thunder-sidechain-support.md` §8e.
+
 - `NetworkRegistry` `defaultBackend` becomes a `WalletBackend` (kind + url). Kind can also be inferred
   from the scheme (`ssl://`/`tcp://` → Electrum, `http(s)://` → Esplora) so a single string stays the
   canonical form if preferred.

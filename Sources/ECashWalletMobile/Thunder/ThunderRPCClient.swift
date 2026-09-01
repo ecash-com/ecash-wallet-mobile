@@ -7,18 +7,6 @@ import Foundation
 import FoundationNetworking   // URLSession lives here on Android/Linux Foundation (same as Pricing)
 #endif
 
-/// Failures from the Thunder node RPC, scrubbed of anything sensitive (Golden Rule §2).
-enum ThunderRPCError: Error, Equatable {
-    /// The configured endpoint isn't a usable URL.
-    case badURL(String)
-    /// The request never completed (offline, DNS, TLS, timeout).
-    case network
-    /// The node answered with a JSON-RPC error object.
-    case server(code: Int, message: String)
-    /// The node answered with something we couldn't parse — `detail` names the field, never content.
-    case malformedResponse(String)
-}
-
 /// A minimal JSON-RPC 2.0 client for a Thunder node (`jsonrpsee` server, positional params).
 ///
 /// Only the three methods the thin-node flow needs (docs/thunder-sidechain-support.md §8b): the phone

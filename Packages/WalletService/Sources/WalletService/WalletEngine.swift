@@ -597,6 +597,12 @@ public final class WalletEngine: WalletEngineProtocol {
             case .esplora:
                 let client = EsploraClient(url: backend.url, proxy: backend.socks5)
                 try client.broadcast(transaction: tx)
+            case .thunder, .thunderEsplora:
+                // Unreachable by construction: Thunder wallets are routed to the Fuse-native
+                // `ThunderService` by `WalletFacade` and never touch BDK (different keys, different
+                // signatures, different chain). A Thunder endpoint arriving here means misrouted
+                // config, so fail loudly rather than hand a sidechain URL to a Bitcoin client.
+                throw WalletError.broadcastFailed
             }
         } catch {
             // Known context: a broadcast/network failure. (The tx is signed/valid; this is transport.)
@@ -685,6 +691,12 @@ public final class WalletEngine: WalletEngineProtocol {
             case .esplora:
                 let client = EsploraClient(url: backend.url, proxy: backend.socks5)
                 try client.broadcast(transaction: tx)
+            case .thunder, .thunderEsplora:
+                // Unreachable by construction: Thunder wallets are routed to the Fuse-native
+                // `ThunderService` by `WalletFacade` and never touch BDK (different keys, different
+                // signatures, different chain). A Thunder endpoint arriving here means misrouted
+                // config, so fail loudly rather than hand a sidechain URL to a Bitcoin client.
+                throw WalletError.broadcastFailed
             }
         } catch {
             throw WalletError.broadcastFailed
@@ -794,6 +806,12 @@ public final class WalletEngine: WalletEngineProtocol {
                     let update = try client.sync(request: request, parallelRequests: Self.esploraParallelRequests)
                     try wallet.applyUpdate(update: update)
                 }
+            case .thunder, .thunderEsplora:
+                // Unreachable by construction: Thunder wallets are routed to the Fuse-native
+                // `ThunderService` by `WalletFacade` and never touch BDK (different keys, different
+                // signatures, different chain). A Thunder endpoint arriving here means misrouted
+                // config, so fail loudly rather than hand a sidechain URL to a Bitcoin client.
+                throw WalletError.syncFailed
             }
             _ = try wallet.persist(persister: persister)
         } catch {

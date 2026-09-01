@@ -27,8 +27,13 @@ struct NetworkEndpointEditor: View {
         List {
             Section {
                 Picker("Server type", selection: $kind) {
-                    Text("Electrum", bundle: .module, comment: "backend type").tag("electrum")
-                    Text("Esplora", bundle: .module, comment: "backend type").tag("esplora")
+                    if isThunderFamily {
+                        Text("Thunder index", bundle: .module, comment: "backend type").tag("thunder-esplora")
+                        Text("Thunder node", bundle: .module, comment: "backend type").tag("thunder")
+                    } else {
+                        Text("Electrum", bundle: .module, comment: "backend type").tag("electrum")
+                        Text("Esplora", bundle: .module, comment: "backend type").tag("esplora")
+                    }
                 }
                 .onChange(of: kind) { _, _ in testResult = nil }
 
@@ -87,6 +92,14 @@ struct NetworkEndpointEditor: View {
     /// Why the current entry can't be saved, or nil when it's acceptable. Syntax only — whether the
     /// server answers, and on the right chain, is what Test connection is for. Empty is allowed: it
     /// means "clear my override", not "invalid".
+    /// Which protocol family this network speaks, read from the registry rather than hardcoded per
+    /// network (Golden Rule §4). It matters because `setBackendOverride` **silently refuses** a kind
+    /// the network can't use — so offering Electrum/Esplora for a Thunder network would look like a
+    /// setting that just won't save.
+    private var isThunderFamily: Bool {
+        NetworkRegistry.params(for: network).defaultBackendKind.hasPrefix("thunder")
+    }
+
     private var validationMessage: String? {
         BackendURLValidator.validationMessage(kind: kind, url: trimmedURL)
     }
