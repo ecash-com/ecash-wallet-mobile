@@ -22,10 +22,11 @@ import Foundation
                          wordCount: wordCount)
     }
 
-    /// Varied input across four strokes — enough to clear the 12-word gate.
+    /// Varied input across eight strokes — enough to clear the 12-word gate, which asks for double the
+    /// nominal 128 bits because a swipe's figure is a model rather than a measurement.
     private func fill(_ vm: EntropyViewModel) {
         var index = 0
-        for _ in 0..<4 {
+        for _ in 0..<8 {
             for scalar in 0x41...0x5A {
                 vm.recordSwipe(Character(Unicode.Scalar(scalar)!), startsGesture: index % 26 == 0)
                 index += 1
@@ -166,9 +167,32 @@ import Foundation
 
     @Test func twentyFourWordsRaisesTheTarget() {
         let vm = viewModel(wordCount: 24)
-        #expect(vm.requiredBits == 256)
+        #expect(vm.requiredBits == 512)    // 256 nominal x the swipe safety factor
         fill(vm)
         #expect(!vm.canContinue)           // enough for 12 words, not for 24
+    }
+
+    /// The safety margin applies to swiping, where the figure comes from a behavioural model — not to
+    /// typed input, where fifty d6 rolls really are 129 bits by arithmetic and demanding a hundred
+    /// would double someone's dice-rolling for nothing.
+    @Test func theSafetyMarginAppliesToSwipingOnly() {
+        let vm = viewModel()
+        #expect(vm.requiredBits == 128 * EntropyViewModel.swipeSafetyFactor)
+        vm.inputMethod = .typed
+        #expect(vm.requiredBits == 128)
+    }
+
+    /// A full bar must mean "ready" — it used to track bits alone and could sit at 100% while the
+    /// structural checks still blocked Continue.
+    @Test func theBarOnlyFillsWhenTheGateIsOpen() {
+        let vm = viewModel()
+        // Two characters, repeated: racks up bits but fails the distinct-character check.
+        for index in 0..<400 {
+            vm.recordSwipe(index % 2 == 0 ? "A" : "B", startsGesture: index == 0)
+        }
+        #expect(vm.estimatedBits >= vm.requiredBits)   // bits satisfied…
+        #expect(!vm.canContinue)                       // …gate still closed
+        #expect(vm.progress < 1.0)                     // …so the bar must not read full
     }
 
     // MARK: - Field and derivation

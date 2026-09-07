@@ -148,7 +148,35 @@ final class EntropyViewModel {
 
     // MARK: - Progress
 
-    var requiredBits: Double { wordCount == 24 ? 256 : 128 }
+    /// How much more than the nominal target a **swipe** must estimate before it is accepted.
+    ///
+    /// The credit rates are a model of how unpredictable human swiping is, not a measurement — and a
+    /// model can be wrong in the dangerous direction: people start swipes where their thumb rests,
+    /// paths have characteristic curvature, and a person's velocity is consistent enough that dwell is
+    /// worth less than assumed. Requiring double means that even if the model over-credits by 2×, the
+    /// wallet still carries its nominal entropy.
+    ///
+    /// It costs seconds. At the measured ~20 runs/second this is about 5 seconds for 12 words and 10
+    /// for 24, against 2.5 and 5 without it.
+    static let swipeSafetyFactor = 2.0
+
+    /// The nominal entropy for the word count — 128 or 256 bits.
+    var nominalBits: Double { effectiveWordCount == 24 ? 256 : 128 }
+
+    /// What this input must reach.
+    ///
+    /// **The margin applies to swiping only.** A swipe's figure comes from a behavioural model, so it
+    /// gets doubled. Typed input from a mechanical source does not: fifty d6 rolls really are 129 bits
+    /// by arithmetic on `log2(6)`, not a guess about behaviour, and demanding a hundred rolls would
+    /// double someone's physical dice-rolling for no gain. Typed input has its own conservatism — an
+    /// alphabet over 16 symbols drops to 1 bit per character precisely because it can't be trusted as
+    /// mechanical.
+    var requiredBits: Double {
+        switch inputMethod {
+        case .swipe: return nominalBits * Self.swipeSafetyFactor
+        case .typed: return nominalBits
+        }
+    }
 
     /// Bits credited to the **user's contribution only**.
     ///
@@ -163,9 +191,16 @@ final class EntropyViewModel {
         }
     }
 
+    /// Fills only as far as the gate is actually open.
+    ///
+    /// It used to track bits alone, so it could sit at 100% while Continue stayed disabled — the bit
+    /// target is only one of the conditions, and the structural checks (distinct characters, separate
+    /// strokes, no repetition) can still be failing. A full bar that doesn't let you continue reads as
+    /// a broken app. It now reaches 1.0 only when everything passes, and is held just short otherwise.
     var progress: Double {
+        if canContinue { return 1.0 }
         guard requiredBits > 0 else { return 0 }
-        return min(1.0, estimatedBits / requiredBits)
+        return min(0.95, estimatedBits / requiredBits)
     }
 
     /// Why the input isn't acceptable yet, or nil when it is.

@@ -597,6 +597,23 @@ plan:
 - **The input is no longer wiped when the preview is pushed.** `onDisappear` fires on a forward push
   too, so going to look at your words destroyed a minute of swiping.
 
+### The swipe threshold is doubled
+
+Following directly from the criticism below: if the bit count is a model rather than a measurement,
+requiring exactly the nominal target trusts the model completely. **Swiping now asks for double** — 256
+estimated bits for a 12-word wallet, 512 for 24 — so the wallet still carries its nominal entropy even
+if the credit rates over-count by 2x. At the measured ~20 runs/second that is about 5 seconds and 10
+seconds respectively.
+
+**The margin is deliberately not applied to typed input.** Fifty d6 rolls really are 129 bits by
+arithmetic on `log2(6)`, not a guess about behaviour, so demanding a hundred would double someone's
+physical dice-rolling for no gain. Typed input carries its own conservatism instead: any alphabet over
+16 symbols drops to 1 bit per character precisely because it cannot be trusted as mechanical.
+
+**The progress bar reaches full only when the gate opens.** It used to track bits alone, so it could
+sit at 100% while the structural checks still blocked Continue — a full bar that will not let you
+proceed reads as a broken app.
+
 ### The meter says what it is now
 
 A reviewer made the sharpest criticism this feature has had: **"128 bits here is NOT the same as 128

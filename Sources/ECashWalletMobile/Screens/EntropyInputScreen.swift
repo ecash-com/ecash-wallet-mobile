@@ -202,8 +202,8 @@ struct EntropyInputScreen: View {
             // same thing as bits from a random number generator, and showing a bare number in the same
             // units invites exactly that reading. Which mode you are in decides how much it matters.
             Text(vm.mode == .mixed
-                    ? "An estimate, not a measurement. Your input is mixed with the device's randomness, so the wallet is at least as strong as a normal one either way."
-                    : "An estimate, not a measurement — and with nothing mixed in, it is all this wallet has. This is not the same as 128 bits from a random number generator.",
+                    ? "An estimate, not a measurement — so we ask for double. Your input is also mixed with the device's randomness, so the wallet is at least as strong as a normal one either way."
+                    : "An estimate, not a measurement — so we ask for double. With nothing mixed in this is all the wallet has, and it is not the same as bits from a random number generator.",
                  bundle: .module, comment: "entropy meter caveat")
                 .textStyle(.xs)
                 .foregroundStyle(vm.mode == .mixed ? Theme.Colors.text2 : Theme.Colors.warning)
