@@ -45,7 +45,15 @@ struct EntropyAccumulator {
     // MARK: - Structural floor (docs §6.3)
 
     static let minDistinctCharacters = 16
-    static let minGestures = 3
+    // NOTE: there is deliberately no minimum-gesture requirement.
+    //
+    // An earlier version demanded three separate strokes, on the reasoning that a continuous stroke is
+    // one motor program while each touch-down is an independent choice. But **1.5 bits per transition
+    // is already the continuous-stroke rate** — it was derived for mid-drag motion, where the next cell
+    // is one of ~3 neighbours. Someone producing the whole target in one unbroken sweep is therefore
+    // earning at exactly the rate that models their behaviour, and the requirement protected against
+    // nothing the credit rate does not already handle. Lifting is *rewarded* (5 bits versus 1.5)
+    // rather than mandated, which is the right shape.
     /// No single transition bigram may cover more than this share of the runs — catches `AB AB AB…`.
     static let maxBigramShare = 0.15
 
@@ -126,18 +134,19 @@ struct EntropyAccumulator {
     /// which produces a plausible-looking string from a tiny subset of the grid. These structural
     /// checks, not the counter, are what actually stop that.
     func rejectionReason(requiredBits: Double) -> EntropyRejection? {
+        // Bits FIRST. The structural checks are final gates, not running commentary — evaluated first
+        // they fired from the very first stroke ("Lift and swipe again — 1/3 strokes") while the user
+        // was 5% of the way through, reading as an instruction rather than a problem. Let the bar fill,
+        // then tell them if something is actually wrong with what they produced.
+        if estimatedBits() < requiredBits {
+            return .notEnoughBits(estimatedBits(), requiredBits)
+        }
         let runList = runs()
         if Set(samples).count < Self.minDistinctCharacters {
             return .tooFewDistinctCharacters(Set(samples).count, Self.minDistinctCharacters)
         }
-        if gestureStartIndices.count < Self.minGestures {
-            return .tooFewGestures(gestureStartIndices.count, Self.minGestures)
-        }
         if let share = dominantBigramShare(runList), share > Self.maxBigramShare {
             return .repetitivePattern
-        }
-        if estimatedBits() < requiredBits {
-            return .notEnoughBits(estimatedBits(), requiredBits)
         }
         return nil
     }
@@ -179,6 +188,5 @@ struct EntropyAccumulator {
 enum EntropyRejection: Equatable {
     case notEnoughBits(Double, Double)
     case tooFewDistinctCharacters(Int, Int)
-    case tooFewGestures(Int, Int)
     case repetitivePattern
 }

@@ -139,48 +139,34 @@ struct EntropyInputScreen: View {
 
     /// What the grid has produced so far — swipe only, since the typed editor shows its own text.
     ///
-    /// A real scroll view that follows the input: an anchor sits below the text and every change
-    /// scrolls to it, so the newest characters are always in view and the text simply wraps normally.
+    /// **Bottom-anchored by rotating the scroll view, not by asking it to scroll.** SkipUI supports
+    /// neither of the direct routes: `ScrollViewReader`/`scrollTo` compiles and is a silent no-op, and
+    /// `.defaultScrollAnchor` / `.scrollIndicators` do not exist at all ("no member
+    /// defaultScrollAnchor"). What it does support is `ScrollView` and `rotationEffect`.
     ///
-    /// Two cleverer attempts came first and both looked wrong. Windowing by character made the block
-    /// re-flow on every keystroke, so it appeared to slide left and be eaten from the start. Windowing
-    /// by fixed-width line fixed that but needed a guessed pixel height, and the guess clipped the last
-    /// line — hiding exactly the characters being watched. Scrolling is what was actually wanted.
+    /// So the scroll view is turned 180° and its content turned back. The two rotations cancel
+    /// visually — the text reads normally — but the scroll *axis* stays reversed, which makes the
+    /// view's natural resting position (its "top") the bottom of the content. New characters therefore
+    /// stay in view with no behaviour to depend on, on either platform, and the view is still a real
+    /// scroll view you can drag back through.
     private var producedString: some View {
         VStack(alignment: .leading, spacing: Theme.Space.x1) {
-            ScrollViewReader { proxy in
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 0) {
-                        Text(verbatim: vm.userInput.isEmpty
-                                ? "Swipe around the grid below…"
-                                : vm.userInput)
-                            .font(.jbMono(12, .regular))
-                            .foregroundStyle(vm.userInput.isEmpty
-                                ? Theme.Colors.text2 : Theme.Colors.text0)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        // The thing we scroll to. A zero-ish view below the text is the reliable
-                        // anchor — scrolling to the Text itself lands on its top.
-                        Color.clear
-                            .frame(height: 1)
-                            .id(Self.bottomAnchor)
-                    }
-                }
-                .frame(height: 104)
-                .onChange(of: vm.userInput) { _, _ in
-                    // No animation: this fires many times a second while swiping, and an animated
-                    // scroll would never catch up.
-                    proxy.scrollTo(Self.bottomAnchor, anchor: .bottom)
-                }
+            ScrollView {
+                Text(verbatim: vm.userInput.isEmpty
+                        ? "Swipe around the grid below…"
+                        : vm.userInput)
+                    .font(.jbMono(11, .regular))
+                    .foregroundStyle(vm.userInput.isEmpty ? Theme.Colors.text2 : Theme.Colors.text0)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .rotationEffect(.degrees(180))
             }
-            // Always rendered, even at zero: appearing on the first character added a line and
-            // visibly shrank the grid below.
+            .rotationEffect(.degrees(180))
+            .frame(height: 84)
             Text(verbatim: "\(vm.userInput.count) characters")
                 .textStyle(.xs)
                 .foregroundStyle(Theme.Colors.text2)
         }
     }
-
-    private static let bottomAnchor = "entropy-tail"
 
     /// How far along you are, and the way out to an audit.
     private var meter: some View {
@@ -188,9 +174,14 @@ struct EntropyInputScreen: View {
             ProgressView(value: vm.progress)
                 .tint(vm.canContinue ? Theme.Colors.positive : Theme.Colors.accent)
             HStack {
-                Text(verbatim: statusText)
-                    .textStyle(.xs)
-                    .foregroundStyle(vm.canContinue ? Theme.Colors.positive : Theme.Colors.text2)
+                // Text only when there is something to act on. In the ordinary case the bar IS the
+                // status — a number in bits invited comparison with a random number generator's, and
+                // there is nothing useful to say beyond "keep going", which the bar already says.
+                if let status = statusText {
+                    Text(verbatim: status)
+                        .textStyle(.xs)
+                        .foregroundStyle(vm.canContinue ? Theme.Colors.positive : Theme.Colors.warning)
+                }
                 Spacer()
                 Button { Clipboard.copy(vm.field) } label: {
                     Text("Copy", bundle: .module, comment: "copy the entropy field for auditing")
@@ -201,12 +192,11 @@ struct EntropyInputScreen: View {
             // This count is an ESTIMATE from a model of how unpredictable swiping is — it is not the
             // same thing as bits from a random number generator, and showing a bare number in the same
             // units invites exactly that reading. Which mode you are in decides how much it matters.
-            Text(vm.mode == .mixed
-                    ? "An estimate, not a measurement — so we ask for double. Your input is also mixed with the device's randomness, so the wallet is at least as strong as a normal one either way."
-                    : "An estimate, not a measurement — so we ask for double. With nothing mixed in this is all the wallet has, and it is not the same as bits from a random number generator.",
-                 bundle: .module, comment: "entropy meter caveat")
+            // Tell them what to DO. The earlier version explained why the number can't be trusted,
+            // which is true but is not what someone staring at a half-full bar needs from it.
+            Text(verbatim: instructionText)
                 .textStyle(.xs)
-                .foregroundStyle(vm.mode == .mixed ? Theme.Colors.text2 : Theme.Colors.warning)
+                .foregroundStyle(Theme.Colors.text2)
         }
     }
 
@@ -278,24 +268,39 @@ struct EntropyInputScreen: View {
 
     /// Says what is missing rather than just refusing — told only "keep going", a user assumes the
     /// feature is broken.
-    private var statusText: String {
-        let bits = Int(vm.estimatedBits)
-        let needed = Int(vm.requiredBits)
+    ///
+    /// **No bit counts.** Quoting "153/128 bits" put our figure in the same units as a random number
+    /// generator's, which is exactly the false equivalence to avoid: a CSPRNG's 128 bits is a guarantee
+    /// about a process, ours is a model of human behaviour. Showing progress without a number keeps
+    /// the useful part (how far along you are) and drops the part that reads as a promise we cannot
+    /// make.
+    /// What to do, and — where it applies — the reassurance that the device is contributing too.
+    private var instructionText: String {
+        let action = vm.inputMethod == .swipe
+            ? "Swipe over the box randomly for 10–15 seconds, or at least until the bar fills. The more the better."
+            : "Type or paste your randomness — the more the better."
+        if vm.mode == .mixed {
+            return action + " It's also mixed with the device's randomness."
+        }
+        return action
+    }
+
+    private var statusText: String? {
         if vm.isRestoringFromPastedField {
             return "Restoring from a saved entropy string · \(vm.effectiveWordCount) words"
         }
         switch vm.rejection {
         case .none:
-            return "Ready · est. \(bits)/\(needed) bits"
+            return "Ready"
         case .some(.notEnoughBits):
+            // Nothing to add — the bar is already saying "keep going". Typed input is the exception,
+            // where a concrete count is genuinely useful.
             if vm.inputMethod == .typed {
-                return "est. \(bits)/\(needed) bits · about \(vm.typedCharactersRemaining) more"
+                return "About \(vm.typedCharactersRemaining) more characters"
             }
-            return "est. \(bits)/\(needed) bits"
+            return nil
         case .some(.tooFewDistinctCharacters(let got, let want)):
             return "Use more variety — \(got)/\(want) different characters"
-        case .some(.tooFewGestures(let got, let want)):
-            return "Lift and swipe again — \(got)/\(want) strokes"
         case .some(.repetitivePattern):
             return "Too repetitive — vary it"
         }

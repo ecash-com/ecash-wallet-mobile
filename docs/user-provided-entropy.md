@@ -597,6 +597,49 @@ plan:
 - **The input is no longer wiped when the preview is pushed.** `onDisappear` fires on a forward push
   too, so going to look at your words destroyed a minute of swiping.
 
+### The swipe threshold is ~8x nominal, and the bit count is gone from the UI
+
+**Swiping asks for 1000 estimated bits at 12 words and 2000 at 24** — roughly eight times the nominal
+entropy. If the count is a model rather than a measurement, requiring exactly the nominal target trusts
+the model completely; a large multiple means the wallet still carries its nominal entropy even if the
+rates over-count badly. Typed input keeps 128/256: fifty d6 rolls really are 129 bits by arithmetic, so
+asking eight times that would be 388 rolls — nobody would, and it would buy nothing.
+
+**No bit counts appear in the UI.** Quoting "153/128 bits" put our figure in the same units as a random
+number generator's, which is the false equivalence to avoid. There is a bar, and text only when
+something is actionable.
+
+**There is no minimum-gesture requirement.** An earlier version demanded three separate strokes on the
+reasoning that a continuous stroke is one motor program. But 1.5 bits per transition IS the
+continuous-stroke rate — it was derived for mid-drag motion — so a single unbroken sweep earns at
+exactly the rate that models it, and the requirement protected against nothing. Lifting is *rewarded*
+(5 bits versus 1.5), not mandated.
+
+**Structural checks run after the bit target, not before.** Evaluated first they fired from the opening
+stroke ("Lift and swipe again — 1/3 strokes") while the user was 5% through, reading as an instruction
+rather than a problem. They are final gates.
+
+### The meter caveat became an instruction
+
+The copy under the bar explained why the number can't be trusted. True, but not what someone staring at
+a half-full bar needs. It now says what to do — "Swipe over the box randomly for 10–15 seconds, or at
+least until the bar fills. The more the better." — plus, in mixed mode, that the device's randomness is
+in there too.
+
+### Bottom-anchored scrolling: three approaches, one that survives SkipUI
+
+The produced-string box must keep the newest characters in view. SkipUI refuses the direct routes:
+
+- `ScrollViewReader` + `scrollTo` — **compiles and is a silent no-op**. Works on iOS; on Android the
+  view simply never moves.
+- `.defaultScrollAnchor(.bottom)` — does not exist ("no member `defaultScrollAnchor`").
+- `.scrollIndicators(.visible)` — does not exist either, so an always-visible scrollbar is not
+  available on Android without dropping to a Compose view.
+
+What works is rotating the `ScrollView` 180° and rotating its content back. The rotations cancel
+visually so the text reads normally, but the scroll *axis* stays reversed, making the view's resting
+position the bottom of the content. No behaviour to depend on, and it is still a real scroll view.
+
 ### The swipe threshold is doubled
 
 Following directly from the criticism below: if the bit count is a model rather than a measurement,

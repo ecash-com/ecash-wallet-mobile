@@ -114,14 +114,28 @@ import Foundation
         #expect(!accumulator.isAcceptable(requiredBits: 128))
     }
 
-    @Test func aSingleLongStrokeCannotSatisfyTheTargetAlone() {
-        // Plenty of distinct characters and bits, but one gesture.
+    /// A single unbroken stroke is fine — there is deliberately no minimum-gesture requirement.
+    ///
+    /// 1.5 bits per transition IS the continuous-stroke rate, derived for mid-drag motion. So a long
+    /// single sweep earns at exactly the rate that models it, and demanding lifts protected against
+    /// nothing the credit rate does not already handle. Lifting is rewarded (5 bits versus 1.5), not
+    /// mandated.
+    @Test func aSingleUnbrokenStrokeIsAcceptable() {
+        var input = ""
+        for _ in 0..<40 { for scalar in 0x41...0x5A { input += String(Character(Unicode.Scalar(scalar)!)) } }
+        let accumulator = accumulator(input, gestureStarts: [0])
+        #expect(accumulator.rejectionReason(requiredBits: 1000) == nil)
+    }
+
+    /// …but it takes longer than the same input broken into strokes, because each touch-down earns
+    /// more than a mid-drag step.
+    @Test func strokesEarnFasterThanOneContinuousSweep() {
         var input = ""
         for _ in 0..<4 { for scalar in 0x41...0x5A { input += String(Character(Unicode.Scalar(scalar)!)) } }
-        let accumulator = accumulator(input, gestureStarts: [0])
-        guard case .tooFewGestures? = accumulator.rejectionReason(requiredBits: 128) else {
-            Issue.record("expected a gesture-count rejection"); return
-        }
+        let oneStroke = accumulator(input, gestureStarts: [0]).estimatedBits()
+        let manyStrokes = accumulator(input, gestureStarts: Set(stride(from: 0, to: 104, by: 26)))
+            .estimatedBits()
+        #expect(manyStrokes > oneStroke)
     }
 
     // MARK: - Acceptance
