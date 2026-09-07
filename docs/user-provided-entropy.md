@@ -538,7 +538,30 @@ human dragging with the mouse:
 moves the numbers in our favour, but the dwell credit should be confirmed against a real digitizer
 rather than an emulated one.
 
-### Three SkipUI constraints this uncovered
+### SkipUI constraints this work uncovered
+
+Every one of these compiles on the host and fails **only** on the Android leg — `swift build` catches
+none of them. Collected here because the pattern is the lesson: run `skip export` early on new UI, not
+at the end.
+
+- **`@State` properties must be internal, not private** — `private @State var` is a hard Skip Fuse
+  error ("cannot be bridged to Android").
+- **`.contentShape()` does not exist.** Make an area hit-testable with a filled background instead.
+- **`Color.gray.opacity(0.4)` is ambiguous** in the Android pass. Use solid colours or Theme tokens.
+- **Never `import Foundation` in a View** alongside SwiftUI — it makes `CGFloat`/`CGPoint` ambiguous
+  ("'CGFloat' is ambiguous for type lookup"). Every view in this app imports SwiftUI alone.
+- **`@Observable` needs `import Observation`**, not just `import SkipFuse` ("unknown attribute").
+- **`.textSelection` is unavailable.** Use the app's cross-platform `Clipboard.copy` — which is the
+  better answer anyway for a 260-character string.
+- **Deeply nested `ForEach` with inline arithmetic** trips "unable to type-check this expression in
+  reasonable time". Hoist the arithmetic into `let`s and split into helper views.
+- In tests: `import Foundation` is required, `Data([literal])` is unavailable (use a typed array),
+  `.map(String.init)` doesn't transpile (use `{ String($0) }`), and unsigned literals need explicit
+  casts (`UInt8(0x0f)`).
+- Crossing into BDK, `Mnemonic.fromEntropy` takes a Kotlin `ByteArray` — `entropy.platformValue`
+  behind `#if SKIP`, the same seam as `TxBuilder.addData`.
+
+### Three SkipUI constraints originally uncovered by the spike
 
 All three compile fine on the host and fail **only** on the Android leg — `swift build` will not catch
 any of them:
@@ -557,6 +580,12 @@ must distinguish a tap from a stroke rather than treating every touch-down as sw
 
 1. ~~Spike the Android drag gesture~~ — **done** (§10); re-measure on a physical device before ship.
 2. ~~Decide domain separation~~ — **resolved** by the field format (§3).
+
+**Steps 3–6 are BUILT** (2026-09-07): `EntropyDerivation` (WalletService), `EntropyAccumulator` /
+`TypedEntropySource` / `EntropyViewModel` / `EntropyGridView` (app), the `Mnemonic.fromEntropy` create
+path, and the screen wired behind Create → Advanced. Builds and runs on iOS; Android APK builds clean.
+554 tests green (348 app + 206 WalletService). Remaining: 7 (typed-mode polish) and 8 (confirm-step
+hex display), plus the physical-device drag measurement.
 3. `EntropyDerivation` — pure, golden-vector tested. No UI.
 4. `EntropyAccumulator` — accounting + structural checks, pure, tested.
 5. `WalletManager.createWallet(entropy:)` / factory path through `Mnemonic.fromEntropy`.

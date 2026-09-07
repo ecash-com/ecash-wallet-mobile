@@ -86,6 +86,22 @@ public final class WalletManager: @unchecked Sendable {
         return try persistNewWallet(label: label, network: network, keys: keys, scriptType: scriptType)
     }
 
+    /// Create a wallet from **user-supplied entropy** ("paranoid mode", `docs/user-provided-entropy.md`).
+    ///
+    /// `entropyField` is the exact string the entropy screen displayed — that is the point: the user
+    /// can hash it themselves and confirm it produced this wallet. Only the field crosses the bridge;
+    /// the derived bytes stay inside WalletService, next to BDK.
+    ///
+    /// Like `createWallet`, the result is marked **not** backed up: the app generated a phrase the user
+    /// has not yet written down. (Contrast `importWallet`, where the seed already exists outside.)
+    public func createWallet(label: String, network: WalletNetwork, entropyField: String,
+                             wordCount: Int = 12,
+                             scriptType: ScriptType = .bip84) throws -> ManagedWallet {
+        let keys = try factory.create(network: network, entropyField: entropyField,
+                                      wordCount: wordCount, scriptType: scriptType)
+        return try persistNewWallet(label: label, network: network, keys: keys, scriptType: scriptType)
+    }
+
     /// Import a wallet from a mnemonic (validated by the factory; throws `.invalidMnemonic` on a
     /// bad checksum), persist it, and select it. Imported wallets are marked **already backed up** —
     /// the user supplied the seed, so it exists outside the app; prompting them to "back up" would be

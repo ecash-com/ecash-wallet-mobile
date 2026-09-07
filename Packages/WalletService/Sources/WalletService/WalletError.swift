@@ -13,6 +13,9 @@ import Foundation
 public enum WalletError: Error, Equatable, Sendable {
     case notImplemented
     case invalidMnemonic
+    /// User-supplied entropy that couldn't produce a mnemonic — a malformed field, an unsupported word
+    /// count, or BDK rejecting the byte count. Never carries the entropy itself (§2).
+    case invalidEntropy
     /// A private key (WIF) failed to parse, or doesn't match the chosen network. Never echoes the
     /// key itself (Golden Rule §2).
     case invalidPrivateKey
@@ -36,6 +39,7 @@ public enum WalletError: Error, Equatable, Sendable {
         switch self {
         case .notImplemented: return "This feature isn't available yet."
         case .invalidMnemonic: return "That recovery phrase isn't valid."
+        case .invalidEntropy: return "That entropy couldn't be used to make a wallet."
         case .invalidPrivateKey: return "That private key isn't valid for this network."
         case .invalidDescriptor: return "That wallet descriptor isn't valid."
         case .invalidAddress: return "That address isn't valid for this network."

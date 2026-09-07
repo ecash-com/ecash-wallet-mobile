@@ -46,6 +46,42 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
     }
 
+    /// Generate a wallet from **user-supplied entropy** ("paranoid mode", `docs/user-provided-entropy.md`).
+    ///
+    /// Identical to `create` except where the 128/256 bits come from: the field the user built by
+    /// swiping (and/or the CSPRNG prefix) instead of `Mnemonic(wordCount:)`'s internal draw. BDK still
+    /// owns BIP39 — `Mnemonic.fromEntropy` does the word mapping and checksum, we never touch either
+    /// (Golden Rule §1).
+    ///
+    /// The entropy is derived here rather than passed in, so the raw bytes never cross the bridge; the
+    /// caller hands over the field string only.
+    public func create(network: WalletNetwork, entropyField: String, wordCount: Int,
+                       scriptType: ScriptType = .bip84) throws -> WalletKeys {
+        guard let entropy = EntropyDerivation.entropy(field: entropyField, wordCount: wordCount) else {
+            throw WalletError.invalidEntropy
+        }
+        let mnemonic: Mnemonic
+        do {
+            // bdk-android's `fromEntropy` takes a Kotlin `ByteArray` (`Data.platformValue`); bdk-swift
+            // takes `Data`. Same seam as `TxBuilder.addData` in WalletEngine — and the reason the
+            // transpiled test target exists: `swift build` compiles the Data form happily and only the
+            // Kotlin pass reports "actual type is 'Data', but 'ByteArray' expected".
+            #if SKIP
+            mnemonic = try Mnemonic.fromEntropy(entropy: entropy.platformValue)
+            #else
+            mnemonic = try Mnemonic.fromEntropy(entropy: entropy)
+            #endif
+        } catch {
+            // Scrubbed: the entropy is seed-equivalent and must never reach an error string (§2).
+            throw WalletError.invalidEntropy
+        }
+        // Thunder: same BIP39 phrase, no BDK descriptors (see `create`).
+        if network == .thunder {
+            return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
+        }
+        return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
+    }
+
     /// Restore from a mnemonic phrase. `Mnemonic.fromString` validates the checksum/words and
     /// throws on bad input — mapped to `.invalidMnemonic` (no raw text leaks, §2).
     public func restore(network: WalletNetwork, mnemonic mnemonicPhrase: String,

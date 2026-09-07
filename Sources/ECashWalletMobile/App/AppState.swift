@@ -319,6 +319,21 @@ final class AppState {
         return wallet
     }
 
+    /// Create a wallet from **user-supplied entropy** ("paranoid mode"). Same as `createWallet` except
+    /// where the bits came from; `entropyField` is the exact string the entropy screen displayed, so
+    /// the user can hash it themselves and confirm it produced this wallet.
+    @discardableResult
+    func createWallet(label: String, network: WalletNetwork, entropyField: String,
+                      wordCount: Int = 12, scriptType: ScriptType = .bip84) throws -> ManagedWallet {
+        let wallet = try manager.createWallet(label: label, network: network,
+                                              entropyField: entropyField, wordCount: wordCount,
+                                              scriptType: scriptType)
+        resetPerWalletState()
+        refresh()
+        Task { await sync() }
+        return wallet
+    }
+
     /// Import a wallet from a recovery phrase (validated by BDK in the factory), persist it,
     /// select it. Throws `WalletError.invalidMnemonic` on a bad phrase — never echoes the input.
     @discardableResult
@@ -365,6 +380,9 @@ final class AppState {
         CreateViewModel(create: { label, network, wordCount, scriptType in
             _ = try self.createWallet(label: label, network: network, wordCount: wordCount,
                                       scriptType: scriptType)
+        }, createWithEntropy: { label, network, entropyField, wordCount, scriptType in
+            _ = try self.createWallet(label: label, network: network, entropyField: entropyField,
+                                      wordCount: wordCount, scriptType: scriptType)
         })
     }
 

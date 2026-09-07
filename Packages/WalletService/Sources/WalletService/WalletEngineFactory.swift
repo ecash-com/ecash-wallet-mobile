@@ -39,6 +39,12 @@ public protocol WalletEngineFactory: AnyObject {
     /// Generate a brand-new wallet (random mnemonic) + its public descriptors for the network.
     /// `scriptType` is `.bip84` for new wallets (only import exposes the choice).
     func create(network: WalletNetwork, wordCount: Int, scriptType: ScriptType) throws -> WalletKeys
+    /// Generate a wallet from USER-SUPPLIED entropy ("paranoid mode"). Same as `create` except the
+    /// 128/256 bits come from the field the user built rather than BDK's internal draw. The field
+    /// string is passed, not the derived bytes, so seed-equivalent material stays inside this module
+    /// (`docs/user-provided-entropy.md`).
+    func create(network: WalletNetwork, entropyField: String, wordCount: Int,
+                scriptType: ScriptType) throws -> WalletKeys
     /// Validate an imported mnemonic (throws `.invalidMnemonic` on bad checksum) + derive descriptors
     /// at the chosen `scriptType` (so a restored seed matches its original wallet's address kind).
     func restore(network: WalletNetwork, mnemonic: String, scriptType: ScriptType) throws -> WalletKeys
@@ -94,6 +100,22 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
         WalletKeys(secret: mnemonicToReturn,
                    externalDescriptor: "wpkh(mock/0/*)",
                    internalDescriptor: "wpkh(mock/1/*)")
+    }
+
+    /// Records the entropy fields passed in, so tests can assert the field reached the factory intact.
+    public private(set) var entropyFieldsSeen: [String] = []
+    /// When true, the entropy path rejects as if the field were malformed.
+    public var rejectEntropy = false
+
+    public func create(network: WalletNetwork, entropyField: String, wordCount: Int,
+                       scriptType: ScriptType = .bip84) throws -> WalletKeys {
+        entropyFieldsSeen.append(entropyField)
+        if rejectEntropy { throw WalletError.invalidEntropy }
+        // The mock does no derivation — real entropy → mnemonic behaviour is covered by the BDK
+        // integration tests; this exists so manager-level tests can drive the path without BDK.
+        return WalletKeys(secret: mnemonicToReturn,
+                          externalDescriptor: "wpkh(mock/0/*)",
+                          internalDescriptor: "wpkh(mock/1/*)")
     }
 
     public func restore(network: WalletNetwork, mnemonic: String, scriptType: ScriptType = .bip84) throws -> WalletKeys {

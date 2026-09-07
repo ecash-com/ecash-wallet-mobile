@@ -23,6 +23,8 @@ struct CreateConfirmView: View {
     // silently becomes "default to real money" — revisit it then.
     @State var network: WalletNetwork = .ecash
     @State var advancedExpanded = false           // Advanced: derivation script type
+    /// Set when the user completed the paranoid-mode screen — it owns the word count on that path.
+    @State var entropyWordCount: Int? = nil
 
     init(viewModel: CreateViewModel, defaultName: String) {
         self.defaultName = defaultName
@@ -64,8 +66,11 @@ struct CreateConfirmView: View {
                 WalletButton(title: vm.isCreating
                                 ? "Creating…"
                                 : "Continue") {
-                    // Seed length is a global setting (Settings → New wallets), not a per-create choice.
-                    vm.submit(label: defaultName, network: network, wordCount: app.newWalletWordCount)
+                    // Seed length is the global setting (Settings → New wallets) — EXCEPT on the
+                    // paranoid-mode path, where the entropy screen owns it, because it sets the
+                    // 128 vs 256-bit target and therefore how much work the user just did.
+                    vm.submit(label: defaultName, network: network,
+                              wordCount: entropyWordCount ?? app.newWalletWordCount)
                 }
                 .disabled(vm.isCreating)
                 .opacity(vm.isCreating ? 0.6 : 1)
@@ -95,6 +100,30 @@ struct CreateConfirmView: View {
                     Spacer()
                     Text(verbatim: derivationPath)
                         .font(.jbMono(13, .regular)).foregroundStyle(Theme.Colors.text1)
+                }
+
+                // Paranoid mode. Off by default and deliberately behind Advanced: the ordinary CSPRNG
+                // path stays untouched for everyone who doesn't go looking for this.
+                NavigationLink {
+                    EntropyScreen(wordCount: entropyWordCount ?? app.newWalletWordCount) { field, words in
+                        vm.entropyField = field
+                        entropyWordCount = words
+                    }
+                } label: {
+                    HStack(spacing: Theme.Space.x2) {
+                        Text("Provide your own entropy", bundle: .module,
+                             comment: "paranoid mode entry point")
+                            .textStyle(.body).foregroundStyle(Theme.Colors.accent)
+                        Spacer()
+                        if vm.usesCustomEntropy {
+                            Text("Ready", bundle: .module, comment: "custom entropy is set")
+                                .textStyle(.xs).foregroundStyle(Theme.Colors.positive)
+                        }
+                        // A NavigationLink inside a DisclosureGroup renders as plain text with no
+                        // chevron, so the row doesn't read as tappable without one of our own.
+                        Image("chevron_right", bundle: .module)
+                            .foregroundStyle(Theme.Colors.text2)
+                    }
                 }
             }
             .padding(.top, Theme.Space.x2)

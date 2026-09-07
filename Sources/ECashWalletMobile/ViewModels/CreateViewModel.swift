@@ -27,12 +27,22 @@ final class CreateViewModel {
     /// recovery. Ignored for Thunder (fixed ed25519 derivation).
     var scriptType: ScriptType = .bip84
 
+    /// The entropy field from the paranoid-mode screen, or nil for the ordinary CSPRNG path.
+    /// Seed-equivalent while set — cleared as soon as the wallet exists.
+    var entropyField: String? = nil
+
     private let create: @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void
+    private let createWithEntropy: @MainActor (_ label: String, _ network: WalletNetwork, _ entropyField: String, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void
     private(set) var phase: Phase = .idle
 
-    init(create: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void) {
+    init(create: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void,
+         createWithEntropy: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ entropyField: String, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void = { _, _, _, _, _ in }) {
         self.create = create
+        self.createWithEntropy = createWithEntropy
     }
+
+    /// True when the user supplied their own entropy — drives the button copy.
+    var usesCustomEntropy: Bool { entropyField != nil }
 
     var isCreating: Bool { phase == .creating }
 
@@ -47,7 +57,14 @@ final class CreateViewModel {
         guard phase != .creating else { return }
         phase = .creating
         do {
-            try create(label, network, wordCount, scriptType)
+            if let entropyField, !entropyField.isEmpty {
+                try createWithEntropy(label, network, entropyField, wordCount, scriptType)
+                // The field is seed-equivalent and the mnemonic is now the real backup — drop it the
+                // moment it has served its purpose (§8).
+                self.entropyField = nil
+            } else {
+                try create(label, network, wordCount, scriptType)
+            }
             // Success: AppState re-roots to Home; nothing else to do here.
         } catch let error as WalletError {
             phase = .failed(error.userMessage)
