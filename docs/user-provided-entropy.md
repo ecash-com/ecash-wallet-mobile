@@ -341,6 +341,51 @@ hand-transcribing the string to audit it is impractical. The audit path is copy-
 confirm step should show the derived entropy hex so the check is over 64 hex characters rather than
 500 base32 ones.
 
+### 6.2b Typed / pasted entropy — declared sources
+
+**Decided 2026-09-07: in scope for v1.** A user who rolled dice or flipped coins off-device can type
+the result instead of swiping. Same field, same derivation — only the accounting differs.
+
+**The problem it creates:** for a swipe we observe gestures, timing and run lengths, so we know
+something about how the input was produced. For typed text we know *nothing*. The same 40 characters
+could be 40 dice rolls or a line from a book, and the string alone cannot tell us which. Crediting
+typed characters at some flat "random-looking" rate would be exactly the §2 trap in a new place.
+
+**So the user declares the source, and we do honest arithmetic on that declaration:**
+
+| Declared source | Accepted characters | Credit per character |
+|---|---|---|
+| **Dice (d6)** | `1`–`6` | **2.58 bits** (log2 6) |
+| **Coin flips** | `0`/`1`, or `H`/`T` | **1.0 bit** |
+| **Hex** | `0`–`9`, `a`–`f` | **4.0 bits** |
+| **Free text — I made this up** | any of the 94 | **1.0 bit**, with a prominent warning |
+
+Three rules make the declaration meaningful rather than decorative:
+
+1. **Input is restricted to the declared alphabet.** A "dice" entry containing `7` or `k` is rejected
+   at the keystroke, so the credit always matches what was actually entered.
+2. **The §6.3 structural checks still apply**, measured over characters rather than runs. `111111…` is
+   not 50 dice rolls no matter what the user declares, and must be refused.
+3. **Free text is credited at 1 bit/character** — deliberately punitive, needing 128 characters for a
+   12-word wallet. A human-invented "random" string carries far less than it looks like, and if the
+   user genuinely has a good source they can declare it and get honest credit instead.
+
+This turns the vague question "is this typed string random?" — which we cannot answer — into the
+answerable one: "how many of what kind of draws does the user say this is?" It also gives the dice user
+the number they actually want: 50 d6 rolls is 129 bits, so 50 rolls is enough for 12 words.
+
+Worked targets:
+
+| Source | 12 words (128 bits) | 24 words (256 bits) |
+|---|---|---|
+| Dice (d6) | 50 rolls | 100 rolls |
+| Coin flips | 128 flips | 256 flips |
+| Hex | 32 characters | 64 characters |
+| Free text | 128 characters | 256 characters |
+
+Typed entropy composes with mixed mode exactly as swiping does: the declared material lands in the
+user portion of the field, after the CSPRNG prefix.
+
 ### 6.3 Structural floor (catches the realistic lazy pattern)
 
 The credit table alone does not catch a user swiping back and forth in a straight line, which produces
@@ -510,20 +555,31 @@ must distinguish a tap from a stroke rather than treating every touch-down as sw
 
 ## 11. Build order
 
-1. Spike the Android drag gesture (§10).
-2. Decide domain separation (§4).
+1. ~~Spike the Android drag gesture~~ — **done** (§10); re-measure on a physical device before ship.
+2. ~~Decide domain separation~~ — **resolved** by the field format (§3).
 3. `EntropyDerivation` — pure, golden-vector tested. No UI.
 4. `EntropyAccumulator` — accounting + structural checks, pure, tested.
 5. `WalletManager.createWallet(entropy:)` / factory path through `Mnemonic.fromEntropy`.
-6. The grid view + screen, wired behind the Advanced toggle.
-7. Confirm-step entropy-hex display and the derivation disclosure.
+6. The grid view + swipe screen, wired behind the Advanced toggle, with the 12/24 control moved onto
+   it (and kept in sync with the Settings preference).
+7. Typed-entropy mode with declared sources (§6.2b) — a source picker, alphabet-restricted input, and
+   per-source credit.
+8. Confirm-step entropy-hex display and the derivation disclosure.
 
 ## 12. Open questions
 
-1. Domain separation — §4. **Blocks step 3.**
-2. Should the input string be *shown* at all after creation, or only during? (Argument for hiding it
-   afterwards: it is seed-equivalent and the mnemonic is the real backup.)
-3. Do we let the user *type* a string they generated elsewhere (dice, coins) rather than swipe? It is
-   the same derivation and arguably the more genuinely paranoid path — but it needs its own entropy
-   accounting, since we cannot see how it was produced.
-4. Does the 12/24 choice move into this screen, or stay the global Settings preference it is today?
+All resolved 2026-09-07.
+
+1. ~~Domain separation~~ — **resolved** by the field format (§3).
+2. **The input string is shown only during creation.** It is seed-equivalent and the mnemonic is the
+   real backup, so there is no second copy to store, protect or leak afterwards.
+3. **Typed / pasted entropy IS in v1**, via declared sources (§6.2b).
+4. **The 12/24 choice moves onto this screen.** The target is 128 vs 256 bits, so the choice directly
+   changes how much work the user has to do; showing it where it has consequences beats a preference
+   set months ago. ⚠️ This changes the Settings screen too — `newWalletWordCount` currently lives
+   there (`AppState`), and the two must not drift out of sync.
+
+### Remaining task (not a question)
+
+Re-measure the drag event rate on a physical device (§10). It can only move the numbers in our favour,
+but the run-length dwell credit should be confirmed against a real digitizer.
