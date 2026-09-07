@@ -102,6 +102,12 @@ public final class WalletManager: @unchecked Sendable {
         return try persistNewWallet(label: label, network: network, keys: keys, scriptType: scriptType)
     }
 
+    /// The mnemonic an entropy field would produce, without creating anything — for the paranoid-mode
+    /// preview step. Seed material: show it, never persist it (§2).
+    public func previewEntropyMnemonic(entropyField: String, wordCount: Int = 12) throws -> String {
+        try factory.previewMnemonic(entropyField: entropyField, wordCount: wordCount)
+    }
+
     /// Import a wallet from a mnemonic (validated by the factory; throws `.invalidMnemonic` on a
     /// bad checksum), persist it, and select it. Imported wallets are marked **already backed up** —
     /// the user supplied the seed, so it exists outside the app; prompting them to "back up" would be

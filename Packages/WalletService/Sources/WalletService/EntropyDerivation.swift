@@ -72,6 +72,34 @@ public enum EntropyDerivation {
                            timestampMillis: timestampMillis) + userInput
     }
 
+    // MARK: - Recognising a complete field
+
+    /// Whether `text` is already a complete entropy field rather than raw user input.
+    ///
+    /// Lets a user paste back the string they copied and reproduce the same wallet — which is what
+    /// "Copy" implies and what the whole reproducibility promise rests on. Without this the pasted
+    /// field would be treated as a *contribution* and nested inside a fresh one, silently producing a
+    /// different wallet.
+    public static func isField(_ text: String) -> Bool {
+        text.hasPrefix(version + separator)
+    }
+
+    /// The word count a complete field was built for, or nil if `text` isn't one.
+    ///
+    /// **A leading parse IS safe, despite the warning on `separator`.** Only the *last* component can
+    /// contain `&`; the first four cannot — the version is fixed, the word count and timestamp are
+    /// digits, and the system component is hex or empty. So splitting off the head is unambiguous.
+    /// (The earlier blanket "never parse this format" was too broad: it holds for the trailing user
+    /// portion, not for the fixed head.)
+    public static func wordCount(inField text: String) -> Int? {
+        guard isField(text) else { return nil }
+        let afterVersion = String(text.dropFirst(version.count + separator.count))
+        guard let end = afterVersion.range(of: separator) else { return nil }
+        let digits = String(afterVersion[afterVersion.startIndex..<end.lowerBound])
+        guard let count = Int(digits), entropyByteCount(wordCount: count) != nil else { return nil }
+        return count
+    }
+
     // MARK: - Derivation
 
     /// Entropy byte count for a word count: 16 bytes (128 bits) for 12 words, 32 (256) for 24.

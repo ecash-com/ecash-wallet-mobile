@@ -82,6 +82,30 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
     }
 
+    /// The mnemonic a given entropy field would produce — **without creating or persisting anything**.
+    ///
+    /// Lets the paranoid-mode flow show the user the words their own entropy generated before they
+    /// commit to a wallet. Deliberately does no descriptor derivation and touches no store: it is the
+    /// same `EntropyDerivation` + `Mnemonic.fromEntropy` pair `create` uses, so what is previewed is
+    /// exactly what would be created.
+    ///
+    /// The returned phrase is seed material — the caller must treat it as such (§2): show, never
+    /// persist, drop when the screen goes.
+    public func previewMnemonic(entropyField: String, wordCount: Int) throws -> String {
+        guard let entropy = EntropyDerivation.entropy(field: entropyField, wordCount: wordCount) else {
+            throw WalletError.invalidEntropy
+        }
+        do {
+            #if SKIP
+            return "\(try Mnemonic.fromEntropy(entropy: entropy.platformValue))"
+            #else
+            return "\(try Mnemonic.fromEntropy(entropy: entropy))"
+            #endif
+        } catch {
+            throw WalletError.invalidEntropy
+        }
+    }
+
     /// Restore from a mnemonic phrase. `Mnemonic.fromString` validates the checksum/words and
     /// throws on bad input — mapped to `.invalidMnemonic` (no raw text leaks, §2).
     public func restore(network: WalletNetwork, mnemonic mnemonicPhrase: String,

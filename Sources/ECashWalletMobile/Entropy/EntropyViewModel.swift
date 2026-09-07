@@ -57,7 +57,6 @@ final class EntropyViewModel {
         didSet { if mode != oldValue { refreshSystemComponent() } }
     }
     var inputMethod: EntropyInputMethod = .swipe
-    var typedSource: TypedEntropySource = .diceD6
     /// Moved onto this screen from Settings: it sets the 128 vs 256-bit target, so it directly changes
     /// how much work the user has to do. Showing it where it has consequences beats a preference set
     /// months ago.
@@ -102,24 +101,49 @@ final class EntropyViewModel {
 
     // MARK: - Field
 
+    /// True when the user pasted back a complete field rather than typing raw input.
+    ///
+    /// This is what makes "Copy" mean something. Copy hands over the whole field, so pasting it back
+    /// must reproduce the same wallet — otherwise the reproducibility promise is only theoretical.
+    /// Without this the pasted field would be treated as a contribution and nested inside a fresh one,
+    /// giving different words for what looks like identical input.
+    var isRestoringFromPastedField: Bool {
+        inputMethod == .typed && EntropyDerivation.isField(trimmedTypedInput)
+    }
+
+    private var trimmedTypedInput: String {
+        typedInput.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
     /// The complete, visible entropy field — exactly what gets hashed, and exactly what the user can
     /// copy and verify.
     var field: String {
-        EntropyDerivation.field(wordCount: wordCount, systemHex: systemHex,
-                                timestampMillis: timestampMillis, userInput: userInput)
+        if isRestoringFromPastedField { return trimmedTypedInput }
+        return EntropyDerivation.field(wordCount: wordCount, systemHex: systemHex,
+                                       timestampMillis: timestampMillis, userInput: userInput)
+    }
+
+    /// The word count in force. A pasted field carries its own — deriving it at the Settings value
+    /// instead would silently produce a different wallet from the one being restored.
+    var effectiveWordCount: Int {
+        if isRestoringFromPastedField,
+           let fromField = EntropyDerivation.wordCount(inField: trimmedTypedInput) {
+            return fromField
+        }
+        return wordCount
     }
 
     /// The user's own contribution, by input method.
     var userInput: String {
         switch inputMethod {
         case .swipe: return accumulator.userInput
-        case .typed: return typedSource.filtered(typedInput)
+        case .typed: return TypedEntropyEstimator.filtered(typedInput)
         }
     }
 
     /// The derived entropy in hex, for the confirm step and the audit comparison.
     var entropyHex: String? {
-        EntropyDerivation.entropyHex(field: field, wordCount: wordCount)
+        EntropyDerivation.entropyHex(field: field, wordCount: effectiveWordCount)
     }
 
     // MARK: - Progress
@@ -135,7 +159,7 @@ final class EntropyViewModel {
     var estimatedBits: Double {
         switch inputMethod {
         case .swipe: return accumulator.estimatedBits()
-        case .typed: return typedSource.estimatedBits(for: typedInput)
+        case .typed: return TypedEntropyEstimator.estimatedBits(for: typedInput)
         }
     }
 
@@ -148,31 +172,55 @@ final class EntropyViewModel {
     var rejection: EntropyRejection? {
         switch inputMethod {
         case .swipe: return accumulator.rejectionReason(requiredBits: requiredBits)
-        case .typed: return typedSource.rejectionReason(for: typedInput, requiredBits: requiredBits)
+        case .typed: return TypedEntropyEstimator.rejectionReason(for: typedInput,
+                                                                    requiredBits: requiredBits)
         }
     }
 
-    var canContinue: Bool { rejection == nil }
+    /// A restore is exempt from the entropy gate, deliberately and for the same reason importing a
+    /// recovery phrase is: the user is reproducing a wallet that already exists, not creating one. Its
+    /// entropy was gated when it was first made. Requiring the gate again would make it impossible to
+    /// restore the very wallet this feature promises you can restore.
+    var canContinue: Bool {
+        if isRestoringFromPastedField { return entropyHex != nil }
+        return rejection == nil
+    }
 
-    /// How many more characters the typed source needs — the number a dice user actually wants.
+    /// How many more characters are needed at the currently inferred rate. Moves as the user types,
+    /// because the rate itself is inferred from the alphabet they reveal.
     var typedCharactersRemaining: Int {
-        let needed = typedSource.requiredCharacters(forBits: requiredBits)
-        return max(0, needed - typedSource.filtered(typedInput).count)
+        TypedEntropyEstimator.charactersRemaining(for: typedInput, requiredBits: requiredBits)
+    }
+
+    /// The inferred rate, shown so the estimate isn't a black box.
+    var typedBitsPerCharacter: Double {
+        TypedEntropyEstimator.bitsPerCharacter(for: typedInput)
     }
 
     // MARK: - Actions
 
+    /// Milliseconds a cell must be dwelt on before it emits another copy of itself.
+    ///
+    /// Without this, a drag at 60–120 Hz records a repeat every 8–16 ms and the string fills with
+    /// them. The dwell signal only needs to be *proportional* to time spent, not sampled at the
+    /// device's full rate (§6.2).
+    static let minRepeatIntervalMillis: Int64 = 35
+
+    /// When the last sample was recorded, so repeats can be throttled.
+    private var lastSampleAtMillis: Int64 = 0
+
+    /// Record one sample from the grid.
+    ///
+    /// **Transitions are never throttled; repeats are.** A move to a new cell is the part that carries
+    /// entropy (1.5 bits) and dropping one would lose real signal. A repeat only encodes dwell, and
+    /// dwell stays proportional to time whether it is sampled every 16 ms or every 55 — sampling it
+    /// coarsely just makes the recorded string a fraction of the length for the same information.
     func recordSwipe(_ character: Character, startsGesture: Bool) {
+        let timestamp = now()
+        let isRepeat = !startsGesture && accumulator.samples.last == character
+        if isRepeat && timestamp - lastSampleAtMillis < Self.minRepeatIntervalMillis { return }
+        lastSampleAtMillis = timestamp
         accumulator.record(character, startsGesture: startsGesture)
-    }
-
-    func appendTyped(_ character: Character) {
-        guard typedSource.accepts(character) else { return }
-        typedInput.append(character)
-    }
-
-    func backspaceTyped() {
-        if !typedInput.isEmpty { typedInput.removeLast() }
     }
 
     /// Start over. Re-draws the CSPRNG prefix and re-stamps the timestamp — this is a fresh session,

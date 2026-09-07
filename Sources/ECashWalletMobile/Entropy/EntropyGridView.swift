@@ -95,11 +95,17 @@ struct EntropyGridView: View {
         .frame(width: width, height: height)
     }
 
-    /// Hit-test the touch point and emit at most one sample per cell entry.
+    /// Hit-test the touch point and emit a sample for **every** drag event, repeats included.
     ///
-    /// The movement gate lives here rather than in the accumulator because it is geometric: a sample is
-    /// only offered when the finger has actually entered a *different* cell, so a fingertip jittering
-    /// across a boundary cannot farm transitions at 1.5 bits each (§6.2).
+    /// **Emitting only on cell changes was wrong and silently disabled the dwell model.** Run lengths
+    /// are what encode finger velocity — real motor and digitizer noise — and one-sample-per-cell makes
+    /// every run length 1, so the accumulator's run-length credit never applied and the recorded string
+    /// was not the faithful record §6.1 calls for.
+    ///
+    /// The "repeats will dominate" worry that motivated the old behaviour is already handled where it
+    /// belongs: `EntropyAccumulator` caps a run at `maxRunSamples` and credits length once per run
+    /// rather than per sample. A jittering fingertip therefore produces capped repeats, not free
+    /// transitions — a transition can only occur when the cell actually changes.
     private func handle(location: CGPoint, cellWidth: CGFloat, cellHeight: CGFloat) {
         guard cellWidth > 0, cellHeight > 0 else { return }
         var column = Int(location.x / cellWidth)
@@ -114,14 +120,8 @@ struct EntropyGridView: View {
         activeIndex = index
         let startsGesture = !isDragging
         isDragging = true
-        // Only emit on entering a new cell. Dwell is still captured — the accumulator credits run
-        // length — but repeated samples of the same cell would otherwise dominate the string.
-        if lastEmittedIndex != index {
-            lastEmittedIndex = index
-            onSample(characters[index], startsGesture)
-        } else if startsGesture {
-            onSample(characters[index], true)
-        }
+        lastEmittedIndex = index
+        onSample(characters[index], startsGesture)
     }
 }
 

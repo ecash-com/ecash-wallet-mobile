@@ -22,9 +22,12 @@ struct CreateConfirmView: View {
     // which points at alphanet today (test value). When it rolls to real eCash mainnet, THIS LINE
     // silently becomes "default to real money" — revisit it then.
     @State var network: WalletNetwork = .ecash
-    @State var advancedExpanded = false           // Advanced: derivation script type
-    /// Set when the user completed the paranoid-mode screen — it owns the word count on that path.
-    @State var entropyWordCount: Int? = nil
+    /// Routes what Continue does: straight to creation, or through the entropy flow first.
+    ///
+    /// **On by default.** Mixed mode is never weaker than taking the bits from the device alone — the
+    /// CSPRNG still contributes its full 128/256 — so the only cost is a few seconds of the user's
+    /// time, and the gain is a wallet that survives a compromised RNG.
+    @State var useCustomEntropy = true
 
     init(viewModel: CreateViewModel, defaultName: String) {
         self.defaultName = defaultName
@@ -43,7 +46,7 @@ struct CreateConfirmView: View {
 
                 // Advanced: pick the address type for the NEW wallet (a preference — a fresh seed has
                 // no coins to match). Native segwit default. Hidden for Thunder (fixed ed25519 path).
-                if network != .thunder { advancedSection }
+                if network != .thunder { optionsSection }
 
                 Text("Your keys, your coins", bundle: .module, comment: "create wallet heading")
                     .textStyle(.h1)
@@ -63,29 +66,55 @@ struct CreateConfirmView: View {
 
                 Spacer()
 
-                WalletButton(title: vm.isCreating
-                                ? "Creating…"
-                                : "Continue") {
-                    // Seed length is the global setting (Settings → New wallets) — EXCEPT on the
-                    // paranoid-mode path, where the entropy screen owns it, because it sets the
-                    // 128 vs 256-bit target and therefore how much work the user just did.
-                    vm.submit(label: defaultName, network: network,
-                              wordCount: entropyWordCount ?? app.newWalletWordCount)
+                // Two forms rather than one button with programmatic navigation: a NavigationLink
+                // when the switch is on, a plain button when it isn't. Avoids `navigationDestination`,
+                // which is unproven in SkipUI.
+                if useCustomEntropy && network != .thunder {
+                    NavigationLink {
+                        EntropyOptionsScreen(wordCount: app.newWalletWordCount) { field, _ in
+                            // Finish the job here: the user has done the work, so don't send them back
+                            // to tap Continue a second time.
+                            vm.entropyField = field
+                            vm.submit(label: defaultName, network: network,
+                                      wordCount: app.newWalletWordCount)
+                        }
+                    } label: {
+                        Text("Continue", bundle: .module, comment: "continue to entropy")
+                            .textStyle(.button)
+                            .foregroundStyle(Theme.Colors.accentText)
+                            .frame(maxWidth: .infinity)
+                            .padding(.vertical, Theme.Space.x4)
+                            .background(
+                                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                                    .fill(Theme.Colors.accent)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                } else {
+                    WalletButton(title: vm.isCreating ? "Creating…" : "Continue") {
+                        // Seed length is a global setting (Settings → New wallets), not a per-create
+                        // choice.
+                        vm.submit(label: defaultName, network: network,
+                                  wordCount: app.newWalletWordCount)
+                    }
+                    .disabled(vm.isCreating)
+                    .opacity(vm.isCreating ? 0.6 : 1)
                 }
-                .disabled(vm.isCreating)
-                .opacity(vm.isCreating ? 0.6 : 1)
             }
             .padding(Theme.Space.gutter)
         }
         .navigationTitle(Text("New wallet", bundle: .module, comment: "create wallet screen title"))
     }
 
-    /// Collapsed by default. The address-type picker for the new wallet — most users never touch it
-    /// (native segwit); power users can pick Taproot etc. No live preview (the seed is generated at
-    /// submit), just the derivation path.
-    private var advancedSection: some View {
-        DisclosureGroup(isExpanded: $advancedExpanded) {
-            VStack(alignment: .leading, spacing: Theme.Space.x2) {
+    /// Address type, derivation and the paranoid-mode switch — **always visible**, not behind a
+    /// disclosure. There are only three things here and they are the decisions worth seeing before
+    /// making a wallet; hiding them under "Advanced" mostly hid them.
+    private var optionsSection: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x3) {
+            HStack {
+                Text("Address type", bundle: .module, comment: "address type label")
+                    .textStyle(.overline).foregroundStyle(Theme.Colors.text2)
+                Spacer()
                 Picker("Address type", selection: $vm.scriptType) {
                     ForEach(ScriptType.allCases, id: \.self) { type in
                         Text(verbatim: type.displayName).tag(type)
@@ -93,46 +122,29 @@ struct CreateConfirmView: View {
                 }
                 .pickerStyle(.menu)
                 .tint(Theme.Colors.accent)
+            }
 
-                HStack {
-                    Text("Derivation", bundle: .module, comment: "derivation path label")
-                        .textStyle(.overline).foregroundStyle(Theme.Colors.text2)
-                    Spacer()
-                    Text(verbatim: derivationPath)
-                        .font(.jbMono(13, .regular)).foregroundStyle(Theme.Colors.text1)
-                }
+            HStack {
+                Text("Derivation", bundle: .module, comment: "derivation path label")
+                    .textStyle(.overline).foregroundStyle(Theme.Colors.text2)
+                Spacer()
+                Text(verbatim: derivationPath)
+                    .font(.jbMono(13, .regular)).foregroundStyle(Theme.Colors.text1)
+            }
 
-                // Paranoid mode. Off by default and deliberately behind Advanced: the ordinary CSPRNG
-                // path stays untouched for everyone who doesn't go looking for this.
-                NavigationLink {
-                    EntropyScreen(wordCount: entropyWordCount ?? app.newWalletWordCount) { field, words in
-                        vm.entropyField = field
-                        entropyWordCount = words
-                    }
-                } label: {
-                    HStack(spacing: Theme.Space.x2) {
-                        Text("Provide your own entropy", bundle: .module,
-                             comment: "paranoid mode entry point")
-                            .textStyle(.body).foregroundStyle(Theme.Colors.accent)
-                        Spacer()
-                        if vm.usesCustomEntropy {
-                            Text("Ready", bundle: .module, comment: "custom entropy is set")
-                                .textStyle(.xs).foregroundStyle(Theme.Colors.positive)
-                        }
-                        // A NavigationLink inside a DisclosureGroup renders as plain text with no
-                        // chevron, so the row doesn't read as tappable without one of our own.
-                        Image("chevron_right", bundle: .module)
-                            .foregroundStyle(Theme.Colors.text2)
-                    }
+            // A switch, not a link: it changes what Continue does rather than being a place to go.
+            Toggle(isOn: $useCustomEntropy) {
+                VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                    Text("Provide your own entropy", bundle: .module,
+                         comment: "paranoid mode toggle")
+                        .textStyle(.body).foregroundStyle(Theme.Colors.text0)
+                    Text("Add your own randomness to the device's. Takes a few seconds.",
+                         bundle: .module, comment: "paranoid mode toggle explainer")
+                        .textStyle(.xs).foregroundStyle(Theme.Colors.text2)
                 }
             }
-            .padding(.top, Theme.Space.x2)
-        } label: {
-            Text("Advanced", bundle: .module, comment: "advanced create options disclosure label")
-                .textStyle(.body)
-                .foregroundStyle(Theme.Colors.text1)
+            .tint(Theme.Colors.accent)
         }
-        .tint(Theme.Colors.accent)
     }
 
     /// The account-level derivation path for the selected script type + network, e.g. `m/86'/0'/0'`.

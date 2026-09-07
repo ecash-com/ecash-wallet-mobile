@@ -45,6 +45,9 @@ public protocol WalletEngineFactory: AnyObject {
     /// (`docs/user-provided-entropy.md`).
     func create(network: WalletNetwork, entropyField: String, wordCount: Int,
                 scriptType: ScriptType) throws -> WalletKeys
+    /// The mnemonic an entropy field would produce, WITHOUT creating or persisting a wallet — so the
+    /// paranoid-mode flow can show the user what their entropy generated before they commit.
+    func previewMnemonic(entropyField: String, wordCount: Int) throws -> String
     /// Validate an imported mnemonic (throws `.invalidMnemonic` on bad checksum) + derive descriptors
     /// at the chosen `scriptType` (so a restored seed matches its original wallet's address kind).
     func restore(network: WalletNetwork, mnemonic: String, scriptType: ScriptType) throws -> WalletKeys
@@ -116,6 +119,12 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
         return WalletKeys(secret: mnemonicToReturn,
                           externalDescriptor: "wpkh(mock/0/*)",
                           internalDescriptor: "wpkh(mock/1/*)")
+    }
+
+    public func previewMnemonic(entropyField: String, wordCount: Int) throws -> String {
+        entropyFieldsSeen.append(entropyField)
+        if rejectEntropy { throw WalletError.invalidEntropy }
+        return mnemonicToReturn
     }
 
     public func restore(network: WalletNetwork, mnemonic: String, scriptType: ScriptType = .bip84) throws -> WalletKeys {

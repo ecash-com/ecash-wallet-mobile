@@ -56,25 +56,46 @@ import Foundation
         #expect(vm.userInput.isEmpty)
     }
 
-    /// A clock that advances a second per read — the `now` seam is `@Sendable`, so it can't capture a
-    /// mutable local.
-    private final class StepClock: @unchecked Sendable {
+    /// A clock the test moves explicitly. Not a self-advancing one: `recordSwipe` reads the clock on
+    /// every sample to throttle repeats, so a stepping clock would race ahead during `fill`.
+    /// The `now` seam is `@Sendable`, hence a class rather than a captured local.
+    private final class TestClock: @unchecked Sendable {
         private let lock = NSLock()
-        private var value: Int64 = 1_000
-        func next() -> Int64 {
-            lock.withLock { defer { value += 1_000 }; return value }
-        }
+        private var value: Int64
+        init(_ start: Int64) { value = start }
+        func now() -> Int64 { lock.withLock { value } }
+        func advance(to newValue: Int64) { lock.withLock { value = newValue } }
     }
 
     @Test func clearRefreezesBothComponents() {
-        let clock = StepClock()
+        let clock = TestClock(1_000)
         let vm = EntropyViewModel(randomBytes: { Data([UInt8](repeating: 0x01, count: $0)) },
-                                  now: { clock.next() })
+                                  now: { clock.now() })
         #expect(vm.timestampMillis == 1_000)
         fill(vm)
+        clock.advance(to: 2_000)
         vm.clear()
         #expect(vm.timestampMillis == 2_000)
         #expect(vm.userInput.isEmpty)
+    }
+
+    /// Repeats are throttled so a 60–120 Hz drag doesn't fill the string with them, but a move to a
+    /// **new** cell is never dropped — that transition is the part carrying entropy.
+    @Test func repeatsAreThrottledButTransitionsAreNot() {
+        let clock = TestClock(0)
+        let vm = EntropyViewModel(randomBytes: { Data([UInt8](repeating: 0x01, count: $0)) },
+                                  now: { clock.now() })
+        vm.recordSwipe("A", startsGesture: true)
+        vm.recordSwipe("A", startsGesture: false)     // same cell, same instant — dropped
+        vm.recordSwipe("A", startsGesture: false)     // dropped
+        #expect(vm.userInput == "A")
+
+        vm.recordSwipe("B", startsGesture: false)     // a transition, never throttled
+        #expect(vm.userInput == "AB")
+
+        clock.advance(to: EntropyViewModel.minRepeatIntervalMillis)
+        vm.recordSwipe("B", startsGesture: false)     // enough dwell has passed
+        #expect(vm.userInput == "ABB")
     }
 
     /// **Regression: the field rendered as `v1&12&&0&` on the simulator.** SwiftUI builds a
@@ -175,31 +196,88 @@ import Foundation
 
     // MARK: - Typed input
 
-    @Test func typedInputIsFilteredToTheDeclaredSource() {
+    @Test func typedInputIsFilteredToTheAlphabet() {
         let vm = viewModel()
         vm.inputMethod = .typed
-        vm.typedSource = .diceD6
-        vm.typedInput = "1a2b3c"
-        #expect(vm.userInput == "123")
-        #expect(vm.field.hasSuffix("123"))
+        vm.typedInput = "12 3\u{00e9}4"      // space and é are outside printable ASCII
+        #expect(vm.userInput == "1234")
+        #expect(vm.field.hasSuffix("1234"))
     }
 
-    @Test func typedRemainingCountsDownForTheDeclaredSource() {
+    /// The rate is inferred from the alphabet the user reveals, so the "how many more" figure moves as
+    /// they type — there is no declared source to read it from.
+    @Test func theRemainingCountFollowsTheInferredRate() {
         let vm = viewModel()
         vm.inputMethod = .typed
-        vm.typedSource = .diceD6
-        #expect(vm.typedCharactersRemaining == 50)      // 128 bits at log2(6)
-        vm.typedInput = "351426134562"
-        #expect(vm.typedCharactersRemaining == 38)
+        // Six distinct symbols reads as a d6: log2(6) ≈ 2.58 bits each, so ~50 for 128 bits.
+        vm.typedInput = "351426"
+        #expect(abs(vm.typedBitsPerCharacter - 2.585) < 0.01)
+        #expect(vm.typedCharactersRemaining == 44)
     }
 
-    @Test func appendRejectsCharactersOutsideTheSource() {
+    /// A large alphabet is what human "random" typing looks like, and we can't tell it from a good
+    /// paste — so it drops to 1 bit per character and needs far more of them.
+    @Test func aLargeAlphabetIsCreditedAsHumanTyping() {
         let vm = viewModel()
         vm.inputMethod = .typed
-        vm.typedSource = .diceD6
-        vm.appendTyped("4")
-        vm.appendTyped("9")        // not a d6 face
-        #expect(vm.typedInput == "4")
+        var input = ""
+        for scalar in 0x41...0x5A { input += String(Character(Unicode.Scalar(scalar)!)) }  // 26 distinct
+        vm.typedInput = input
+        #expect(vm.typedBitsPerCharacter == TypedEntropyEstimator.humanTypingBits)
+        #expect(vm.estimatedBits == 26)
+    }
+
+    // MARK: - Restore from a pasted field
+
+    /// **The bug user-testing found.** Copy hands over the whole field, so pasting it back must
+    /// reproduce the same wallet. Before this, the pasted field was treated as a *contribution* and
+    /// nested inside a fresh one — same visible input, different words, no indication why.
+    @Test func pastingACopiedFieldReproducesTheSameEntropy() {
+        let original = viewModel()
+        fill(original)
+        let copied = original.field
+        let expected = original.entropyHex
+
+        let restored = viewModel(clock: 999)          // different clock, different CSPRNG draw
+        restored.inputMethod = .typed
+        restored.typedInput = copied
+
+        #expect(restored.isRestoringFromPastedField)
+        #expect(restored.field == copied)             // used verbatim, not nested
+        #expect(restored.entropyHex == expected)
+    }
+
+    /// A pasted field carries its own word count — deriving at the Settings value would silently
+    /// produce a different wallet from the one being restored.
+    @Test func aPastedFieldKeepsItsOwnWordCount() {
+        let original = viewModel(wordCount: 24)
+        let copied = original.field + "somecharacters"
+
+        let restored = viewModel(wordCount: 12)
+        restored.inputMethod = .typed
+        restored.typedInput = copied
+        #expect(restored.effectiveWordCount == 24)
+        #expect(restored.entropyHex?.count == 64)     // 32 bytes, not 16
+    }
+
+    /// A restore is exempt from the entropy gate for the same reason importing a recovery phrase is:
+    /// the wallet already exists and was gated when it was made. Requiring the gate again would make
+    /// it impossible to restore the very wallet this feature promises you can restore.
+    @Test func aRestoreSkipsTheEntropyGate() {
+        let restored = viewModel()
+        restored.inputMethod = .typed
+        restored.typedInput = "v1&12&&0&abc"          // far below the bit target
+        #expect(restored.isRestoringFromPastedField)
+        #expect(restored.canContinue)
+    }
+
+    /// Ordinary typed input is still gated — only something that parses as a field is a restore.
+    @Test func ordinaryTypedInputIsStillGated() {
+        let vm = viewModel()
+        vm.inputMethod = .typed
+        vm.typedInput = "351426"
+        #expect(!vm.isRestoringFromPastedField)
+        #expect(!vm.canContinue)
     }
 
     // MARK: - Wipe

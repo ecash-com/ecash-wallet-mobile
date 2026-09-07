@@ -37,7 +37,10 @@ struct EntropyAccumulator {
     static let bitsPerRunLength = 1.0
     /// Samples past this point in a single run earn nothing and are not recorded. A finger parked on
     /// one key is not producing entropy, and must not produce a 3,000-character string either.
-    static let maxRunSamples = 12
+    ///
+    /// Paired with the view model's repeat throttle: at one repeat per 35 ms this is about a third of
+    /// a second of dwell on a single key, well past the point where the run length says anything new.
+    static let maxRunSamples = 10
 
     // MARK: - Structural floor (docs §6.3)
 

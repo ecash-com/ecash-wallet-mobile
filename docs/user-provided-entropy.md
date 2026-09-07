@@ -341,50 +341,33 @@ hand-transcribing the string to audit it is impractical. The audit path is copy-
 confirm step should show the derived entropy hex so the check is over 64 hex characters rather than
 500 base32 ones.
 
-### 6.2b Typed / pasted entropy — declared sources
+### 6.2b Typed / pasted entropy — inferred, not declared
 
-**Decided 2026-09-07: in scope for v1.** A user who rolled dice or flipped coins off-device can type
-the result instead of swiping. Same field, same derivation — only the accounting differs.
+**In scope for v1.** A user who rolled dice or flipped coins off-device types the result instead of
+swiping. Same field, same derivation — only the accounting differs.
 
-**The problem it creates:** for a swipe we observe gestures, timing and run lengths, so we know
-something about how the input was produced. For typed text we know *nothing*. The same 40 characters
-could be 40 dice rolls or a line from a book, and the string alone cannot tell us which. Crediting
-typed characters at some flat "random-looking" rate would be exactly the §2 trap in a new place.
+**An earlier design had the user declare the source** (dice / coin / hex / free text) on the reasoning
+that we cannot observe provenance for typed text, so a declaration would make the credit honest.
+**That reasoning was wrong.** Someone who declares "dice" and then mashes the digits 1–6 gets exactly
+the credit inference would have given them. The declaration set the alphabet and the target; it never
+protected against careless input. The **structural checks did, and still do.** So the picker was a
+question the user had to answer for no security benefit, and it is gone.
 
-**So the user declares the source, and we do honest arithmetic on that declaration:**
+**What replaces it: infer the alphabet from what was typed.** The only evidence of how many symbols
+someone was drawing from is the set they actually used.
 
-| Declared source | Accepted characters | Credit per character |
+| Distinct symbols used | Credit per character | Why |
 |---|---|---|
-| **Dice (d6)** | `1`–`6` | **2.58 bits** (log2 6) |
-| **Coin flips** | `0`/`1`, or `H`/`T` | **1.0 bit** |
-| **Hex** | `0`–`9`, `a`–`f` | **4.0 bits** |
-| **Free text — I made this up** | any of the 94 | **1.0 bit**, with a prominent warning |
+| **≤ 16** | `log2(k)` | A small constrained alphabet is what a mechanical source looks like, and `log2(k)` is a real ceiling there — even a human cannot beat it |
+| **> 16** | **1.0 bit** | A large alphabet is what human "random" typing looks like, and is indistinguishable from a genuinely random paste |
 
-Three rules make the declaration meaningful rather than decorative:
+This lands on the right answers with nothing declared: 50 d6 rolls → 129 bits, 128 coin flips → 128,
+32 hex characters → 128. And it degrades safely — being wrong in the pessimistic direction costs a
+careful user some extra typing; being wrong the other way costs someone their coins.
 
-1. **Input is restricted to the declared alphabet.** A "dice" entry containing `7` or `k` is rejected
-   at the keystroke, so the credit always matches what was actually entered.
-2. **The §6.3 structural checks still apply**, measured over characters rather than runs. `111111…` is
-   not 50 dice rolls no matter what the user declares, and must be refused.
-3. **Free text is credited at 1 bit/character** — deliberately punitive, needing 128 characters for a
-   12-word wallet. A human-invented "random" string carries far less than it looks like, and if the
-   user genuinely has a good source they can declare it and get honest credit instead.
-
-This turns the vague question "is this typed string random?" — which we cannot answer — into the
-answerable one: "how many of what kind of draws does the user say this is?" It also gives the dice user
-the number they actually want: 50 d6 rolls is 129 bits, so 50 rolls is enough for 12 words.
-
-Worked targets:
-
-| Source | 12 words (128 bits) | 24 words (256 bits) |
-|---|---|---|
-| Dice (d6) | 50 rolls | 100 rolls |
-| Coin flips | 128 flips | 256 flips |
-| Hex | 32 characters | 64 characters |
-| Free text | 128 characters | 256 characters |
-
-Typed entropy composes with mixed mode exactly as swiping does: the declared material lands in the
-user portion of the field, after the CSPRNG prefix.
+**The residual risk, stated plainly:** someone mashing hex-ish characters is credited up to 4 bits each
+when they may be producing 2. The structural checks catch the worst of it, as they always did, and the
+meter is presented as an estimate rather than a guarantee.
 
 ### 6.3 Structural floor (catches the realistic lazy pattern)
 
@@ -555,6 +538,13 @@ at the end.
   better answer anyway for a 260-character string.
 - **Deeply nested `ForEach` with inline arithmetic** trips "unable to type-check this expression in
   reasonable time". Hoist the arithmetic into `let`s and split into helper views.
+- **⚠️ `ForEach` over a COMPUTED range renders NOTHING on Android** — silently, with the layout space
+  still reserved, so the UI is simply absent with no error, no warning and no crash. `0..<rowCount`
+  and `start..<end` both produced an empty keypad on a real device while compiling clean on both
+  platforms. `ForEach(0..<rows)` works only because that bound is a stored `let`, which is why the
+  swipe grid rendered and the keypad did not. **Iterate a collection instead** — an `Identifiable`
+  struct per row, or `ForEach(array, id: \.self)`. This one is invisible to every automated check we
+  have; only looking at the screen catches it.
 - In tests: `import Foundation` is required, `Data([literal])` is unavailable (use a typed array),
   `.map(String.init)` doesn't transpile (use `{ String($0) }`), and unsigned literals need explicit
   casts (`UInt8(0x0f)`).
@@ -576,6 +566,53 @@ any of them:
 Also confirmed: **a tap registers as a drag event** when `minimumDistance: 0`, so the real accumulator
 must distinguish a tap from a stroke rather than treating every touch-down as swipe input.
 
+## 10a. Changes from user testing (2026-09-07)
+
+Everything below came from actually using the feature on a device, and none of it was visible from the
+plan:
+
+- **Two screens, not one.** Options (mode, method, audit recipe, seed length read-only) then an input
+  screen that is only input. The single-screen version had six controls fighting for a phone screen.
+- **The source picker is gone** (§6.2b) — typed entropy infers its rate instead.
+- **Seed length stays in Settings**, reversing an earlier decision.
+- **The grid emits on every drag event**, so dwell actually produces runs. It was emitting once per
+  cell, which silently disabled the run-length half of the model.
+- **Repeats are throttled** to one per 35 ms, transitions never. Without it the string length depended
+  on the device's frame rate — the same gesture recorded twice as many characters at 120 Hz as at 60.
+- **The produced string auto-scrolls** to the newest characters. Two cleverer approaches came first and
+  both looked wrong: windowing by character made the block appear to slide left and be eaten, and
+  windowing by fixed-width line needed a guessed pixel height whose guess clipped the newest line.
+- **Heights above the grid are reserved**, so the grid doesn't visibly shrink on the first character.
+- **The live recovery phrase is shown while entering**, dimmed until the gate passes — watching it
+  churn is what makes "every character changes the wallet" visible rather than an article of faith.
+- **A seed preview step before creation**, showing the words and the derived entropy hex. Creating
+  silently and revealing the phrase afterwards skipped the one step the user came for.
+- **Pasting a copied field reproduces its wallet** — user testing found that Copy handed over a full
+  field, which when pasted was treated as a *contribution* and nested inside a fresh one, silently
+  giving different words. A pasted field is now used verbatim, carries its own word count, and is
+  exempt from the entropy gate for the same reason importing a recovery phrase is.
+- **Custom entropy is ON by default** — mixed mode is never weaker than the device alone, so the cost
+  is a few seconds and the gain is surviving a compromised RNG. This forced the warning copy to become
+  mode-dependent: "only use this if you understand what you're doing" cannot be said of the default.
+- **The input is no longer wiped when the preview is pushed.** `onDisappear` fires on a forward push
+  too, so going to look at your words destroyed a minute of swiping.
+
+### The meter says what it is now
+
+A reviewer made the sharpest criticism this feature has had: **"128 bits here is NOT the same as 128
+bits of random entropy."** Correct — and §6.5 already said so while the UI contradicted it, showing a
+bare bit count in green.
+
+A CSPRNG's 128 bits is a guarantee about a process. Ours is the output of a model (1.5 bits per
+transition, 1 per dwell) — a guess about human behaviour that can be wrong, and only in the dangerous
+direction: people start swipes where their thumb rests, paths have characteristic curvature, and a
+person's velocity is consistent enough that dwell is worth less than assumed.
+
+The meter now reads `est. 153/128 bits` with a mode-dependent caveat beneath it. **The asymmetry is the
+point:** in mixed mode the CSPRNG contributes its full 128/256 regardless, so the wallet is at least as
+strong as a normal one no matter how wrong the model is — the estimate only measures what the user is
+*adding*. In user-only mode the estimate is the entire security, and that line is warning-coloured.
+
 ## 11. Build order
 
 1. ~~Spike the Android drag gesture~~ — **done** (§10); re-measure on a physical device before ship.
@@ -586,14 +623,18 @@ must distinguish a tap from a stroke rather than treating every touch-down as sw
 path, and the screen wired behind Create → Advanced. Builds and runs on iOS; Android APK builds clean.
 554 tests green (348 app + 206 WalletService). Remaining: 7 (typed-mode polish) and 8 (confirm-step
 hex display), plus the physical-device drag measurement.
-3. `EntropyDerivation` — pure, golden-vector tested. No UI.
-4. `EntropyAccumulator` — accounting + structural checks, pure, tested.
-5. `WalletManager.createWallet(entropy:)` / factory path through `Mnemonic.fromEntropy`.
-6. The grid view + swipe screen, wired behind the Advanced toggle, with the 12/24 control moved onto
-   it (and kept in sync with the Settings preference).
-7. Typed-entropy mode with declared sources (§6.2b) — a source picker, alphabet-restricted input, and
-   per-source credit.
-8. Confirm-step entropy-hex display and the derivation disclosure.
+3. `EntropyDerivation` — pure, golden-vector tested. No UI. ✅
+4. `EntropyAccumulator` — accounting + structural checks, pure, tested. ✅
+5. `WalletManager.createWallet(entropyField:)` through `Mnemonic.fromEntropy`. ✅
+6. The grid view + input screen, behind Create → Advanced. ✅
+7. Typed entropy with an **inferred** alphabet (§6.2b) — no source to declare. ✅
+8. Confirm-step entropy-hex display and the derivation disclosure. ✅
+
+**Screen structure (revised 2026-09-07 after using it on a device):** two screens, not one. An
+**options** screen (source, method, the audit recipe, seed length read-only) then an **input** screen
+that is nothing but the field, the meter and the input surface. The single-screen version put three
+segmented controls, a source picker, the field, a meter, the grid and five buttons on one phone screen;
+it was unusable and the keyboard covered the parts you needed to watch.
 
 ## 12. Open questions
 
@@ -603,10 +644,10 @@ All resolved 2026-09-07.
 2. **The input string is shown only during creation.** It is seed-equivalent and the mnemonic is the
    real backup, so there is no second copy to store, protect or leak afterwards.
 3. **Typed / pasted entropy IS in v1**, via declared sources (§6.2b).
-4. **The 12/24 choice moves onto this screen.** The target is 128 vs 256 bits, so the choice directly
-   changes how much work the user has to do; showing it where it has consequences beats a preference
-   set months ago. ⚠️ This changes the Settings screen too — `newWalletWordCount` currently lives
-   there (`AppState`), and the two must not drift out of sync.
+4. ~~The 12/24 choice moves onto this screen.~~ **REVERSED 2026-09-07 — it stays in Settings → New
+   wallets**, where it already was. Moving it made the entropy screen one control busier for a
+   decision that is not per-create, and it would have left two places able to change the same
+   preference. It is surfaced read-only on the options screen, since it sets the target.
 
 ### Remaining task (not a question)
 

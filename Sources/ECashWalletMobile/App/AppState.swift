@@ -334,6 +334,13 @@ final class AppState {
         return wallet
     }
 
+    /// The mnemonic an entropy field would produce, without creating anything — the paranoid-mode
+    /// preview. Returns nil rather than throwing: the caller is a view, and the failure is always
+    /// "that field can't derive a phrase". Seed material — never persist or log the result (§2).
+    func previewEntropyMnemonic(field: String, wordCount: Int) -> String? {
+        try? manager.previewEntropyMnemonic(entropyField: field, wordCount: wordCount)
+    }
+
     /// Import a wallet from a recovery phrase (validated by BDK in the factory), persist it,
     /// select it. Throws `WalletError.invalidMnemonic` on a bad phrase — never echoes the input.
     @discardableResult

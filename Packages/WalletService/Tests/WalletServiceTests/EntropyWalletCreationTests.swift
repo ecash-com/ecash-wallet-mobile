@@ -124,6 +124,38 @@ final class EntropyWalletCreationTests: XCTestCase {
         XCTAssertEqual(restored.externalDescriptor, keys.externalDescriptor)
     }
 
+    // MARK: - Preview
+
+    /// The preview must show exactly what creation will make, or the step is theatre — the user is
+    /// being shown a phrase to check, and checking a *different* phrase is worse than not showing one.
+    func testPreviewMatchesWhatCreationProduces() throws {
+        try skipOnAndroid()
+        let factory = BDKWalletEngineFactory(chainDataDirectory: FileManager.default.temporaryDirectory)
+        let previewed = try factory.previewMnemonic(entropyField: field(wordCount: 12), wordCount: 12)
+        let created = try factory.create(network: .signet, entropyField: field(wordCount: 12),
+                                         wordCount: 12, scriptType: .bip84)
+        XCTAssertEqual(previewed, created.secret)
+        XCTAssertEqual(previewed.split(separator: " ").count, 12)
+    }
+
+    func testPreviewHonoursTheWordCount() throws {
+        try skipOnAndroid()
+        let factory = BDKWalletEngineFactory(chainDataDirectory: FileManager.default.temporaryDirectory)
+        let long = try factory.previewMnemonic(entropyField: field(wordCount: 24), wordCount: 24)
+        XCTAssertEqual(long.split(separator: " ").count, 24)
+    }
+
+    func testPreviewRejectsAMalformedField() throws {
+        try skipOnAndroid()
+        let factory = BDKWalletEngineFactory(chainDataDirectory: FileManager.default.temporaryDirectory)
+        do {
+            _ = try factory.previewMnemonic(entropyField: "nonsense", wordCount: 12)
+            XCTFail("expected a malformed field to be rejected")
+        } catch let error as WalletError {
+            XCTAssertEqual(error, WalletError.invalidEntropy)
+        }
+    }
+
     // MARK: - Rejection
 
     func testMalformedFieldsAreRejected() throws {
