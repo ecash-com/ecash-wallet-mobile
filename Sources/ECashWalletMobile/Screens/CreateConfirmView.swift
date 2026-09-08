@@ -22,12 +22,6 @@ struct CreateConfirmView: View {
     // which points at alphanet today (test value). When it rolls to real eCash mainnet, THIS LINE
     // silently becomes "default to real money" — revisit it then.
     @State var network: WalletNetwork = .ecash
-    /// Routes what Continue does: straight to creation, or through the entropy flow first.
-    ///
-    /// **On by default.** Mixed mode is never weaker than taking the bits from the device alone — the
-    /// CSPRNG still contributes its full 128/256 — so the only cost is a few seconds of the user's
-    /// time, and the gain is a wallet that survives a compromised RNG.
-    @State var useCustomEntropy = true
 
     init(viewModel: CreateViewModel, defaultName: String) {
         self.defaultName = defaultName
@@ -52,7 +46,7 @@ struct CreateConfirmView: View {
                     .textStyle(.h1)
                     .foregroundStyle(Theme.Colors.text0)
 
-                Text("This wallet lives only on this device. Your recovery phrase is the only way to restore it — not even we can recover it for you. You'll back it up right after.",
+                Text("This wallet lives only on this device. You'll add your own randomness to the device's on the next screen, then see the recovery phrase it produces — that phrase is the only way to restore it, and not even we can recover it for you.",
                      bundle: .module, comment: "create wallet self-custody explainer")
                     .textStyle(.body)
                     .foregroundStyle(Theme.Colors.text1)
@@ -66,40 +60,28 @@ struct CreateConfirmView: View {
 
                 Spacer()
 
-                // Two forms rather than one button with programmatic navigation: a NavigationLink
-                // when the switch is on, a plain button when it isn't. Avoids `navigationDestination`,
-                // which is unproven in SkipUI.
-                if useCustomEntropy && network != .thunder {
-                    NavigationLink {
-                        EntropyOptionsScreen(wordCount: app.newWalletWordCount) { field, _ in
-                            // Finish the job here: the user has done the work, so don't send them back
-                            // to tap Continue a second time.
-                            vm.entropyField = field
-                            vm.submit(label: defaultName, network: network,
-                                      wordCount: app.newWalletWordCount)
-                        }
-                    } label: {
-                        Text("Continue", bundle: .module, comment: "continue to entropy")
-                            .textStyle(.button)
-                            .foregroundStyle(Theme.Colors.accentText)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, Theme.Space.x4)
-                            .background(
-                                RoundedRectangle(cornerRadius: Theme.Radius.md)
-                                    .fill(Theme.Colors.accent)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                } else {
-                    WalletButton(title: vm.isCreating ? "Creating…" : "Continue") {
-                        // Seed length is a global setting (Settings → New wallets), not a per-create
-                        // choice.
+                // Always the entropy flow. There is no opt-out: mixed mode is never weaker than
+                // taking the bits from the device alone — the CSPRNG still contributes its full
+                // 128/256 — so the only cost is a few seconds, and offering the choice mostly
+                // invited people to skip something with no downside.
+                NavigationLink {
+                    EntropyOptionsScreen(wordCount: app.newWalletWordCount) { field, _ in
+                        vm.entropyField = field
                         vm.submit(label: defaultName, network: network,
                                   wordCount: app.newWalletWordCount)
                     }
-                    .disabled(vm.isCreating)
-                    .opacity(vm.isCreating ? 0.6 : 1)
+                } label: {
+                    Text("Continue", bundle: .module, comment: "continue to entropy")
+                        .textStyle(.button)
+                        .foregroundStyle(Theme.Colors.accentText)
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, Theme.Space.x4)
+                        .background(
+                            RoundedRectangle(cornerRadius: Theme.Radius.md)
+                                .fill(Theme.Colors.accent)
+                        )
                 }
+                .buttonStyle(.plain)
             }
             .padding(Theme.Space.gutter)
         }
@@ -115,8 +97,9 @@ struct CreateConfirmView: View {
                 Text("Address type", bundle: .module, comment: "address type label")
                     .textStyle(.overline).foregroundStyle(Theme.Colors.text2)
                 Spacer()
+                // `.creatable`, not `.allCases` — legacy is import-only (see ScriptType.creatable).
                 Picker("Address type", selection: $vm.scriptType) {
-                    ForEach(ScriptType.allCases, id: \.self) { type in
+                    ForEach(ScriptType.creatable, id: \.self) { type in
                         Text(verbatim: type.displayName).tag(type)
                     }
                 }
@@ -132,18 +115,6 @@ struct CreateConfirmView: View {
                     .font(.jbMono(13, .regular)).foregroundStyle(Theme.Colors.text1)
             }
 
-            // A switch, not a link: it changes what Continue does rather than being a place to go.
-            Toggle(isOn: $useCustomEntropy) {
-                VStack(alignment: .leading, spacing: Theme.Space.x1) {
-                    Text("Provide your own entropy", bundle: .module,
-                         comment: "paranoid mode toggle")
-                        .textStyle(.body).foregroundStyle(Theme.Colors.text0)
-                    Text("Add your own randomness to the device's. Takes a few seconds.",
-                         bundle: .module, comment: "paranoid mode toggle explainer")
-                        .textStyle(.xs).foregroundStyle(Theme.Colors.text2)
-                }
-            }
-            .tint(Theme.Colors.accent)
         }
     }
 

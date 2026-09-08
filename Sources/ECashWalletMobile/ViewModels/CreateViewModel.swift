@@ -41,8 +41,6 @@ final class CreateViewModel {
         self.createWithEntropy = createWithEntropy
     }
 
-    /// True when the user supplied their own entropy — drives the button copy.
-    var usesCustomEntropy: Bool { entropyField != nil }
 
     var isCreating: Bool { phase == .creating }
 
@@ -57,6 +55,9 @@ final class CreateViewModel {
         guard phase != .creating else { return }
         phase = .creating
         do {
+            // The UI always routes through the entropy flow, so `entropyField` is normally set. The
+            // plain path stays as a fallback: if it were somehow missing, creating from the CSPRNG is
+            // a better outcome than refusing to make a wallet.
             if let entropyField, !entropyField.isEmpty {
                 try createWithEntropy(label, network, entropyField, wordCount, scriptType)
                 // The field is seed-equivalent and the mnemonic is now the real backup — drop it the

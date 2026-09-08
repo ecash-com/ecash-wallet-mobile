@@ -178,6 +178,20 @@ public enum ScriptType: String, Codable, Equatable, Hashable, Sendable, CaseIter
         }
     }
 
+    /// The script types offered when **creating** a wallet: native segwit and taproot only.
+    ///
+    /// Legacy (`bip44`) and nested segwit (`bip49`) are deliberately absent. A fresh wallet has no
+    /// coins sitting at `1…` or `3…` addresses, so making one there buys nothing and costs something:
+    /// larger inputs and higher fees for legacy, and for nested segwit the extra redeem-script
+    /// overhead that only ever existed to get segwit past wallets which couldn't parse `bc1`.
+    ///
+    /// Both remain available on **import**, which is where they are actually needed — someone
+    /// recovering an old wallet must be able to match the address kind their coins live at. Same
+    /// asymmetry as `WalletNetwork.selectable`: what you may create is narrower than what you may hold.
+    ///
+    /// Ordered by preference, so the first entry is the sensible default.
+    public static let creatable: [ScriptType] = [.bip84, .bip86]
+
     /// Short human label for UI (wallet detail / import picker).
     public var displayName: String {
         switch self {

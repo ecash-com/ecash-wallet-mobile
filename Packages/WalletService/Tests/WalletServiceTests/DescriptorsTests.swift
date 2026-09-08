@@ -37,4 +37,27 @@ final class DescriptorsTests: XCTestCase {
     func testWpkhWrapper() {
         XCTAssertEqual(Descriptors.wpkh("KEY"), "wpkh(KEY)")
     }
+
+    // MARK: - What can be created vs imported
+
+    /// Legacy and nested segwit are import-only. A fresh wallet has no coins at `1…` or `3…`
+    /// addresses, so creating one there buys nothing — but someone recovering an old wallet must be
+    /// able to match the address kind their coins live at, so `allCases` (which import uses) keeps
+    /// both.
+    func testLegacyAndNestedSegwitCanBeImportedButNotCreated() {
+        for type in [ScriptType.bip44, ScriptType.bip49] {
+            XCTAssertFalse(ScriptType.creatable.contains(type), "\(type) must not be creatable")
+            XCTAssertTrue(ScriptType.allCases.contains(type), "\(type) must still be importable")
+        }
+    }
+
+    /// The first creatable entry is what a picker shows by default, so it has to be native segwit.
+    func testNativeSegwitIsTheDefaultOfferedAtCreate() {
+        XCTAssertEqual(ScriptType.creatable.first, ScriptType.bip84)
+    }
+
+    /// New wallets get native segwit or taproot, nothing else.
+    func testOnlySegwitAndTaprootAreCreatable() {
+        XCTAssertEqual(ScriptType.creatable, [ScriptType.bip84, ScriptType.bip86])
+    }
 }
