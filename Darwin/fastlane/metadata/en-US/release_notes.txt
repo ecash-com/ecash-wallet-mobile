@@ -1,1 +1,6 @@
-The first release of eCash.com Wallet. Create or restore a wallet, back it up, and send and receive eCash — with your keys staying on your device.
+You now generate your own randomness. Every new wallet starts at the entropy pad: swipe across it and your own motion becomes the input your recovery phrase is derived from — deterministic, shown on screen, and verifiable with a single SHA-256 command.
+
+Also in this release:
+• New wallets default to eCash
+• Create Native SegWit or Taproot wallets (legacy accounts can still be imported)
+• Watch your words change as you swipe, and review them before the wallet is created

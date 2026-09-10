@@ -1,15 +1,37 @@
-eCash.com Wallet is a fast, self-custodial wallet for eCash — the Bitcoin hardfork from Layer Two Labs.
+Most wallets ask you to trust that your phone picked a good random number. eCash.com Wallet lets you generate it yourself.
 
-Your keys never leave your device. Each wallet is generated on-device and its recovery phrase is stored in the Android Keystore. All signing happens locally with the Bitcoin Dev Kit (BDK).
+Swipe across the entropy pad, and your own motion — which characters you cross, how quickly, how long you linger — becomes the input your recovery phrase is derived from. It is deterministic and auditable: the same input always produces the same words, the exact string being hashed is shown on screen, and you can reproduce the whole derivation yourself with a single SHA-256 command. Your input is mixed with the system's own randomness, so the result is never weaker than the standard path — only harder to predict.
 
-FEATURES
-• Create a new wallet, or restore one from a 12- or 24-word recovery phrase
-• Hold multiple wallets and switch between them instantly
-• Send and receive with QR codes and BIP21 payment links
-• Choose your network fee before you send
-• Review every payment — recipient, amount, fee, and network — before you sign
-• Follow your transaction history with confirmations and block-explorer links
-• Back up your recovery phrase behind a device-authentication gate
+This is a self-custodial wallet for eCash, the Bitcoin hardfork from Layer Two Labs that brings Drivechain to Bitcoin. Your keys never leave your device. Wallets are generated on-device, recovery phrases are held in the Android Keystore and excluded from device backups, and every transaction is signed locally with the Bitcoin Dev Kit (BDK).
+
+
+MANY WALLETS, MANY NETWORKS
+
+• Hold as many wallets as you like — each with its own separate recovery phrase — and switch between them instantly
+• Bitcoin and eCash side by side, every wallet carrying a coloured network badge so the two can never be confused
+• Create Native SegWit or Taproot wallets
+• Restore any 12- or 24-word BIP39 recovery phrase, including legacy and nested SegWit accounts, custom derivation paths, and single WIF private keys
+
+
+SEND AND RECEIVE
+
+• QR codes and BIP21 payment links, with a built-in scanner
+• Choose your fee before you send
+• Review recipient, amount, fee, and network on one screen before anything is signed
+• Send to another of your own wallets without copying an address around
+• Transaction history with confirmations, fees, replace-by-fee status, and block-explorer links
+• Split coins — separate your forked eCash from the Bitcoin sharing the same coin, in a single transaction
+
+
+SECURITY
+
+• Your fingerprint, face, or device passcode on launch, and again before every payment
+• Your private key is loaded for exactly one signing operation and then dropped — balances, addresses, and history all run watch-only
+• Balances are covered in the recents screen
+• Point any network at your own Electrum or Esplora server
+• Free and open source under the GPL
+
 
 YOUR COINS, YOUR CONTROL
+
 This is a non-custodial wallet. We never hold your keys, your recovery phrase, or your funds — and we cannot recover them for you. Write your recovery phrase down and keep it somewhere safe.

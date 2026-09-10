@@ -1,1 +1,1 @@
-ecash,bitcoin,wallet,crypto,self-custody,seed phrase,drivechain,send,receive,BDK
+ECX,bitcoin,btc,entropy,drivechain,sidechain,seed,phrase,recovery,custody,BIP39,taproot,segwit,keys

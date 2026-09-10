@@ -215,6 +215,13 @@ struct SettingsScreen: View {
                         .textStyle(.body)
                         .foregroundStyle(Theme.Colors.text0)
                 }
+                // Also shown on the first-launch WelcomeView, where continuing accepts them. Repeated
+                // here because that screen is unreachable once a wallet exists, and both stores expect
+                // the policy to stay reachable from inside the app.
+                externalLinkRow(LegalLinks.privacy,
+                                Text("Privacy Policy", bundle: .module, comment: "settings row → privacy policy"))
+                externalLinkRow(LegalLinks.terms,
+                                Text("Terms of Service", bundle: .module, comment: "settings row → terms"))
             }
             // Dev affordance — the iOS Keychain survives app deletion, so this is the reliable wipe
             // for repeated testing. Returns to the empty state. (Gate behind a debug flag later.)
@@ -282,6 +289,27 @@ struct SettingsScreen: View {
     /// renders its displayed value in the SYSTEM font (and styling the options doesn't change it),
     /// so we use a `Menu` with a hand-built label we fully control. The opened menu items are a
     /// native (platform-drawn) menu; the always-visible row is what we style here.
+    /// A settings row that opens a URL in the browser, styled to match the `NavigationLink` rows
+    /// around it but with the north-east arrow that marks leaving the app.
+    @ViewBuilder
+    private func externalLinkRow(_ url: URL?, _ label: Text) -> some View {
+        if let url {
+            Link(destination: url) {
+                HStack {
+                    label
+                        .textStyle(.body)
+                        .foregroundStyle(Theme.Colors.text0)
+                    Spacer()
+                    Image(icon: Icon.send)
+                        .resizable().scaledToFit()
+                        .frame(width: 14, height: 14)
+                        .foregroundStyle(Theme.Colors.text2)
+                }
+            }
+            .buttonStyle(.plain)
+        }
+    }
+
     /// Section header in our brand font — a plain `Section("…")` title renders in the system font.
     /// `.overline` is the design system's section-overline style (JetBrains Mono, uppercase).
     private func sectionHeader(_ text: Text) -> some View {

@@ -26,15 +26,52 @@ struct WelcomeView: View {
                     WalletButton(title: "Create new wallet", action: onCreate)
                     WalletButton(title: "Import existing wallet", kind: .secondary, action: onImport)
 
-                    Text("Your keys never leave this device. By continuing you accept the terms.",
-                         bundle: .module, comment: "welcome footer disclaimer")
-                        .textStyle(.xs)
-                        .foregroundStyle(Theme.Colors.text2)
-                        .multilineTextAlignment(.center)
-                        .padding(.top, Theme.Space.x1)
+                    VStack(spacing: Theme.Space.x2) {
+                        Text("Your keys never leave this device. By continuing you accept our terms.",
+                             bundle: .module, comment: "welcome footer disclaimer")
+                            .textStyle(.xs)
+                            .foregroundStyle(Theme.Colors.text2)
+                            .multilineTextAlignment(.center)
+                        legalLinks
+                    }
+                    .padding(.top, Theme.Space.x1)
                 }
             }
             .padding(Theme.Space.gutter)
         }
+    }
+
+    /// Terms + privacy, as two real links.
+    ///
+    /// Deliberately NOT inline markdown links inside the sentence above (`[Terms](https://…)` in a
+    /// `LocalizedStringKey`): SwiftUI renders those, but it's precisely the kind of construct that can
+    /// come out as literal bracket text on Compose — and a legal link that silently stops being a link
+    /// is worse than one that never looked like prose. Two separate `Link`s also give each a real tap
+    /// target, which a few underlined words in 11pt type would not.
+    private var legalLinks: some View {
+        HStack(spacing: Theme.Space.x2) {
+            if let terms = LegalLinks.terms {
+                Link(destination: terms) {
+                    Text("Terms", bundle: .module, comment: "welcome footer → terms of service")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.text1)
+                        .underline()
+                }
+                .buttonStyle(.plain)
+            }
+            if LegalLinks.terms != nil && LegalLinks.privacy != nil {
+                Text(verbatim: "·").textStyle(.xs).foregroundStyle(Theme.Colors.text2)
+            }
+            if let privacy = LegalLinks.privacy {
+                Link(destination: privacy) {
+                    Text("Privacy Policy", bundle: .module, comment: "welcome footer → privacy policy")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.text1)
+                        .underline()
+                }
+                .buttonStyle(.plain)
+            }
+        }
+        .frame(minHeight: 44)   // touch target (§8: 44pt minimum)
     }
 }

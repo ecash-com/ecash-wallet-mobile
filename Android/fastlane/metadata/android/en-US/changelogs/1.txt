@@ -1,1 +1,0 @@
-The first release of eCash.com Wallet. Create or restore a wallet, back it up, and send and receive eCash — with your keys staying on your device.

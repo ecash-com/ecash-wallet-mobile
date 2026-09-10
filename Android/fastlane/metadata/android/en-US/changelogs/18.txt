@@ -1,0 +1,6 @@
+You now generate your own randomness. Every new wallet starts at the entropy pad: swipe across it and your own motion becomes the input your recovery phrase is derived from — deterministic, shown on screen, and verifiable yourself.
+
+Also in this release:
+• New wallets default to eCash
+• Create Native SegWit or Taproot wallets (legacy can still be imported)
+• Watch your words change as you swipe, and review them before the wallet is created
