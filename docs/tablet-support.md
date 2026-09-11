@@ -20,12 +20,33 @@ reviewer running it on an iPad — where nothing has ever been laid out.
   builds (≤18) on TestFlight, never the store, so nothing is stranded. Keeping it that way is the
   whole reason to flip *now* rather than after launch.
 
-**Android needs no equivalent decision.** An AAB has no device-family concept, and **Play does not
-require tablet screenshots** — phone shots are the only mandatory set. The forcing function that makes
-this a decision on iOS simply doesn't exist there. Play's downside for an unoptimised tablet app is a
-soft "not designed for tablets" note, not a rejection. (You *can* force phone-only with
-`<uses-feature android:name="android.hardware.telephony" android:required="true"/>`, but don't: it's
-semantically false for a wallet and it excludes Wi-Fi-only tablets along with the ones you meant.)
+**Android needs the same decision, but takes it elsewhere (CORRECTED 2026-09-11).** An AAB has no
+device-family concept, so there is nothing to set at build time — but that does **not** mean Play is
+indifferent. Play Console asks for **tablet screenshots** because the bundle advertises the tablet
+screen buckets by default:
+
+```
+supports-screens: 'small' 'normal' 'large' 'xlarge'     # aapt2 dump badging, build 19
+```
+
+Nothing in `AndroidManifest.xml` declares that — `large`/`xlarge` are Android's implied default. The
+lever is therefore in the **Play Console, not the build**: *Reach and devices → Form factors* (back out
+of the tablet form factor, and its screenshot requirement goes with it) or *Reach and devices → Device
+catalog → Device exclusion rules* (exclude by screen size = `large` + `xlarge`). On some Console
+versions the exclusion rules sit under *Release → Setup → Advanced settings* instead. It is an
+**app-level** setting, not per-release, and fully reversible.
+
+Two manifest-level alternatives, both rejected: `<supports-screens android:largeScreens="false" …>` is
+deprecated and modern Android largely ignores it for filtering, so you would likely get a restriction
+you did not want and not the one you did; and
+`<uses-feature android:name="android.hardware.telephony" android:required="true"/>` works but is
+semantically false for a wallet and excludes Wi-Fi-only tablets along with devices we want.
+
+Worth noting the asymmetry in cost: Android tablet screenshots are *cheap* to produce compared with
+iPad's, because the app is portrait-locked (`android:screenOrientation="portrait"`) and Compose
+reflows — booting a tablet AVD and re-shooting the same seven shots is about half an hour with no
+layout work. They would simply look like an inflated phone app, for the reasons below. Restricting to
+phones is the choice consistent with the iPad decision; revisit both together once the width cap lands.
 
 ## What the code actually looks like today
 
