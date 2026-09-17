@@ -27,6 +27,10 @@ jobs:
     # macOS: Skip Fuse compiles Swift natively for Android via the Swift Android SDK, and the Skip
     # toolchain targets macOS. Android SDK + Java come preinstalled on the runner.
     runs-on: macos-15
+    env:
+      # The Swift Android SDK + host toolchain Skip installs. See the pin rationale below.
+      SWIFT_ANDROID_SDK_VERSION: '6.3.2'
+
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v5
@@ -56,21 +60,34 @@ jobs:
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
       # Cache the Swift Android SDK so re-runs skip the ~2-min download/install. Keyed to the Skip
-      # pin in Package.swift, so a Skip bump re-installs a matching SDK. `skip android sdk install`
-      # below is idempotent — it no-ops fast on a cache hit.
+      # pin in Package.swift AND the pinned SDK version below, so bumping either re-installs.
+      # `skip android sdk install` below is idempotent — it no-ops fast on a cache hit.
       - name: Cache Swift Android SDK
         uses: actions/cache@v4
         with:
           path: |
             ~/.swiftpm/swift-sdks
             ~/Library/org.swift.swiftpm/swift-sdks
-          key: swift-android-sdk-${{ runner.os }}-${{ hashFiles('Package.swift') }}
+          key: swift-android-sdk-${{ runner.os }}-${{ env.SWIFT_ANDROID_SDK_VERSION }}-${{ hashFiles('Package.swift') }}
           restore-keys: |
-            swift-android-sdk-${{ runner.os }}-
+            swift-android-sdk-${{ runner.os }}-${{ env.SWIFT_ANDROID_SDK_VERSION }}-
 
       # Swift cross-compilation SDK for Android (the Fuse native-Android build).
+      #
+      # PINNED, deliberately. Unpinned, `skip android sdk install` resolves the LATEST SDK version and
+      # then downloads a matching HOST toolchain to go with it — and on 2026-09-17 that resolved 6.4.0
+      # and died with:
+      #     Error: Swift 6.4.0 does not exist at URL
+      #     https://download.swift.org/swift-6.4-release/xcode/swift-6.4-RELEASE/swift-6.4-RELEASE-osx.pkg
+      # i.e. Skip knew about an SDK version whose macOS toolchain swift.org had not published. Nothing
+      # in the repo changed; the resolution did. Note this is NOT about the runner's Xcode — Skip
+      # installs its own toolchain pair — so pinning Xcode would not have helped.
+      #
+      # 6.3.2 is what the project actually builds with locally (Xcode 26.5 / Swift 6.3.2, SDK
+      # swift-6.3.2-RELEASE_android). Bump it deliberately, together with a local verification, never
+      # by floating.
       - name: Install Swift Android SDK (skip android sdk)
-        run: skip android sdk install
+        run: skip android sdk install --version "$SWIFT_ANDROID_SDK_VERSION"
 
       - name: Diagnose toolchain
         run: skip doctor || true
