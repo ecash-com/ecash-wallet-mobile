@@ -124,6 +124,53 @@ of the user's own eCash wallets via the existing same-network picker logic), amo
 that states the fee, the expiry, and — prominently — that this hands coins to a named third party.
 Details deferred; nothing here is designed yet.
 
+## Can we ship against it as-is? Yes — here is how
+
+Every gap above has a client-side answer except the signature, and the signature was only ever
+evidence, never enforcement. Nothing here needs the server to change first.
+
+**The one real engineering problem is persistence, and it is ours to solve.** A withdrawal outlives the
+screen, the app process, and possibly the install. Order of operations, with the money-losing window
+called out:
+
+```
+1. CreateWithdrawal                    server state only; no coins have moved
+2. PERSIST the whole record locally    withdrawal_id, request_id, every request parameter,
+                                       l2_payment_address, amounts, expires_at
+3. broadcast the L2 payment            ← the dangerous instant
+4. persist the L2 txid + vout
+5. SubmitPayment                       idempotent; safe to retry forever
+6. poll GetWithdrawal until PAID
+```
+
+Crash between 3 and 4 and we have paid with no handle — except that **we own our own transaction
+history**, and we know the exact address we were told to pay. Recovery is: find the payment to
+`l2_payment_address` in the wallet's own history, take its txid and vout, resume at step 5. That closes
+the window completely, and it is the reason step 2 must persist `l2_payment_address` and not merely the
+withdrawal id.
+
+`request_id` is a second, independent recovery path: it is `UNIQUE` with a `request_hash` server-side,
+so replaying `CreateWithdrawal` with byte-identical parameters returns the same quote rather than a new
+one. That only works if we kept every parameter — another reason step 2 stores the whole request, not
+just the id.
+
+**Working around each gap:**
+
+| Gap | What we do instead |
+|---|---|
+| `FAILED` has no reason | Show the withdrawal id and the L2 txid, and point the user at the operator. We can still detect expiry ourselves from `expires_at`, so the commonest failure is explainable without the server's help. |
+| No operator identity | Carry it app-side in the **remote config** we already ship (`RemoteEndpointConfig` / `RemoteServiceOverlay`) — endpoint, operator name, terms URL — the same mechanism that already rotates eCash endpoints without an app update. The app must be able to name who is being trusted. |
+| No live capacity | Just call `CreateWithdrawal` and handle rejection. It happens **before** any payment, so a rejected quote costs the user nothing but a round trip. |
+| Lookup only by `withdrawal_id` | Local persistence above, plus the `l2_payment_address` history scan, plus `request_id` replay. Three independent paths; no server change needed. |
+| No cancel | Do not create a withdrawal until the user actually commits — build it at the **review** step, not on screen open. Abandoned quotes then become rare, and the ones that happen simply expire. |
+| Polling only | Poll with backoff while the screen is foregrounded; persist and re-poll on app open. Confirmations are the slow part, and the user does not need to watch them. |
+| Fee rounding (`floorBPS`/`ceilBPS`) | Never present a client-computed fee as authoritative. Show "≈" from `fee_basis_points` before committing, and the server's quoted `service_fee_sats` / `l2_payment_sats` as the truth at review. |
+| **Quote signature is broken** | **Do not verify, and do not imply we did.** Verifying the current 16-byte preimage would confirm only an expiry timestamp while looking like real assurance — worse than no check. Leave the verification seam in place, unused, with a comment pointing at this document; enable it when upstream lands the fix. |
+
+Net: the protocol as it stands is sufficient for a correct, recoverable client. What we lose by
+shipping before the upstream fix is the ability to *prove* what was quoted — which never protected the
+user's coins anyway, because the scheme has no on-chain recourse either way.
+
 ## Open questions
 
 1. Is there a public deployment, and on which chains?

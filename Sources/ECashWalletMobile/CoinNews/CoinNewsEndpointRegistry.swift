@@ -38,6 +38,10 @@ enum CoinNewsEndpointRegistry {
             // eCash (drynet2): no bundled indexer yet — supplied via the remote overlay above when
             // one is live. Until then this is nil and the News tab stays hidden.
             return nil
+        case .ecashBeta:
+            // Betanet: same as alphanet — nothing bundled; the remote overlay supplies it if one
+            // appears (the live config currently publishes `coinnews: {url: null}` for both).
+            return nil
         case .thunder:
             return nil   // Thunder has no CoinNews indexer
         }

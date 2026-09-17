@@ -42,6 +42,10 @@ enum FaucetRegistry {
             // eCash (drynet2): no faucet endpoint verified yet. Wire it here (endpoint + amount +
             // cooldown) once the drynet2 faucet is confirmed reachable.
             return nil
+        case .ecashBeta:
+            // Betanet: config publishes `faucet: {url: null}` today. The remote overlay above wins
+            // when one appears, so the "Get coins" button turns on with no app update.
+            return nil
         case .thunder:
             return nil   // no Thunder faucet
         }

@@ -1,6 +1,5 @@
-You now generate your own randomness. Every new wallet starts at the entropy pad: swipe across it and your own motion becomes the input your recovery phrase is derived from — deterministic, shown on screen, and verifiable with a single SHA-256 command.
+eCash Betanet is here. Create a wallet on the new beta network — it runs alongside Alphanet, with its own teal network badge so the two are never confused.
 
 Also in this release:
-• New wallets default to eCash
-• Create Native SegWit or Taproot wallets (legacy accounts can still be imported)
-• Watch your words change as you swipe, and review them before the wallet is created
+• Privacy policy and terms are now linked from the welcome screen and Settings
+• Alphanet and Betanet each track their own chain, so coin splitting is correct on both

@@ -115,7 +115,7 @@ public enum PaymentLink {
         guard let network = routing.networks.first else { return "No wallet can pay this request." }
         switch network {
         case .bitcoin: return "This is a Bitcoin payment request. You don't have a Bitcoin wallet."
-        case .ecash: return "This is an eCash payment request. You don't have an eCash wallet."
+        case .ecash, .ecashBeta: return "This is an eCash payment request. You don't have an eCash wallet."
         case .signet: return "You don't have a signet wallet."
         case .thunder: return "No wallet can pay this request."
         }

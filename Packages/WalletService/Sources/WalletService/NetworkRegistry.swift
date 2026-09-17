@@ -111,10 +111,26 @@ public enum NetworkRegistry {
                 addressHRP: "bc",
                 unitLabel: "ECX",
                 subUnitLabel: "szat",
-                defaultBackend: "https://esplora.drynet3.drivechain.dev",
+                defaultBackend: "https://esplora.alpha.ecash.ninja",
                 defaultBackendKind: "esplora",
-                explorerTxTemplate: "https://explorer.drynet3.drivechain.dev/tx/{txid}",
-                displayName: "Drynet3")
+                explorerTxTemplate: "https://explorer.alpha.ecash.ninja/tx/{txid}",
+                displayName: "Alphanet")
+        case .ecashBeta:
+            // eCash **betanet** — successor to alphanet, live alongside it for now. Identical to
+            // `.ecash` in derivation terms (Bitcoin-identical bytes, `bc` HRP, coin-type `0'`, ECX);
+            // it differs only by backend and fork height. Same rule as above: these bundled values are
+            // the OFFLINE/first-launch fallback only — the live ones arrive from the remote config,
+            // matched by **`id: "betanet"`** (`family: "ecash"` can no longer disambiguate now that
+            // two eCash chains are published at once).
+            return NetworkParams(
+                coinType: Int32(0),
+                addressHRP: "bc",
+                unitLabel: "ECX",
+                subUnitLabel: "szat",
+                defaultBackend: "https://esplora.beta.ecash.ninja",
+                defaultBackendKind: "esplora",
+                explorerTxTemplate: "https://explorer.beta.ecash.ninja/tx/{txid}",
+                displayName: "Betanet")
         case .thunder:
             // Thunder sidechain — ed25519/BLAKE3, NOT BDK. `coinType`/`addressHRP` are unused fillers
             // (the Thunder engine never derives via BDK). Unit is **ECX** — Thunder holds eCash value
@@ -161,7 +177,7 @@ public enum NetworkRegistry {
     /// consumed only by `WalletEngine` at build time, never bridged.
     static func replayProtectionLockHeight(for network: WalletNetwork) -> UInt32? {
         switch network {
-        case .ecash: return UInt32(499_999_999)   // LOCKTIME_THRESHOLD - 1
+        case .ecash, .ecashBeta: return UInt32(499_999_999)   // LOCKTIME_THRESHOLD - 1
         case .bitcoin, .signet, .thunder: return nil
         }
     }
@@ -179,12 +195,16 @@ public enum NetworkRegistry {
 
     /// The **fork height** for coin-splitting: coins confirmed BELOW this block are pre-fork (shared
     /// with the other chain → need splitting); at/above it, coins are chain-specific (post-fork, replay-
-    /// safe). `.ecash` is **drynet3 → 957_600** today; the real eCash mainnet fork is block **964_000**
-    /// (CLAUDE.md) — update this when `.ecash` moves from the dry-run to mainnet. nil where splitting
+    /// safe). `.ecash` is **alphanet → 963_648** and `.ecashBeta` is **betanet → 967_680**; the real eCash
+    /// mainnet fork is block **964_000** (CLAUDE.md). nil where splitting
     /// doesn't apply (Bitcoin/Signet/Thunder). Internal: used by `WalletEngine.splitSummary`.
     static func forkHeight(for network: WalletNetwork) -> Int64? {
         switch network {
-        case .ecash: return Int64(957_600)   // drynet3 (real eCash mainnet: 964_000)
+        // Fallbacks only — the live values come from the remote config per chain, which is what
+        // makes a rollover safe. They differ per chain and misclassifying is a money bug, so they
+        // are NOT shared between the two eCash networks.
+        case .ecash: return Int64(963_648)       // alphanet
+        case .ecashBeta: return Int64(967_680)   // betanet
         case .bitcoin, .signet, .thunder: return nil
         }
     }

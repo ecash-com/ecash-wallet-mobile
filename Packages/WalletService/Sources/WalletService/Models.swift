@@ -115,6 +115,24 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     /// by its backend. Unit label is **ECX**. (See `docs/key-derivation.md`, memory
     /// `drynet2-ecash-network`.)
     case ecash
+    /// The eCash **betanet** — the successor chain to alphanet, running alongside it for a while
+    /// before it takes over (and before the real eCash mainnet after that). Same shape as `.ecash`
+    /// in every respect that matters to derivation: byte-identical to Bitcoin, mainnet `bc` HRP,
+    /// coin-type `0'`, BDK `Network.bitcoin`, unit **ECX** — separated from alphanet only by its
+    /// backend and its fork height (alphanet 963_648, betanet 967_680) and, at the P2P layer, by a
+    /// distinct network magic (`eca5a104` vs `eca5b104`).
+    ///
+    /// **One seed therefore derives IDENTICAL addresses on `.ecash` and `.ecashBeta`** — the same
+    /// property the testnet-class networks have via coin-type `1'`. The network chip is the only
+    /// thing telling them apart (Golden Rule §6), which is why `NetworkChipStyle` gives betanet its
+    /// own colour rather than reusing eCash's.
+    ///
+    /// **Naming, deliberately:** the rawValue `"ecash"` above is persisted in the wallet store and
+    /// enforced by `check_network`, and it currently means *alphanet* — renaming it would orphan
+    /// every existing eCash wallet. So the code keeps the awkward name and the **user-facing name
+    /// comes from the remote config's `display_name`** ("Alphanet" / "Betanet"), which is also how
+    /// the real eCash mainnet will eventually be labelled without a migration.
+    case ecashBeta
     /// The **Thunder** sidechain of eCash (LayerTwo-Labs/thunder-rust). NOT a BDK/secp256k1 chain —
     /// ed25519 keys, BLAKE3 base58 addresses, a Thunder-node RPC backend. Routed to the Fuse-native
     /// `ThunderService` (never the BDK engine); the `coinType`/`addressHRP` in its registry entry are
@@ -129,6 +147,7 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
         .bitcoin,
         .signet,
         .ecash,
+        .ecashBeta,
         // .thunder,   // HIDDEN until the drivechain-esplora index has walked blocks (2026-09-01).
         //             // The backend itself is done and verified against the live service, but the
         //             // index reports an empty chain, so a Thunder wallet would derive and hand out
@@ -138,8 +157,8 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     ]
 
     /// True for everything that is NOT Bitcoin mainnet. Drives the persistent network
-    /// badge (Golden Rule §6) — non-mainnet wallets must be unmistakable. `.ecash` is a
-    /// **test** chain (drynet2) that nonetheless uses mainnet-style `bc` addresses, so it stays
+    /// badge (Golden Rule §6) — non-mainnet wallets must be unmistakable. `.ecash`/`.ecashBeta` are
+    /// **test** chains that nonetheless use mainnet-style `bc` addresses, so they stay
     /// non-mainnet here (violet chip, no real-money warnings) even though its addresses look
     /// identical to real Bitcoin — the chip is the only thing distinguishing them.
     public var isMainnet: Bool {

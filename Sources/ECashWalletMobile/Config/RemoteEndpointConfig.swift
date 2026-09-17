@@ -59,9 +59,20 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         ///   change — the old `drynet2`-only alias silently dropped `drynet3` (2026-07-23 bug).
         var walletNetwork: WalletNetwork? {
             if let id, let known = WalletNetwork(rawValue: id) { return known }
-            // The eCash dry-run net rotates ids (`drynet2` → `drynet3` → …), all `family: "ecash"`.
-            // Match either — `family` is the clean signal; the `drynet` id prefix is a belt-and-
-            // suspenders fallback so an entry that omits `family` still resolves.
+            // TWO eCash chains are published at once as of 2026-09-17 (alphanet + betanet), so
+            // `family: "ecash"` NO LONGER IDENTIFIES ONE — matching on it alone mapped both to
+            // `.ecash`, and first-usable-wins meant betanet was silently swallowed by alphanet
+            // (its backends AND its different fork height, 967_680 vs 963_648 — a money bug for
+            // split-coins, not just a missing picker entry). Disambiguate by `id`, exactly as
+            // Bitcoin and Signet already are (both report `family: "bitcoin"`).
+            switch id {
+            case "alphanet": return .ecash
+            case "betanet":  return .ecashBeta
+            default: break
+            }
+            // Fallback for older payloads that predate the split: a lone `family: "ecash"` entry,
+            // or the historical rotating `drynet*` ids, still resolve to `.ecash`. Reached only
+            // when `id` didn't match above, so it can no longer shadow betanet.
             if family == "ecash" || (id?.hasPrefix("drynet") ?? false) { return .ecash }
             return nil
         }

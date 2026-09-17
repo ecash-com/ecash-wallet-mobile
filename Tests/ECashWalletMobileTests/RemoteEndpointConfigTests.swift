@@ -340,7 +340,7 @@ import WalletService
 
         // No overlay → bundled NetworkRegistry template.
         #expect(RemoteServiceOverrides.explorerURL(for: "abc", on: WalletNetwork.ecash)
-                == "https://explorer.drynet3.drivechain.dev/tx/abc")
+                == "https://explorer.alpha.ecash.ninja/tx/abc")
 
         // Overlay wins and substitutes {txid}.
         RemoteServiceOverrides.setExplorerTemplate("https://scan.example/t/{txid}", for: WalletNetwork.ecash)
@@ -351,7 +351,7 @@ import WalletService
         RemoteServiceOverrides.clearAll()
         RemoteServiceOverrides.setExplorerTemplate("https://scan.example/no-placeholder", for: WalletNetwork.ecash)
         #expect(RemoteServiceOverrides.explorerURL(for: "abc", on: WalletNetwork.ecash)
-                == "https://explorer.drynet3.drivechain.dev/tx/abc")
+                == "https://explorer.alpha.ecash.ninja/tx/abc")
     }
 
     // MARK: - Refresh throttle
