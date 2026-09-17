@@ -60,8 +60,12 @@ fi
 # Checked on the APK because an AAB stores libs in a different layout; the two are built from the
 # same native output, so the APK passing means the AAB is sound.
 # ---------------------------------------------------------------------------
+# NB: count, don't use `grep -q`. Under `set -o pipefail`, grep -q exits on the first match, unzip
+# gets SIGPIPE and returns non-zero, and pipefail reports the whole pipeline as failed — so the guard
+# would abort BECAUSE it found the library. (Cost one good artifact on 2026-09-17.)
 LIBS=$(unzip -l "$DEST" | grep -c '\.so$' || true)
-if ! unzip -l "$DEST" | grep -q 'libswiftCore\.so'; then
+SWIFT_LIBS=$(unzip -l "$DEST" | grep -c 'libswiftCore\.so' || true)
+if [ "$SWIFT_LIBS" -eq 0 ]; then
   echo "" >&2
   echo "✗ ABORT: no libswiftCore.so in $DEST ($LIBS native libs)." >&2
   echo "  The Swift runtime is missing — this build would crash on launch." >&2
