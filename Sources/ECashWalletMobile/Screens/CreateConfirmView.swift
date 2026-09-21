@@ -21,7 +21,9 @@ struct CreateConfirmView: View {
     // NOTE for whoever moves `.ecash` off the dry-run chain: the case follows the remote config,
     // which points at alphanet today (test value). When it rolls to real eCash mainnet, THIS LINE
     // silently becomes "default to real money" — revisit it then.
-    @State var network: WalletNetwork = .ecash
+    // Defaults to whichever eCash chain is current (`currentEcash`) — never auto-mainnet
+    // (Golden Rule §6). One constant so a chain move is a single edit.
+    @State var network: WalletNetwork = .currentEcash
 
     init(viewModel: CreateViewModel, defaultName: String) {
         self.defaultName = defaultName

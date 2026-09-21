@@ -1,5 +1,4 @@
-eCash Betanet is here. Create a wallet on the new beta network — it runs alongside Alphanet, with its own teal network badge so the two are never confused.
+New wallets, imports, and ECX claims now use eCash Betanet — the network the project has moved to. Wallets you already hold on Alphanet are unchanged and keep working.
 
 Also in this release:
-• Privacy policy and terms are now linked from the welcome screen and Settings
-• Alphanet and Betanet each track their own chain, so coin splitting is correct on both
+• Fixed: coin splitting was unavailable on Betanet. The Home nudge and Settings row now appear there, classified against Betanet's own fork height.

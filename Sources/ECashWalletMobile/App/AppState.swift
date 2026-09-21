@@ -889,7 +889,7 @@ final class AppState {
         if let cached = try? await walletOps.balanceAsync(walletId: id) { balance = cached }
         if let pending = try? await walletOps.pendingBalanceAsync(walletId: id) { pendingBalance = pending }
         if let cachedTxs = try? await walletOps.transactionsAsync(walletId: id) { transactions = sorted(cachedTxs) }
-        if selectedWallet?.network == .ecash {
+        if selectedWallet?.network.supportsCoinSplit == true {
             splitSummary = try? splitSummaryUsingCachedChecks(walletId: id)
         }
     }
@@ -911,7 +911,7 @@ final class AppState {
             syncStore.markSynced(walletId: id, at: Int64(Date().timeIntervalSince1970))
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
-            splitSummary = (selectedWallet?.network == .ecash) ? (try? splitSummaryUsingCachedChecks(walletId: id)) : nil
+            splitSummary = (selectedWallet?.network.supportsCoinSplit == true) ? (try? splitSummaryUsingCachedChecks(walletId: id)) : nil
             syncState = .idle
             Task { await refreshPrice() }
         } catch let error as WalletError {
@@ -938,7 +938,7 @@ final class AppState {
     /// Read-only — HTTP GETs against a Bitcoin Esplora. No key is touched and nothing is broadcast,
     /// so it cannot move anyone's BTC.
     func checkSplittableCoins() async {
-        guard let id = selectedWalletId, selectedWallet?.network == .ecash else { return }
+        guard let id = selectedWalletId, selectedWallet?.network.supportsCoinSplit == true else { return }
         guard !isCheckingSplittableCoins else { return }
         isCheckingSplittableCoins = true
         defer { isCheckingSplittableCoins = false }
@@ -1037,7 +1037,7 @@ final class AppState {
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             // Coin-split status (local, no I/O) — drives the Home nudge. eCash only; nil elsewhere.
-            splitSummary = (selectedWallet?.network == .ecash) ? (try? walletOps.splitSummary(walletId: id)) : nil
+            splitSummary = (selectedWallet?.network.supportsCoinSplit == true) ? (try? walletOps.splitSummary(walletId: id)) : nil
             syncState = .idle
             // Refresh fiat alongside the balance (no-op for networks without a price provider).
             Task { await refreshPrice() }

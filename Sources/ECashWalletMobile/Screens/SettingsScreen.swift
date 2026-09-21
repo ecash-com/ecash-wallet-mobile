@@ -44,7 +44,7 @@ struct SettingsScreen: View {
 
                     // Split coins — eCash only, and only when the wallet actually holds pre-fork coins
                     // (shared with Bitcoin). No row when there's nothing to split.
-                    if wallet.network == .ecash, let summary = app.splitSummary, summary.needsSplitCount > 0 {
+                    if wallet.network.supportsCoinSplit, let summary = app.splitSummary, summary.needsSplitCount > 0 {
                         Button { showSplit = true } label: {
                             HStack {
                                 Text("Split coins", bundle: .module, comment: "settings: split coins row")
@@ -65,7 +65,7 @@ struct SettingsScreen: View {
                     // otherwise never contacts, and it reveals these addresses to that operator.
                     // Shown for every eCash wallet, not just ones the height heuristic flagged —
                     // the whole point is that the heuristic can say "nothing to split" and be wrong.
-                    if wallet.network == .ecash {
+                    if wallet.network.supportsCoinSplit {
                         Button { Task { await app.checkSplittableCoins() } } label: {
                             HStack {
                                 Text("Check for splittable coins", bundle: .module,

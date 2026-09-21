@@ -41,7 +41,10 @@ struct ImportWalletView: View {
         self.defaultName = defaultName
         viewModel.kind = claimMode ? .privateKey : .recoveryPhrase
         _vm = State(initialValue: viewModel)
-        _network = State(initialValue: .ecash)
+        // Both import and CLAIM land on the current eCash chain. In claim mode the network
+        // picker is hidden entirely, so this IS the claim network — an investor key holds the
+        // same pre-fork UTXOs on every eCash fork, so it resolves wherever this points.
+        _network = State(initialValue: .currentEcash)
         _advancedExpanded = State(initialValue: claimMode)
         _isClaim = State(initialValue: claimMode)
     }

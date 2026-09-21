@@ -121,4 +121,31 @@ import WalletService
         #expect(NetworkRegistry.params(for: .ecashBeta).unitLabel == "ECX")
         #expect(!WalletNetwork.ecashBeta.isMainnet)
     }
+
+    // MARK: - Chain currency and capability
+
+    /// The claim button and both create/import defaults read `currentEcash`. Alphanet still runs but
+    /// is no longer where the work is (2026-09-21), so new wallets and investor claims land on
+    /// betanet. Existing alphanet wallets are untouched — network is fixed at creation.
+    @Test func newWalletsAndClaimsPointAtBetanet() {
+        #expect(WalletNetwork.currentEcash == .ecashBeta)
+    }
+
+    /// **The regression this file's second half exists for.** Split-coins was gated by six scattered
+    /// `== .ecash` comparisons, so adding betanet wired its fork height (967_680) correctly and then
+    /// threw it away: `splitSummary` was forced nil, the Home nudge never appeared, and the Settings
+    /// row stayed hidden — on the chain whose whole point is separating forked coins. Equality checks
+    /// are invisible to the exhaustiveness checker that caught every other per-network site.
+    @Test func bothEcashChainsSupportCoinSplitting() {
+        #expect(WalletNetwork.ecash.supportsCoinSplit)
+        #expect(WalletNetwork.ecashBeta.supportsCoinSplit)
+    }
+
+    /// Splitting is meaningless where there is no shared pre-fork history.
+    @Test func nonForkNetworksDoNotSupportCoinSplitting() {
+        #expect(!WalletNetwork.bitcoin.supportsCoinSplit)
+        #expect(!WalletNetwork.signet.supportsCoinSplit)
+        #expect(!WalletNetwork.thunder.supportsCoinSplit)
+    }
+
 }

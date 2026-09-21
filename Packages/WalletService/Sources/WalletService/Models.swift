@@ -156,6 +156,34 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
         //             // uncomment again once the index syncs (docs/thunder-sidechain-support.md §8e).
     ]
 
+    /// **The eCash chain the app currently points at** for new wallets, imports, and investor
+    /// claims. One constant so "which eCash is live" is a single edit, not a hunt through defaults.
+    ///
+    /// `.ecashBeta` (betanet) as of 2026-09-21 — alphanet still runs but is no longer where the work
+    /// is. Existing alphanet wallets are unaffected: a wallet's network is fixed at creation and
+    /// persisted, so this only steers NEW ones.
+    ///
+    /// Safe to move for claims specifically, because an investor key holds the same pre-fork Bitcoin
+    /// UTXOs on **every** eCash fork — both chains inherit the pre-fork set, so a claim works on
+    /// whichever one this points at. Point it at the real eCash mainnet when that ships.
+    public static let currentEcash: WalletNetwork = .ecashBeta
+
+    /// Whether coin-splitting applies to this network — i.e. it is a Bitcoin fork whose pre-fork
+    /// UTXOs are shared with Bitcoin and therefore need separating (`SplitSummary.classify`,
+    /// `NetworkRegistry.forkHeight`).
+    ///
+    /// **A property rather than scattered `== .ecash` checks.** Those checks are what silently broke
+    /// split-coins on betanet when it was added (2026-09-17 → fixed 2026-09-21): the fork height was
+    /// wired up correctly and then thrown away by six equality comparisons the compiler could not
+    /// flag. The `switch` below is exhaustive on purpose, so the next fork chain added won't compile
+    /// until someone decides this — the same protection every other per-network capability has.
+    public var supportsCoinSplit: Bool {
+        switch self {
+        case .ecash, .ecashBeta: return true
+        case .bitcoin, .signet, .thunder: return false
+        }
+    }
+
     /// True for everything that is NOT Bitcoin mainnet. Drives the persistent network
     /// badge (Golden Rule §6) — non-mainnet wallets must be unmistakable. `.ecash`/`.ecashBeta` are
     /// **test** chains that nonetheless use mainnet-style `bc` addresses, so they stay
