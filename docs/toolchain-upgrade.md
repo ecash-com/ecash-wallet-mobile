@@ -1,6 +1,6 @@
 # Toolchain upgrade — Skip, Xcode, macOS
 
-**Planned:** 2026-09-23 against 1.2.0 (22) · **Done:** 2026-09-23 (Skip + Xcode + CI) · **macOS 27:** on hold
+**Planned:** 2026-09-23 against 1.2.0 (22) · **Done:** 2026-09-23 (Skip + Xcode + CI, all verified) · **macOS 27:** on hold
 
 This started as a plan (Skip first, then Xcode, macOS last). What actually happened differed in one
 important way: **the plan's central assumption, that Xcode and the Android build are independent, was
@@ -17,7 +17,8 @@ wrong.** This doc now records the result, the correction, and the rules that fol
 | Skip | 1.9.2 | **1.9.11** (CLI + `Package.resolved`) | 1.9.11 |
 | JDK (Gradle) | Homebrew `openjdk@25` | `openjdk@25` | JDK 25 (`JAVA_HOME_25_arm64`) |
 
-Commits: `5008254` (Skip + README), `233149f` (stale eCash test expectations), `10e190f` (CI).
+Commits: `5008254` (Skip + README), `233149f` (stale eCash test expectations), `10e190f` (CI),
+`95d08dd` (swiftly on CI).
 
 Xcode 27 was installed **in place** over 26.5 (no side-by-side copy), so there is no
 `xcode-select` rollback to 26.5 short of reinstalling it.
@@ -58,11 +59,25 @@ alone breaks the Android build, with no change in the repo. That is also why CI 
    takes about 90 seconds.
 4. **CI** moved to the `xcode-27` image with Xcode and the SDK pinned (see
    `.github/workflows/android-debug-apk.yml`).
+5. **CI needs swiftly.** The first `xcode-27` run failed in `skip android sdk install`:
+   *"Swift 6.4.0 does not exist at URL …/swift-6.4-RELEASE/swift-6.4-RELEASE-osx.pkg"*. When swiftly
+   is present, Skip installs the host toolchain through it (`swiftly install 6.4.0`), which is why it
+   worked locally. Without swiftly, Skip builds the URL itself and drops the patch version; the real
+   package is at `swift-6.4.0-RELEASE`. CI now installs swiftly via Homebrew. This was also the real
+   cause of the 2026-09-17 CI failure, which at the time was put down to swift.org not having
+   published 6.4.0 yet.
 
-**Verified:** `scripts/build-apk.sh` (42 native libs incl. `libswiftCore.so`); the iOS app on an
-iOS 27 simulator; `WalletService` tests (215 host, 159 Robolectric, 0 failures).
-**Not yet verified:** an Android emulator run (create wallet, balance, send), and the first CI run
-on `xcode-27`.
+**Verified (2026-09-23):**
+- `scripts/build-apk.sh`: 42 native libs incl. `libswiftCore.so`.
+- iOS: the app runs on an iOS 27 simulator.
+- Android emulator (`Medium_Phone_API_36.1`, arm64, release build): an existing alphanet wallet
+  loads, syncs, and shows its balance and transaction history; no crashes.
+- `WalletService` tests: 215 host, 159 Robolectric, 0 failures.
+- CI on `xcode-27`: [run 35896133843](https://github.com/ecash-com/ecash-wallet-mobile/actions/runs/35896133843)
+  green in 37 min; its APK is 79MB with 42 native libs incl. `libswiftCore.so`, matching local.
+
+**Not yet verified:** a real send on either platform since the upgrade. Do a small one on alphanet
+before the next release.
 
 ## Known issues after the upgrade
 
@@ -96,6 +111,7 @@ or the current setup has been through at least one release (emulator run, TestFl
   install and the CI pin in the same change.
 - **Move the Skip CLI and SwiftPM package together.**
 - **Keep exactly one Swift Android SDK installed** (`swift sdk list`).
+- **CI must keep swiftly installed**, or `skip android sdk install` fetches a malformed URL.
 - **`swift build` is not a gate.** `scripts/build-apk.sh` (check the Swift-runtime count) plus an
   emulator run is.
 - **Don't overwrite a release artifact with a verification build.** Copy `.build/dist/` aside
@@ -110,5 +126,5 @@ or the current setup has been through at least one release (emulator run, TestFl
 | Skip | `brew` downgrade + `git revert 5008254` |
 | Swift Android SDK | `skip android sdk install --version <old>`, then `swift sdk remove` the new one |
 | Xcode | reinstall the old Xcode (26.5 was replaced in place), then downgrade the Android SDK to match |
-| CI | `git revert 10e190f` |
+| CI | `git revert 95d08dd 10e190f` |
 | macOS | none short of a reinstall — which is why it's on hold |
