@@ -97,8 +97,9 @@ final class SplitSummaryTests: XCTestCase {
     }
 
     func testForkHeightRegistryValues() {
-        // eCash (drynet3) has a fork height; splitting doesn't apply elsewhere.
-        XCTAssertEqual(NetworkRegistry.forkHeight(for: WalletNetwork.ecash), 957_600)
+        // Both eCash chains have a fork height (alphanet, betanet); splitting doesn't apply elsewhere.
+        XCTAssertEqual(NetworkRegistry.forkHeight(for: WalletNetwork.ecash), 963_648)
+        XCTAssertEqual(NetworkRegistry.forkHeight(for: WalletNetwork.ecashBeta), 967_680)
         XCTAssertNil(NetworkRegistry.forkHeight(for: WalletNetwork.bitcoin))
         XCTAssertNil(NetworkRegistry.forkHeight(for: WalletNetwork.signet))
         XCTAssertNil(NetworkRegistry.forkHeight(for: WalletNetwork.thunder))
@@ -111,7 +112,7 @@ final class SplitSummaryTests: XCTestCase {
     /// applied height, or a rollover silently mis-flags every coin confirmed between the two.
     func testRemoteForkHeightOverridesTheBundledOne() {
         let bundled = NetworkRegistry.forkHeight(for: WalletNetwork.ecash) ?? Int64(0)
-        XCTAssertEqual(bundled, Int64(957_600))
+        XCTAssertEqual(bundled, Int64(963_648))   // alphanet
 
         WalletManager.setRemoteForkHeightForTesting(Int64(961_632), network: WalletNetwork.ecash)
         defer { WalletManager.clearRemoteForkHeightForTesting(network: WalletNetwork.ecash) }

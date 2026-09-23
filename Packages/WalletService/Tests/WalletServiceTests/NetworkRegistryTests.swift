@@ -113,12 +113,12 @@ final class NetworkRegistryTests: XCTestCase {
     func testIsMainnet() {
         XCTAssertTrue(WalletNetwork.bitcoin.isMainnet)
         XCTAssertFalse(WalletNetwork.signet.isMainnet)
-        // eCash (drynet3) is a TEST chain despite mainnet-style `bc` addresses — must NOT be
+        // eCash (alphanet/betanet) is a TEST chain despite mainnet-style `bc` addresses — must NOT be
         // treated as mainnet (drives the non-mainnet safety chip, Golden Rule §6).
         XCTAssertFalse(WalletNetwork.ecash.isMainnet)
     }
 
-    // MARK: - eCash (drynet3)
+    // MARK: - eCash (alphanet)
 
     func testEcashParams() {
         let p = NetworkRegistry.params(for: .ecash)
@@ -126,7 +126,7 @@ final class NetworkRegistryTests: XCTestCase {
         XCTAssertEqual(p.coinType, Int32(0))
         XCTAssertEqual(p.addressHRP, "bc")
         XCTAssertEqual(p.unitLabel, "ECX")
-        XCTAssertEqual(p.displayName, "Drynet3")
+        XCTAssertEqual(p.displayName, "Alphanet")
     }
 
     func testEcashDefaultBackendIsEsploraAtRootPath() {
@@ -134,7 +134,7 @@ final class NetworkRegistryTests: XCTestCase {
         // Default backend is the public Esplora (mempool-electrs). The wallet must default to the
         // esplora kind (not electrum), and the URL must NOT carry an `/api` suffix — this instance
         // serves the REST API at the root path (verified live). A trailing `/api` would 404 BDK.
-        XCTAssertEqual(p.defaultBackend, "https://esplora.drynet3.drivechain.dev")
+        XCTAssertEqual(p.defaultBackend, "https://esplora.alpha.ecash.ninja")
         XCTAssertEqual(p.defaultBackendKind, "esplora")
         XCTAssertTrue(p.defaultBackend.hasPrefix("https://"))
         XCTAssertFalse(p.defaultBackend.hasSuffix("/api"))
@@ -142,7 +142,7 @@ final class NetworkRegistryTests: XCTestCase {
 
     func testEcashExplorerSubstitutesTxid() {
         let url = NetworkRegistry.explorerURL(for: "abc123", on: .ecash)
-        XCTAssertEqual(url, "https://explorer.drynet3.drivechain.dev/tx/abc123")
+        XCTAssertEqual(url, "https://explorer.alpha.ecash.ninja/tx/abc123")
         XCTAssertFalse(url.contains("{txid}"))
     }
 
