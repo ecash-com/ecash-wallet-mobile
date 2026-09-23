@@ -70,14 +70,16 @@ alone breaks the Android build, with no change in the repo. That is also why CI 
 **Verified (2026-09-23):**
 - `scripts/build-apk.sh`: 42 native libs incl. `libswiftCore.so`.
 - iOS: the app runs on an iOS 27 simulator.
-- Android emulator (`Medium_Phone_API_36.1`, arm64, release build): an existing alphanet wallet
-  loads, syncs, and shows its balance and transaction history; no crashes.
+- Android emulator (`Medium_Phone_API_36.1`, arm64, release build): an existing wallet loads,
+  syncs, and shows its balance and transaction history; no crashes. That wallet predates betanet
+  and is on alphanet, so betanet itself wasn't exercised.
 - `WalletService` tests: 215 host, 159 Robolectric, 0 failures.
 - CI on `xcode-27`: [run 35896133843](https://github.com/ecash-com/ecash-wallet-mobile/actions/runs/35896133843)
   green in 37 min; its APK is 79MB with 42 native libs incl. `libswiftCore.so`, matching local.
 
-**Not yet verified:** a real send on either platform since the upgrade. Do a small one on alphanet
-before the next release.
+**Not yet verified:** a betanet wallet (the current eCash network, `WalletNetwork.currentEcash`)
+and a real send on either platform since the upgrade. Create or import a betanet wallet and do a
+small send on it before the next release.
 
 ## Known issues after the upgrade
 
