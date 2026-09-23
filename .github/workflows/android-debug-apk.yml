@@ -59,6 +59,25 @@ jobs:
       - name: Install Skip + Gradle
         run: brew install skiptools/skip/skip gradle
 
+      # swiftly is REQUIRED, not a convenience. `skip android sdk install` installs the matching host
+      # toolchain through swiftly when it's present (`swiftly install 6.4.0` — correct URL). Without it,
+      # Skip builds the download URL itself and drops the patch version:
+      #     …/swift-6.4-release/xcode/swift-6.4-RELEASE/swift-6.4-RELEASE-osx.pkg   (doesn't exist)
+      # instead of …/swift-6.4.0-release/xcode/swift-6.4.0-RELEASE/swift-6.4.0-RELEASE-osx.pkg. That is
+      # what failed here on 2026-09-17 and again on 2026-09-23; locally it always worked because the
+      # dev machine has swiftly. `--skip-install`: Skip installs the exact toolchain it needs below.
+      - name: Install swiftly
+        run: |
+          brew install swiftly
+          swiftly init --assume-yes --skip-install --no-modify-profile --quiet-shell-followup
+          . "$HOME/.swiftly/env.sh"
+          echo "$SWIFTLY_BIN_DIR" >> "$GITHUB_PATH"
+          {
+            echo "SWIFTLY_HOME_DIR=$SWIFTLY_HOME_DIR"
+            echo "SWIFTLY_BIN_DIR=$SWIFTLY_BIN_DIR"
+            echo "SWIFTLY_TOOLCHAINS_DIR=$SWIFTLY_TOOLCHAINS_DIR"
+          } >> "$GITHUB_ENV"
+
       # Base Android SDK pieces (cmdline-tools, platform-tools) into ANDROID_HOME.
       - name: Install Android SDK (skip android home)
         run: skip android home install
@@ -83,9 +102,8 @@ jobs:
       # and died with:
       #     Error: Swift 6.4.0 does not exist at URL
       #     https://download.swift.org/swift-6.4-release/xcode/swift-6.4-RELEASE/swift-6.4-RELEASE-osx.pkg
-      # i.e. Skip knew about an SDK version whose macOS toolchain swift.org had not published. Nothing
-      # in the repo changed; the resolution did. Note this is NOT about the runner's Xcode — Skip
-      # installs its own toolchain pair — so pinning Xcode would not have helped.
+      # It looked like swift.org hadn't published 6.4.0 yet. It had: the URL was malformed because the
+      # runner had no swiftly — see "Install swiftly" above. Pinning is still right regardless.
       #
       # 6.4.0 is what the project builds with locally (Xcode 27 / Swift 6.4, SDK
       # swift-6.4.0-RELEASE_android) since 2026-09-23. Use the FULL version — `--version 6.4` resolves
