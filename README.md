@@ -55,10 +55,28 @@ Kotlin) so it can call `bdk-android` directly. This split is the one architectur
 
 ## Prerequisites
 
-- **macOS** with **Xcode** (Swift 6 toolchain, iOS Simulator).
-- **Android Studio** + Android SDK/NDK, with an **emulator** created (Device Manager) and running
+Known-good toolchain (2026-09-23):
+
+| Tool | Version |
+|---|---|
+| macOS | 26.7 |
+| Xcode | 27.0 (Swift 6.4) — iOS 27 simulator runtime |
+| Skip | 1.9.11 (CLI **and** the SwiftPM `skip` package — keep them in lockstep) |
+| Swift Android SDK | 6.4.0 (NDK r30) |
+| JDK | Homebrew `openjdk@25` (Gradle) |
+
+- **macOS** with **Xcode**. In Xcode 27 the simulator app is **DeviceHub**
+  (`Xcode.app/Contents/Applications/DeviceHub.app`) — there is no `Simulator.app`.
+- **Android Studio** + Android SDK, with an **emulator** created (Device Manager) and running
   before you launch the Android app.
 - **Skip CLI**: `brew install skiptools/skip/skip`, then verify the toolchain with `skip checkup`.
+- **Swift Android SDK**: `skip android sdk install --version 6.4.0` (the full version — `6.4` finds
+  nothing). **It must match Xcode's Swift version:** the Android cross-compile still reads Xcode's
+  macOS SDK, so an older Android toolchain breaks as soon as Xcode moves a major version. Keep only
+  one Android SDK installed (`swift sdk list` / `swift sdk remove`) — with several, SwiftPM refuses
+  to pick one ("matched multiple SDKs").
+- **JDK** for the Gradle / Robolectric tests: `JAVA_HOME` must point at a real JDK, e.g.
+  `export JAVA_HOME=/opt/homebrew/opt/openjdk@25`. Android Studio's bundled JDK isn't used.
 
 ## Build & run
 
@@ -119,6 +137,14 @@ WALLETSERVICE_LIVE=1 swift test --filter testLiveSignetSync   # opt-in live L2L 
 ```
 
 `swift build` only checks Apple + transpilation; **`skip export --debug` is the real Android check.**
+For a release build, `scripts/build-apk.sh` also verifies the Swift runtime is bundled (42 native
+libs incl. `libswiftCore.so`).
+
+> [!NOTE]
+> **Known issue on Xcode 27:** the root package's `swift build` / `swift test` currently fails with
+> "linked as a static library … duplication of library code" (SwiftPM 6.4 is stricter about the Skip
+> packages' static products). It is not caused by Skip, and it doesn't affect the Xcode iOS build or
+> `skip export`. `swift test --package-path Packages/WalletService` is unaffected.
 No change to `WalletService` or a view model merges without tests in the same PR.
 
 ## Security model

@@ -13,7 +13,7 @@ let package = Package(
         .library(name: "ECashWalletMobile", type: .dynamic, targets: ["ECashWalletMobile"]),
     ],
     dependencies: [
-        .package(url: "https://source.skip.tools/skip.git", from: "1.9.2"),
+        .package(url: "https://source.skip.tools/skip.git", from: "1.9.11"),
         .package(url: "https://source.skip.tools/skip-fuse-ui.git", from: "1.0.0"),
         // Pure-Swift QR generator (no platform deps) — compiles natively for both iOS and Android
         // via Fuse, so the receive QR renders identically with no `#if`. (SkipQRCode is scan-only,

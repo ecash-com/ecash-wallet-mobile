@@ -18,7 +18,7 @@ let package = Package(
         .library(name: "WalletService", type: .dynamic, targets: ["WalletService"]),
     ],
     dependencies: [
-        .package(url: "https://source.skip.tools/skip.git", from: "1.9.2"),
+        .package(url: "https://source.skip.tools/skip.git", from: "1.9.11"),
         .package(url: "https://source.skip.tools/skip-foundation.git", from: "1.0.0"),
         // Secure storage (mnemonics) — iOS Keychain / Android Keystore.
         .package(url: "https://source.skip.tools/skip-keychain.git", "0.0.0"..<"2.0.0"),
