@@ -1,6 +1,6 @@
 # Toolchain upgrade — Skip, Xcode, macOS
 
-**Planned:** 2026-09-23 against 1.2.0 (22) · **Done:** 2026-09-23 (Skip + Xcode + CI, all verified) · **macOS 27:** on hold
+**Planned:** 2026-09-23 against 1.2.0 (22) · **Done:** 2026-09-23 (Skip + Xcode + CI, all verified) · **macOS 27:** done 2026-09-23, verified
 
 This started as a plan (Skip first, then Xcode, macOS last). What actually happened differed in one
 important way: **the plan's central assumption, that Xcode and the Android build are independent, was
@@ -10,7 +10,7 @@ wrong.** This doc now records the result, the correction, and the rules that fol
 
 | | before | **now (local)** | **now (CI, `xcode-27`)** |
 |---|---|---|---|
-| macOS | 26.6.2 | **26.7** (25G229) | 27.0 (preview image) |
+| macOS | 26.6.2 | **27.0** (26A428) | 27.0 (preview image) |
 | Xcode | 26.5 (17F42) | **27.0** (27A266a) | **27.0** (27A266a), pinned |
 | Swift (Xcode) | 6.3.2 | **6.4** | 6.4 |
 | Swift Android SDK | 6.3.2 | **6.4.0** (NDK r30, bundled) | **6.4.0**, pinned |
@@ -87,25 +87,30 @@ small send on it before the next release.
   linked as a static library by … This will result in duplication of library code."* It
   reproduces with the old Skip 1.9.2 pins, so it's SwiftPM 6.4, not Skip. The Xcode iOS build and
   `skip export` are unaffected, and so is `swift test --package-path Packages/WalletService`.
-- **`JAVA_HOME` must point at a real JDK** for the Robolectric tests, e.g.
-  `export JAVA_HOME=/opt/homebrew/opt/openjdk@25`. Android Studio's bundled JDK isn't used, so
-  updating Android Studio doesn't help.
+- **`JAVA_HOME` must point at a real JDK** for `skip doctor` and the Robolectric tests:
+  `export JAVA_HOME=/opt/homebrew/opt/openjdk@25` (plus `$JAVA_HOME/bin` on `PATH`). Homebrew's
+  `openjdk@25` is keg-only and not registered with macOS, so without it nothing finds a Java
+  runtime. Android Studio's bundled JDK isn't used, so updating Android Studio doesn't help.
 - **Xcode 27 has no Simulator.app.** It is `Xcode.app/Contents/Applications/DeviceHub.app`. A
   simulator booted with `simctl` runs without a window until DeviceHub is opened.
 - **The 1.2.0 AAB in `.build/dist/` was overwritten** by the verification build, so it is now a
   new-toolchain build, not the verified 1.2.0 (22) artifact.
 
-## macOS 27 — on hold
+## macOS 27 — done
 
-Nothing blocks it; there's just no reason yet, and it is the one step with no easy undo.
+Upgraded 26.7 → **27.0** on 2026-09-23, after the Skip + Xcode upgrade above was green, with nothing
+else changed in the same sitting. Nothing broke; no repo change was needed. Re-verified on 27.0:
 
-- Xcode 27 and iOS 27 simulators run fine on macOS 26.7, as this upgrade proved.
-- GitHub has no GA `macos-27` runner; the `xcode-27` image CI now uses is a preview.
-- The Android toolchain has not been tried on macOS 27. Given the coupling above, a new OS SDK is
-  a plausible way to break it again.
+- Toolchain unchanged: Xcode 27.0 (27A266a), Swift 6.4, Skip 1.9.11, exactly one Android SDK
+  (`swift-6.4.0-RELEASE_android`); `skip doctor` green (with `JAVA_HOME` set — see above).
+- `scripts/build-apk.sh`: 79MB APK / 75MB AAB, 42 native libs incl. `libswiftCore.so`.
+- iOS: `scripts/run-ios-sim.sh` builds, installs and launches on the iOS 27 simulator
+  (iPhone 18 Pro, via DeviceHub).
+- Android: `scripts/run-android.sh` release build runs on `Medium_Phone_API_36.1`; no app crashes
+  (the emulator's own Bluetooth stack logs an unrelated native abort to the crash buffer).
+- `WalletService` tests: 215 host (1 skipped), 159 Robolectric, 0 failures.
 
-**Revisit when** GitHub ships a GA `macos-27` label, Apple requires macOS 27 for something we need,
-or the current setup has been through at least one release (emulator run, TestFlight, Play).
+The betanet send in *Not yet verified* above is still open.
 
 ## Rules for the next upgrade
 
@@ -129,4 +134,4 @@ or the current setup has been through at least one release (emulator run, TestFl
 | Swift Android SDK | `skip android sdk install --version <old>`, then `swift sdk remove` the new one |
 | Xcode | reinstall the old Xcode (26.5 was replaced in place), then downgrade the Android SDK to match |
 | CI | `git revert 95d08dd 10e190f` |
-| macOS | none short of a reinstall — which is why it's on hold |
+| macOS | none short of a reinstall |
