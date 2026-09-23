@@ -26,20 +26,33 @@ jobs:
   build:
     # macOS: Skip Fuse compiles Swift natively for Android via the Swift Android SDK, and the Skip
     # toolchain targets macOS. Android SDK + Java come preinstalled on the runner.
-    runs-on: macos-15
+    #
+    # `xcode-27` is GitHub's Xcode 27 image (macOS 27, arm64). It is a PREVIEW image — there is no GA
+    # `macos-27` label yet — but it is the only one with Xcode 27, and Xcode 27 is what the project
+    # builds with locally. It ships Xcode 27.0 build 27A266a, byte-identical to local. When a GA
+    # `macos-27` label appears, switch to it.
+    runs-on: xcode-27
     env:
       # The Swift Android SDK + host toolchain Skip installs. See the pin rationale below.
-      SWIFT_ANDROID_SDK_VERSION: '6.3.2'
+      SWIFT_ANDROID_SDK_VERSION: '6.4.0'
 
     timeout-minutes: 75
     steps:
       - uses: actions/checkout@v5
 
-      # Swift 6.1+ host compiler (the Swift Android SDK must match the host toolchain).
+      # PINNED, not `latest-stable`. The Android cross-compile reads Xcode's macOS SDK for package
+      # manifests, so Xcode's major version and SWIFT_ANDROID_SDK_VERSION must move TOGETHER: the
+      # 6.3.2 toolchain crashes on the macOS 27 SDK ("unknown argument: '-target-arch-variant'").
+      # Floating Xcode can therefore break the Android build with no repo change.
       - name: Select Xcode
         uses: maxim-lobanov/setup-xcode@v1
         with:
-          xcode-version: latest-stable
+          xcode-version: '27.0'
+
+      # Gradle's JDK, matching local (Homebrew openjdk@25). The image defaults to 21 and exports each
+      # installed JDK as JAVA_HOME_<v>_arm64.
+      - name: Use JDK 25
+        run: echo "JAVA_HOME=$JAVA_HOME_25_arm64" >> "$GITHUB_ENV"
 
       # Skip CLI drives transpile + Gradle + Swift-for-Android; the project has no gradlew, so it
       # uses a system Gradle (mirrors Android/fastlane/Fastfile, which calls the Homebrew gradle).
@@ -49,15 +62,6 @@ jobs:
       # Base Android SDK pieces (cmdline-tools, platform-tools) into ANDROID_HOME.
       - name: Install Android SDK (skip android home)
         run: skip android home install
-
-      # bdk-android needs NDK 27+ (CLAUDE.md §3). If the build later asks for a specific NDK version,
-      # change this to that exact version and re-run.
-      - name: Install Android NDK 27+
-        run: |
-          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          [ -x "$SDKMANAGER" ] || SDKMANAGER="$(command -v sdkmanager)"
-          yes | "$SDKMANAGER" "ndk;27.2.12479018"
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/27.2.12479018" >> "$GITHUB_ENV"
 
       # Cache the Swift Android SDK so re-runs skip the ~2-min download/install. Keyed to the Skip
       # pin in Package.swift AND the pinned SDK version below, so bumping either re-installs.
@@ -83,11 +87,17 @@ jobs:
       # in the repo changed; the resolution did. Note this is NOT about the runner's Xcode — Skip
       # installs its own toolchain pair — so pinning Xcode would not have helped.
       #
-      # 6.3.2 is what the project actually builds with locally (Xcode 26.5 / Swift 6.3.2, SDK
-      # swift-6.3.2-RELEASE_android). Bump it deliberately, together with a local verification, never
-      # by floating.
+      # 6.4.0 is what the project builds with locally (Xcode 27 / Swift 6.4, SDK
+      # swift-6.4.0-RELEASE_android) since 2026-09-23. Use the FULL version — `--version 6.4` resolves
+      # nothing. Bump it deliberately, together with Xcode and a local verification, never by floating.
+      #
+      # NDK: the 6.4.0 SDK downloads NDK r30 into its own bundle and links it (bdk-android needs 27+,
+      # CLAUDE.md §3). The image exports ANDROID_NDK_HOME=27.3; it's unset here so the install links
+      # the SDK's own NDK, exactly as it does locally (where ANDROID_NDK_HOME is unset).
       - name: Install Swift Android SDK (skip android sdk)
-        run: skip android sdk install --version "$SWIFT_ANDROID_SDK_VERSION"
+        run: |
+          unset ANDROID_NDK_HOME ANDROID_NDK_ROOT ANDROID_NDK
+          skip android sdk install --version "$SWIFT_ANDROID_SDK_VERSION"
 
       - name: Diagnose toolchain
         run: skip doctor || true
