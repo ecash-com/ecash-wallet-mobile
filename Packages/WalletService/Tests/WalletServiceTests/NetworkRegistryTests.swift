@@ -43,7 +43,7 @@ final class NetworkRegistryTests: XCTestCase {
     func testThunderDefaultsToTheEsploraIndex() {
         let params = NetworkRegistry.params(for: WalletNetwork.thunder)
         XCTAssertEqual(params.defaultBackendKind, "thunder-esplora")
-        XCTAssertEqual(params.defaultBackend, "https://seed.alpha.ecash.eu.com/thunder")
+        XCTAssertEqual(params.defaultBackend, "https://seed.beta.ecash.eu.com/thunder")
         // The index mounts its routes at this base, so a trailing slash would break every route.
         XCTAssertFalse(params.defaultBackend.hasSuffix("/"))
         // Whatever the endpoint, the wallet must accept its own default.

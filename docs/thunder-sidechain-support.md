@@ -486,8 +486,9 @@ window.
 
 - ✅ `ThunderEsploraClient` / `ThunderEsploraTypes` / `ThunderEsploraHistory` / `ThunderEsploraBackend`,
   behind a `ThunderBackend` protocol with the node RPC as the other implementation.
-- ✅ `NetworkRegistry.thunder` defaults to `https://seed.alpha.ecash.eu.com/thunder`, kind
-  `thunder-esplora`. `WalletBackend.Kind` and `BackendURLValidator` know both kinds.
+- ✅ `NetworkRegistry.thunder` defaults to `https://seed.beta.ecash.eu.com/thunder` (betanet; was
+  the alphanet `seed.alpha…` until 2026-09-24), kind `thunder-esplora`. `WalletBackend.Kind` and
+  `BackendURLValidator` know both kinds.
 - ✅ Gap-limit **discovery** with the result persisted (see above).
 - ✅ 48 new host tests (wire decode, the utxo-hash cross-check, history arithmetic, route composition,
   request shaping, paging, failure, discovery walk/stop/cap).

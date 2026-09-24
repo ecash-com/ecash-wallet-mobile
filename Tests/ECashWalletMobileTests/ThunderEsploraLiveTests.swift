@@ -17,7 +17,7 @@ private var thunderLiveEndpoint: String? {
 ///
 /// Opt-in — set the endpoint to run it:
 /// ```
-/// THUNDER_ESPLORA_ENDPOINT=https://seed.alpha.ecash.eu.com/thunder swift test --filter Live
+/// THUNDER_ESPLORA_ENDPOINT=https://seed.beta.ecash.eu.com/thunder swift test --filter Live
 /// ```
 /// Skipped otherwise, so the default suite stays hermetic and offline.
 ///

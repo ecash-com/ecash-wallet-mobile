@@ -86,7 +86,7 @@ final class BackendURLValidatorTests: XCTestCase {
     /// unlike Electrum — a path must be accepted, not treated as a pasted-in-the-wrong-box mistake.
     func testThunderKindsAcceptHTTPWithAMountPath() {
         XCTAssertNil(BackendURLValidator.validationMessage(
-            kind: "thunder-esplora", url: "https://seed.alpha.ecash.eu.com/thunder"))
+            kind: "thunder-esplora", url: "https://seed.beta.ecash.eu.com/thunder"))
         XCTAssertNil(BackendURLValidator.validationMessage(
             kind: "thunder", url: "http://127.0.0.1:6009"))
     }

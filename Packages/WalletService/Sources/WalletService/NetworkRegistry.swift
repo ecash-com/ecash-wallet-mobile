@@ -150,11 +150,11 @@ public enum NetworkRegistry {
                 // Thunder holds eCash value deposited from the eCash mainchain, so it's ECX-
                 // denominated and takes eCash's sub-unit too.
                 subUnitLabel: "szat",
-                defaultBackend: "https://seed.alpha.ecash.eu.com/thunder",
+                defaultBackend: "https://seed.beta.ecash.eu.com/thunder",
                 defaultBackendKind: "thunder-esplora",
                 // No human-facing Thunder explorer exists yet; the index's own /tx route serves JSON,
                 // which is still better than a link to a host that 404s. Swap this the moment one ships.
-                explorerTxTemplate: "https://seed.alpha.ecash.eu.com/thunder/tx/{txid}",
+                explorerTxTemplate: "https://seed.beta.ecash.eu.com/thunder/tx/{txid}",
                 displayName: "Thunder")
         }
     }
