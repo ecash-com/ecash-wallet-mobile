@@ -41,12 +41,24 @@ SERIALS="$("$ADB" devices | awk 'NR>1 && $2=="device"{print $1}')"
 
 for S in $SERIALS; do
   echo "[$S] installing ${VARIANT}..."
-  # Debug and release are signed with different keys; if a switch fails with a signature mismatch,
-  # uninstall and retry (preserves nothing, but these are dev installs).
-  if ! "$ADB" -s "$S" install -r -d "$APK" 2>&1 | tail -1 | grep -q Success; then
-    echo "  (signature mismatch? uninstalling + retrying)"
-    "$ADB" -s "$S" uninstall "$PKG" >/dev/null 2>&1 || true
-    "$ADB" -s "$S" install "$APK" | tail -1
+  # Never uninstall on our own: uninstalling deletes the app's data, INCLUDING the Keychain-held
+  # recovery phrases, so any wallet on the device is gone. An automatic uninstall-and-retry here once
+  # wiped a device's wallets on a failure that was never shown (2026-09-24). On failure, print the
+  # real error and skip the device. Debug and release are signed with different keys, so switching
+  # between them does need a wipe — opt in explicitly with WIPE_ON_INSTALL_FAILURE=1.
+  INSTALL_OUT="$("$ADB" -s "$S" install -r -d "$APK" 2>&1 || true)"   # `set -e`: report, don't exit
+  if ! printf '%s\n' "$INSTALL_OUT" | grep -q '^Success'; then
+    echo "  install failed:" >&2
+    printf '%s\n' "$INSTALL_OUT" | sed 's/^/    /' >&2
+    if [ "${WIPE_ON_INSTALL_FAILURE:-0}" = 1 ]; then
+      echo "  WIPE_ON_INSTALL_FAILURE=1: uninstalling (deletes this device's wallets) + retrying" >&2
+      "$ADB" -s "$S" uninstall "$PKG" >/dev/null 2>&1 || true
+      "$ADB" -s "$S" install "$APK" | tail -1
+    else
+      echo "  Skipping $S — app data left intact. To replace it anyway (DELETES its wallets):" >&2
+      echo "    WIPE_ON_INSTALL_FAILURE=1 $0 $*" >&2
+      continue
+    fi
   fi
   "$ADB" -s "$S" shell monkey -p "$PKG" -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1 || true
   # Launch is async — poll briefly before deciding (a single immediate pidof races and false-negatives).
