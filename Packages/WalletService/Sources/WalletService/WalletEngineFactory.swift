@@ -127,11 +127,16 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
         return mnemonicToReturn
     }
 
+    /// Networks whose `restore` returns DIFFERENT descriptors, standing in for a derivation that
+    /// doesn't reproduce there — lets tests drive `copyWallet`'s mismatch guard.
+    public var divergentRestoreNetworks: [WalletNetwork] = []
+
     public func restore(network: WalletNetwork, mnemonic: String, scriptType: ScriptType = .bip84) throws -> WalletKeys {
         if rejectImport { throw WalletError.invalidMnemonic }
+        let root = divergentRestoreNetworks.contains(network) ? "mock-divergent" : "mock"
         return WalletKeys(secret: mnemonic,
-                          externalDescriptor: "wpkh(mock/0/*)",
-                          internalDescriptor: "wpkh(mock/1/*)")
+                          externalDescriptor: "wpkh(\(root)/0/*)",
+                          internalDescriptor: "wpkh(\(root)/1/*)")
     }
 
     /// The stubbed seed preview address (tests can override). Distinct per script type is not modeled.

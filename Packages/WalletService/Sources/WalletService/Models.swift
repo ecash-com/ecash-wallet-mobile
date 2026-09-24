@@ -184,6 +184,27 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
         }
     }
 
+    /// Whether one secret derives the **same keys and addresses** on this network and `other` — the
+    /// test for copying a wallet across networks (`docs/copy-wallet-to-network.md`). Bitcoin and every
+    /// eCash generation share Bitcoin's parameters (coin-type `0'`, `bc` HRP, mainnet key formats), so
+    /// a copy there is the same wallet. L2L Signet is coin-type `1'` (different addresses), and Thunder
+    /// is ed25519 — a different key system — so each stands alone.
+    public func sharesKeys(with other: WalletNetwork) -> Bool {
+        guard let mine = keyFamily, let theirs = other.keyFamily else { return false }
+        return mine == theirs
+    }
+
+    /// The group of networks whose keys are interchangeable, or nil for a network that shares with
+    /// none. Exhaustive on purpose (see `supportsCoinSplit`): a new network won't compile until
+    /// someone decides whether a copied wallet there would really be the same wallet.
+    var keyFamily: Int? {
+        switch self {
+        case .bitcoin, .ecash, .ecashBeta: return 0   // coin-type 0', `bc` addresses
+        case .signet: return nil                      // coin-type 1' — only itself
+        case .thunder: return nil                     // ed25519, not BDK
+        }
+    }
+
     /// True for everything that is NOT Bitcoin mainnet. Drives the persistent network
     /// badge (Golden Rule §6) — non-mainnet wallets must be unmistakable. `.ecash`/`.ecashBeta` are
     /// **test** chains that nonetheless use mainnet-style `bc` addresses, so they stay

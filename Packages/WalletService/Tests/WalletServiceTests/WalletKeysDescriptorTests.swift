@@ -84,5 +84,48 @@ final class WalletKeysDescriptorTests: XCTestCase {
             XCTAssertFalse(d.contains("prv"), "secret leaked into stored descriptor")
         }
     }
+
+    // MARK: - Copy to another network (docs/copy-wallet-to-network.md)
+
+    /// The premise of `WalletManager.copyWallet`: on networks that `sharesKeys`, one secret restores
+    /// to byte-identical public descriptors, for every script type. If this ever broke, copyWallet's
+    /// descriptor check would refuse every copy rather than save a wrong wallet.
+    func testSharedKeyNetworksRestoreIdenticalDescriptors() throws {
+        let f = makeFactory()
+        for scriptType in [ScriptType.bip44, .bip49, .bip84, .bip86] {
+            let alpha = try f.restore(network: .ecash, mnemonic: Self.abandon, scriptType: scriptType)
+            for network in [WalletNetwork.ecashBeta, .bitcoin] {
+                XCTAssertTrue(WalletNetwork.ecash.sharesKeys(with: network))
+                let copy = try f.restore(network: network, mnemonic: Self.abandon, scriptType: scriptType)
+                XCTAssertEqual(copy.externalDescriptor, alpha.externalDescriptor, "\(scriptType) on \(network)")
+                XCTAssertEqual(copy.internalDescriptor, alpha.internalDescriptor, "\(scriptType) on \(network)")
+            }
+        }
+        let wif = "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj"
+        XCTAssertEqual(try f.restorePrivateKey(network: .ecashBeta, wif: wif).externalDescriptor,
+                       try f.restorePrivateKey(network: .ecash, wif: wif).externalDescriptor)
+    }
+
+    /// And the converse, which is why Signet is excluded: coin-type 1' gives a different wallet.
+    func testSignetRestoresDifferentDescriptors() throws {
+        let f = makeFactory()
+        XCTAssertFalse(WalletNetwork.ecash.sharesKeys(with: .signet))
+        XCTAssertNotEqual(try f.restore(network: .signet, mnemonic: Self.abandon, scriptType: .bip84).externalDescriptor,
+                          try f.restore(network: .ecash, mnemonic: Self.abandon, scriptType: .bip84).externalDescriptor)
+    }
+
+    /// End to end through the real factory: the copy passes the descriptor check and derives the same
+    /// first address (the well-known BIP84 vector) on betanet as on alphanet.
+    func testCopyWalletWithRealBDKKeepsTheSameAddresses() throws {
+        let f = makeFactory()
+        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: f)
+        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.abandon)
+
+        let beta = try manager.copyWallet(id: alpha.id, to: .ecashBeta, label: "A")
+
+        XCTAssertEqual(beta.externalDescriptor, alpha.externalDescriptor)
+        XCTAssertEqual(try f.previewAddress(forSeed: Self.abandon, scriptType: beta.scriptType, network: .ecashBeta),
+                       "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
+    }
 }
 #endif

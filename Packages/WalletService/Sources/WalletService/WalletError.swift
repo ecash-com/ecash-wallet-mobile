@@ -29,6 +29,16 @@ public enum WalletError: Error, Equatable, Sendable {
     case broadcastFailed
     case signingFailed
     case persistenceFailed
+    /// A wallet can't be copied to that network: the network derives different keys (Signet,
+    /// Thunder), or the wallet uses a derivation import can't reproduce.
+    case copyNotSupported
+    /// The wallet is already open on that network — a second copy would double-count its coins.
+    case alreadyOnNetwork
+    /// Re-deriving the wallet on the target network gave different keys. Nothing was saved. Never
+    /// says which descriptor differed (§2).
+    case copyMismatch
+    /// The wallet's secret isn't in the Keychain, so there's nothing to copy.
+    case keyUnavailable
     /// A BDK error we don't have a specific case for. The associated string is a
     /// pre-scrubbed, user-safe summary — never the raw BDK description.
     case engine(String)
@@ -52,6 +62,10 @@ public enum WalletError: Error, Equatable, Sendable {
         case .broadcastFailed: return "Couldn't broadcast the transaction. Try again."
         case .signingFailed: return "Signing failed."
         case .persistenceFailed: return "Couldn't save wallet data."
+        case .copyNotSupported: return "This wallet can't be opened on that network."
+        case .alreadyOnNetwork: return "This wallet is already open on that network."
+        case .copyMismatch: return "Couldn't open this wallet on that network. Nothing was changed."
+        case .keyUnavailable: return "This wallet's key isn't available on this device."
         case .engine(let summary): return summary
         }
     }

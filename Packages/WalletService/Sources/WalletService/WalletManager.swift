@@ -145,6 +145,66 @@ public final class WalletManager: @unchecked Sendable {
         try factory.previewAddress(forSeed: mnemonic, scriptType: scriptType, network: network)
     }
 
+    // MARK: - Copy to another network
+
+    /// The networks wallet `id` could be copied to: the offered networks (`WalletNetwork.selectable`)
+    /// that derive the same keys as its own, minus its own. Includes networks it's already open on;
+    /// the UI uses `existingCopy` to show those as "already open". Empty for a missing wallet.
+    public func copyTargets(for id: String) -> [WalletNetwork] {
+        guard let source = wallets.first(where: { $0.id == id }) else { return [] }
+        return WalletNetwork.selectable.filter { $0 != source.network && source.network.sharesKeys(with: $0) }
+    }
+
+    /// The wallet that already holds `id`'s keys on `network`, if any. Matched on the public
+    /// descriptors, which on a shared-key network are identical for the same secret and derivation.
+    /// No secret is read, so this is safe to call while rendering.
+    public func existingCopy(of id: String, on network: WalletNetwork) -> ManagedWallet? {
+        guard let source = wallets.first(where: { $0.id == id }) else { return nil }
+        return wallets.first {
+            $0.id != source.id && $0.network == network
+                && $0.externalDescriptor == source.externalDescriptor
+                && $0.internalDescriptor == source.internalDescriptor
+        }
+    }
+
+    /// Open wallet `id` on another network: re-run the import with its stored secret and derivation,
+    /// persist the result as a NEW wallet, and select it (`docs/copy-wallet-to-network.md`).
+    ///
+    /// The copy gets its **own** walletId and its **own** Keychain entry holding the same secret, so
+    /// removing either wallet purges only its own copy — sharing one entry would put a key the other
+    /// wallet still needs one removal-path bug away from deletion.
+    ///
+    /// Before anything is saved, the new public descriptors must equal the source's. That is what
+    /// "the same wallet" means, and it catches any derivation the import path can't reproduce: the
+    /// alternative is a wallet that looks right and quietly holds nothing.
+    ///
+    /// Throws `.copyNotSupported`, `.alreadyOnNetwork`, `.keyUnavailable`, or `.copyMismatch`; on any
+    /// throw nothing is persisted and the selection is unchanged.
+    public func copyWallet(id: String, to network: WalletNetwork, label: String) throws -> ManagedWallet {
+        guard let source = wallets.first(where: { $0.id == id }),
+              copyTargets(for: id).contains(network),
+              // Import can only reproduce account 0. Every wallet is account 0 today; this keeps a
+              // future account-picker wallet from being copied to the wrong account.
+              source.accountIndex == Int32(0) else {
+            throw WalletError.copyNotSupported
+        }
+        if existingCopy(of: id, on: network) != nil { throw WalletError.alreadyOnNetwork }
+        guard let secret = try keyStore.loadMnemonic(walletId: id) else { throw WalletError.keyUnavailable }
+
+        let keys: WalletKeys
+        switch source.keyType {
+        case .wif: keys = try factory.restorePrivateKey(network: network, wif: secret)
+        case .mnemonic: keys = try factory.restore(network: network, mnemonic: secret, scriptType: source.scriptType)
+        }
+        guard keys.externalDescriptor == source.externalDescriptor,
+              keys.internalDescriptor == source.internalDescriptor else {
+            throw WalletError.copyMismatch
+        }
+        return try persistNewWallet(label: label, network: network, keys: keys,
+                                    keyType: source.keyType, scriptType: source.scriptType,
+                                    accountIndex: source.accountIndex, isBackedUp: source.isBackedUp)
+    }
+
     private func persistNewWallet(label: String, network: WalletNetwork, keys: WalletKeys,
                                   keyType: WalletKeyType = .mnemonic,
                                   scriptType: ScriptType = .bip84, accountIndex: Int32 = 0,

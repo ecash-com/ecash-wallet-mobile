@@ -6,8 +6,8 @@ import SwiftUI
 import WalletService
 
 /// The wallet manager, presented as a sheet from the Home switcher pill. One row per wallet
-/// (avatar, label, network, backup state, selected check); tap to switch. Per-row "more" →
-/// rename / remove (remove warns extra-loudly when the wallet isn't backed up — Golden Rule §5
+/// (avatar, label, network, backup state, selected check); tap to switch. Per-row "⋯" menu →
+/// rename / copy to network / remove (remove warns extra-loudly when the wallet isn't backed up — Golden Rule §5
 /// purge). "New" and "Import" reuse the existing Create/Import flows via navigation.
 ///
 /// Dismissal: any change of the selected wallet (switch, create, import) closes the sheet —
@@ -22,6 +22,7 @@ struct WalletManagerSheet: View {
     /// Presentation is its OWN state, deliberately not derived from `removeTarget` — see
     /// `confirmationDialog` below for why deriving it silently broke removal on Android.
     @State var isRemovingWallet = false
+    @State var copyTarget: ManagedWallet? = nil
     @State var path: [WalletManagerRoute] = []
 
     var body: some View {
@@ -108,6 +109,12 @@ struct WalletManagerSheet: View {
         .sheet(item: $renameTarget) { wallet in
             renameSheet(wallet)
         }
+        // Copy to network: a successful copy selects the new wallet, which closes this sheet too.
+        .sheet(item: $copyTarget) { wallet in
+            if let vm = app.makeCopyWalletViewModel(walletId: wallet.id) {
+                CopyWalletView(viewModel: vm)
+            }
+        }
         // Remove: explicit confirmation, extra-loud when not backed up.
         // `isPresented` is a plain Bool, NOT a binding derived from `removeTarget`, because SkipUI
         // dismisses BEFORE it runs the button action (`Presentation.swift`):
@@ -186,25 +193,45 @@ struct WalletManagerSheet: View {
                     .foregroundStyle(Theme.Colors.accent)
             }
 
-            Button {
-                renameText = wallet.label
-                renameTarget = wallet
+            // One "⋯" menu per row for the wallet's actions — room for more than two without crowding
+            // the balance, and the standard pattern on both platforms.
+            Menu {
+                Button {
+                    renameText = wallet.label
+                    renameTarget = wallet
+                } label: {
+                    Label {
+                        Text("Rename", bundle: .module, comment: "wallet row menu: rename")
+                    } icon: {
+                        Image(icon: Icon.rename)
+                    }
+                }
+                // Only where the keys carry over (docs/copy-wallet-to-network.md) — not Signet/Thunder.
+                if app.canCopyToNetwork(wallet) {
+                    Button { copyTarget = wallet } label: {
+                        Label {
+                            Text("Copy to network…", bundle: .module, comment: "wallet row menu: copy wallet to another network")
+                        } icon: {
+                            Image(icon: Icon.copy)
+                        }
+                    }
+                }
+                Button(role: .destructive) {
+                    removeTarget = wallet
+                    isRemovingWallet = true
+                } label: {
+                    Label {
+                        Text("Remove", bundle: .module, comment: "wallet row menu: remove")
+                    } icon: {
+                        Image(icon: Icon.remove)
+                    }
+                }
             } label: {
-                Image(icon: Icon.rename)
+                Image(icon: Icon.more)
                     .resizable().scaledToFit()
-                    .frame(width: 16, height: 16)
+                    .frame(width: 18, height: 18)
                     .foregroundStyle(Theme.Colors.text2)
-            }
-            .buttonStyle(.plain)
-
-            Button {
-                removeTarget = wallet
-                isRemovingWallet = true
-            } label: {
-                Image(icon: Icon.remove)
-                    .resizable().scaledToFit()
-                    .frame(width: 16, height: 16)
-                    .foregroundStyle(Theme.Colors.text2)
+                    .frame(width: 44, height: 44)   // touch target (DESIGN.md: 44pt min)
             }
             .buttonStyle(.plain)
         }

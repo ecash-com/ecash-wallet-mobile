@@ -414,6 +414,42 @@ final class AppState {
             })
     }
 
+    /// Whether `wallet` can be copied to any other network — drives the "Copy to network…" entries.
+    /// Takes the observed wallet value (not a `manager` lookup, which isn't observable) so rows update.
+    func canCopyToNetwork(_ wallet: ManagedWallet) -> Bool {
+        WalletNetwork.selectable.contains { $0 != wallet.network && wallet.network.sharesKeys(with: $0) }
+    }
+
+    /// Vend a `CopyWalletViewModel` ("Copy to network") for `walletId`, or nil if it has nowhere to
+    /// go. The id is captured at present-time, so a switch mid-flow can't change which wallet gets
+    /// copied (`docs/copy-wallet-to-network.md`).
+    func makeCopyWalletViewModel(walletId id: String) -> CopyWalletViewModel? {
+        guard let wallet = wallets.first(where: { $0.id == id }) else { return nil }
+        let targets = manager.copyTargets(for: id).map {
+            CopyWalletViewModel.Target(network: $0, existingWalletId: manager.existingCopy(of: id, on: $0)?.id)
+        }
+        guard !targets.isEmpty else { return nil }
+        return CopyWalletViewModel(
+            walletLabel: wallet.label,
+            targets: targets,
+            copy: { network in
+                // "Wallet 1 (Betanet)": the two wallets share a name otherwise, and the network is
+                // what tells them apart.
+                let label = "\(wallet.label) (\(NetworkRegistry.params(for: network).displayName))"
+                _ = try self.manager.copyWallet(id: id, to: network, label: label)
+                self.resetPerWalletState()   // the copy is auto-selected
+                self.refresh()
+                // Sync immediately: the point of the copy is to see what this seed holds there.
+                Task { await self.sync() }
+            },
+            authorize: { reason in
+                // Reads the secret (inside WalletService), so gate it like the other key-touching
+                // flows when app-lock is on (§7); pass through if off.
+                guard self.appLock.enabled else { return true }
+                return await DeviceAuth.authenticate(reason: reason)
+            })
+    }
+
     /// Vend a `SplitViewModel` for the selected eCash wallet, or nil if none is selected / nothing to
     /// split. The wallet id + summary are captured at present-time (a switch mid-flow can't redirect
     /// which wallet is drained). The `split` seam derives its own destination — no address is passed.
