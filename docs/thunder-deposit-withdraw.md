@@ -5,6 +5,9 @@
 thunder-rust, and the BIP300 enforcer, and after probing a live Thunder node
 (`157.180.96.24:16009`).
 
+> **Deposits: superseded by `docs/sidechain-deposits.md` (2026-09-29)** — full M5 design, all inputs
+> verified reachable over HTTPS, OP_RETURN question answered. §2 and §5.4 below are kept as history.
+
 Related: `docs/thunder-sidechain-support.md` (the engine), `docs/coin-splitting.md` (the other
 place eCash-vs-Bitcoin mechanics bite).
 
@@ -202,7 +205,8 @@ keys-on-device model (Golden Rule §2) — we would not have used them regardles
 
 ## 6. Open questions
 
-1. Does the `s9_…` string go in the OP_RETURN verbatim, or is it a UI-level encoding?
+1. ~~Does the `s9_…` string go in the OP_RETURN verbatim, or is it a UI-level encoding?~~ **ANSWERED**
+   — UI encoding only; the OP_RETURN carries the bare address (`docs/sidechain-deposits.md` §2b).
 2. ~~How do we learn the current ctip without speaking enforcer gRPC?~~ **ANSWERED** —
    `GET /drivechain/sidechain/9` on the drivechain-esplora index (§2). Not yet wired into the app:
    nothing consumes it, because deposits remain out of v1 scope (CLAUDE.md §12).
