@@ -47,6 +47,9 @@ struct Icon {
     /// Signet faucet ("get test coins"). iOS uses the SF Symbol `drop.fill`; Android uses the
     /// vendored `water_drop` Material symbolset (filled, to match).
     static let faucet = Icon("water_drop", sf: "drop.fill")
+    /// BIP300 sidechains. A branching tree: one mainchain, chains hanging off it. iOS uses the SF
+    /// Symbol `point.3.connected.trianglepath.dotted`; Android the vendored `account_tree` symbolset.
+    static let sidechains = Icon("account_tree", sf: "point.3.connected.trianglepath.dotted")
 
     // General actions
     static let copy = Icon("content_copy")

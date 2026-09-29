@@ -27,6 +27,7 @@ struct WalletHomeScreen: View {
     @State var showFaucet = false
     @State var showSplit = false           // "Split coins" sheet
     @State var splitDismissed = false      // per-session: dismiss the split nudge without splitting
+    @State var showSidechains = false      // Sidechains sheet (networks with a BIP300 enforcer only)
     @State var detailTx: WalletTx? = nil
 
     var body: some View {
@@ -118,7 +119,14 @@ struct WalletHomeScreen: View {
         // Transaction detail for a tapped activity row.
         .sheet(item: $detailTx) { tx in
             if let wallet = app.selectedWallet {
-                TxDetailSheet(tx: tx, unitLabel: app.unitLabel, network: wallet.network)
+                TxDetailSheet(tx: tx, unitLabel: app.unitLabel, network: wallet.network,
+                              sidechainName: app.sidechainName(for: tx))
+            }
+        }
+        // Sidechains: read-only browse of this network's BIP300 sidechains.
+        .sheet(isPresented: $showSidechains) {
+            if let vm = app.makeSidechainsViewModel() {
+                SidechainsScreen(viewModel: vm)
             }
         }
         // Split coins: separate eCash from Bitcoin (a self-drain to a fresh address).
@@ -241,6 +249,11 @@ struct WalletHomeScreen: View {
                 splitNudge
             }
 
+            // Sidechains: only where this network has a BIP300 enforcer (betanet today).
+            if app.sidechainsAvailable {
+                sidechainsRow(networkName: params.displayName)
+            }
+
             recentActivity
         }
         .padding(Theme.Space.gutter)
@@ -270,7 +283,8 @@ struct WalletHomeScreen: View {
                         detailTx = tx
                     } label: {
                         TxRow(tx: tx, unitLabel: app.unitLabel,
-                              fiatText: app.fiatString(forSats: abs(tx.netSats)))
+                              fiatText: app.fiatString(forSats: abs(tx.netSats)),
+                              sidechainName: app.sidechainName(for: tx))
                             .padding(.vertical, Theme.Space.x2)
                     }
                     .buttonStyle(.plain)
@@ -387,6 +401,42 @@ struct WalletHomeScreen: View {
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
                     .stroke(Theme.Colors.accent.opacity(0.4), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// Entry to the Sidechains sheet. A neutral card, not a nudge: nothing here needs doing, it's a
+    /// place to go.
+    private func sidechainsRow(networkName: String) -> some View {
+        Button {
+            showSidechains = true
+        } label: {
+            HStack(spacing: Theme.Space.x3) {
+                Image(icon: Icon.sidechains)
+                    .resizable().scaledToFit()
+                    .frame(width: 20, height: 20)
+                    .foregroundStyle(Theme.Colors.accent)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Sidechains", bundle: .module, comment: "home row → sidechains screen")
+                        .textStyle(.sm)
+                        .foregroundStyle(Theme.Colors.text0)
+                    Text("Explore the sidechains on \(networkName)", bundle: .module,
+                         comment: "home sidechains row subtitle; %@ is the network name")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.text1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                Image(icon: Icon.disclosure)
+                    .resizable().scaledToFit()
+                    .frame(width: 14, height: 14)
+                    .foregroundStyle(Theme.Colors.text2)
+            }
+            .padding(Theme.Space.x4)
+            .background(Theme.Colors.bg1, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                    .stroke(Theme.Colors.border, lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

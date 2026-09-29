@@ -75,6 +75,14 @@ struct ThunderEsploraClient: Sendable {
         try await decode(path: "/address/\(escape(address))/utxo", route: "address utxo")
     }
 
+    /// `GET /address/{a}/deposits` — the BIP300 deposits that credited this address. Same row shape
+    /// as `/utxo` (with `outpoint_kind: "deposit"` and a MAINCHAIN txid), but kept after the deposit
+    /// is spent. Needed because a deposit is not a Thunder transaction, so `/txs` never lists it:
+    /// without this the balance shows the coins and the history doesn't say where they came from.
+    func addressDeposits(_ address: String) async throws -> [ThunderEsploraUTXO] {
+        try await decode(path: "/address/\(escape(address))/deposits", route: "address deposits")
+    }
+
     /// `GET /address/{a}/txs/chain[/{last_seen}]` — one page of confirmed history, newest first.
     ///
     /// A page holds 25 rows; a caller pages by passing the **last** txid it saw and stops on a short

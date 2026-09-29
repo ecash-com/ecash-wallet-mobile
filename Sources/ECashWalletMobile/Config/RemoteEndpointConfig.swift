@@ -17,10 +17,9 @@ import WalletService
 /// "keep the last-known-good / bundled endpoints" (graceful fallback).
 ///
 /// **Network identity:** `networks` is an ARRAY; each entry is mapped to one of our `WalletNetwork`
-/// cases (`RemoteNetwork.walletNetwork`): `bitcoin`/`signet` by **`id`** (both report
-/// `family: "bitcoin"`, so `family` can't tell them apart), and the eCash test net by
-/// **`family: "ecash"`** because it's served under rotating ids (`drynet2` → `drynet3` → …). Unknown
-/// entries are skipped (forward-compat). When two entries map to the same network during a rollover,
+/// cases by an explicit allow-list of **`id`s** (`RemoteNetwork.walletNetwork`). Unknown ids are
+/// skipped, never guessed at, which is what keeps a new network (the real eCash fork) from being
+/// routed onto an existing one's wallets. When two entries map to the same network during a rollover,
 /// the first one with a usable value wins — a decommissioned entry with empty backends never shadows
 /// the live one.
 struct RemoteEndpointConfig: Equatable, Sendable {
@@ -49,32 +48,39 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         /// baked into the binary goes stale at the next rollover.
         let displayName: String?
 
-        /// The `WalletNetwork` this entry maps to, or nil if unknown to this app.
-        /// - `bitcoin` / `signet` (and a future literal `ecash`) match a `WalletNetwork` rawValue by
-        ///   **`id`** — `family` can't identify these because Bitcoin mainnet and Signet BOTH report
-        ///   `family: "bitcoin"` (server change 2026-07-19).
-        /// - The eCash test net is served under **rotating ids** (`drynet2` → `drynet3` → …) that all
-        ///   share `family: "ecash"`, which uniquely identifies OUR `.ecash` network. Mapping it by
-        ///   `family` (not a hardcoded id alias) means each drynet rollover Just Works with no app
-        ///   change — the old `drynet2`-only alias silently dropped `drynet3` (2026-07-23 bug).
+        /// The `WalletNetwork` this entry maps to, or nil if this app doesn't know it.
+        ///
+        /// **An explicit allow-list of ids, and nothing else.** An entry this build doesn't
+        /// recognise is IGNORED, never guessed at. The mapping used to guess in two ways, and both
+        /// landed on `.ecash`, which is **alphanet**:
+        /// - matching the id against `WalletNetwork.rawValue`, where `.ecash`'s raw value is
+        ///   `"ecash"`, the most natural id for the real fork;
+        /// - a `family: "ecash"` fallback for unrecognised ids.
+        ///
+        /// Either one meant publishing the real eCash fork under a new id would repoint every
+        /// installed app's alphanet wallets at the real fork's backends and fork height, with no app
+        /// update involved (`docs/real-ecash-fork-transition.md` §0). A wallet's network is
+        /// persisted; only an app that knows about a network may route wallets to it.
+        ///
+        /// `family` can't identify a network anyway: Bitcoin and Signet both report `"bitcoin"`, and
+        /// alphanet and betanet both report `"ecash"` (the 2026-09-17 bug where betanet was
+        /// swallowed by alphanet).
+        ///
+        /// Adding a network: add its case to `WalletNetwork` and its id here, in the same change.
         var walletNetwork: WalletNetwork? {
-            if let id, let known = WalletNetwork(rawValue: id) { return known }
-            // TWO eCash chains are published at once as of 2026-09-17 (alphanet + betanet), so
-            // `family: "ecash"` NO LONGER IDENTIFIES ONE — matching on it alone mapped both to
-            // `.ecash`, and first-usable-wins meant betanet was silently swallowed by alphanet
-            // (its backends AND its different fork height, 967_680 vs 963_648 — a money bug for
-            // split-coins, not just a missing picker entry). Disambiguate by `id`, exactly as
-            // Bitcoin and Signet already are (both report `family: "bitcoin"`).
+            guard let id else { return nil }
             switch id {
+            case "bitcoin": return .bitcoin
+            case "signet": return .signet
             case "alphanet": return .ecash
-            case "betanet":  return .ecashBeta
-            default: break
+            case "betanet": return .ecashBeta
+            default:
+                // The dry runs before alphanet were published under rotating ids (drynet2 → 3 → 4),
+                // all of which were `.ecash`. Kept so an old payload still resolves; no new
+                // network will ever use this prefix.
+                if id.hasPrefix("drynet") { return .ecash }
+                return nil
             }
-            // Fallback for older payloads that predate the split: a lone `family: "ecash"` entry,
-            // or the historical rotating `drynet*` ids, still resolve to `.ecash`. Reached only
-            // when `id` didn't match above, so it can no longer shadow betanet.
-            if family == "ecash" || (id?.hasPrefix("drynet") ?? false) { return .ecash }
-            return nil
         }
     }
 
@@ -87,6 +93,10 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     struct RemoteServices: Equatable, Sendable {
         let faucet: RemoteFaucet?
         let coinnews: RemoteService?
+        /// The network's hosted BIP300 enforcer (`services.enforcer.url`). BitWindow's own catalog
+        /// carries this field; the published config doesn't yet, so today it's always nil and
+        /// `EnforcerEndpointRegistry`'s bundled default applies.
+        let enforcer: RemoteService?
     }
 
     struct RemoteService: Equatable, Sendable {
@@ -108,6 +118,12 @@ struct RemoteEndpointConfig: Equatable, Sendable {
 
     /// A CoinNews indexer URL resolved to a known `WalletNetwork`.
     struct ResolvedCoinNews: Equatable, Sendable {
+        let network: WalletNetwork
+        let url: String
+    }
+
+    /// A BIP300 enforcer URL resolved to a known `WalletNetwork`.
+    struct ResolvedEnforcer: Equatable, Sendable {
         let network: WalletNetwork
         let url: String
     }
@@ -215,6 +231,19 @@ struct RemoteEndpointConfig: Equatable, Sendable {
             guard let url = Self.cleaned(network.services?.coinnews?.url) else { continue }
             seen.insert(walletNetwork.rawValue)
             result.append(ResolvedCoinNews(network: walletNetwork, url: url))
+        }
+        return result.sorted { $0.network.rawValue < $1.network.rawValue }
+    }
+
+    /// BIP300 enforcer URL per **known** network that supplies a non-empty `services.enforcer.url`.
+    func resolvedEnforcers() -> [ResolvedEnforcer] {
+        var result: [ResolvedEnforcer] = []
+        var seen: Set<String> = []
+        for network in networks {
+            guard let walletNetwork = network.walletNetwork, !seen.contains(walletNetwork.rawValue) else { continue }
+            guard let url = Self.cleaned(network.services?.enforcer?.url) else { continue }
+            seen.insert(walletNetwork.rawValue)
+            result.append(ResolvedEnforcer(network: walletNetwork, url: url))
         }
         return result.sorted { $0.network.rawValue < $1.network.rawValue }
     }
@@ -343,13 +372,14 @@ extension RemoteEndpointConfig.RemoteBackend: Decodable {
 
 extension RemoteEndpointConfig.RemoteServices: Decodable {
     enum CodingKeys: String, CodingKey {
-        case faucet, coinnews
+        case faucet, coinnews, enforcer
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.faucet = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteFaucet.self, forKey: .faucet)
         self.coinnews = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteService.self, forKey: .coinnews)
+        self.enforcer = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteService.self, forKey: .enforcer)
     }
 }
 

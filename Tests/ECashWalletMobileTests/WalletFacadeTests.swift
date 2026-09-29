@@ -37,6 +37,11 @@ import WalletService
             calls.append("split:\(walletId)")
             return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
         }
+        func depositToSidechain(walletId: String, slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
+                            treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) async throws -> WalletTx {
+            calls.append("deposit:\(walletId)")
+            return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
+        }
         func balanceAsync(walletId: String) async throws -> Amount {
             calls.append("balanceAsync:\(walletId)")
             return Amount(sats: 0)
@@ -101,6 +106,9 @@ import WalletService
         _ = try await facade.send(walletId: "thunder-id", to: "x", amount: Amount(sats: 1), feeRate: FeeRate(satPerVByte: 1))
         _ = try await facade.sweep(walletId: "thunder-id", to: "x", feeRate: FeeRate(satPerVByte: 1))
         _ = try await facade.splitToSelf(walletId: "thunder-id", feeRate: FeeRate(satPerVByte: 1))
+        _ = try await facade.depositToSidechain(walletId: "thunder-id", slot: 9, address: "x",
+                                                amount: Amount(sats: 1), feeRate: FeeRate(satPerVByte: 1),
+                                                treasuryTxid: nil, treasuryVout: 0, treasuryValueSats: 0)
         _ = try facade.splitSummary(walletId: "thunder-id")
         // The off-main read variants and the rescan recovery path route too — a Thunder wallet must
         // never reach the BDK ops, and an op added to the protocol without a route here would send
@@ -109,7 +117,7 @@ import WalletService
         _ = try await facade.balanceAsync(walletId: "thunder-id")
         _ = try await facade.pendingBalanceAsync(walletId: "thunder-id")
         _ = try await facade.transactionsAsync(walletId: "thunder-id")
-        #expect(thunder.calls.count == 14)    // every op routed to Thunder
+        #expect(thunder.calls.count == 15)    // every op routed to Thunder
         #expect(primary.calls.isEmpty)
     }
 

@@ -93,4 +93,39 @@ final class WalletTxTests: XCTestCase {
     func testSelfTransferFlagIsIndependentOfReceivedSats() {
         XCTAssertTrue(tx(netSats: -200, feeSats: 200).isSelfTransfer)   // receivedSats defaults nil
     }
+
+    // MARK: - Before the fork
+
+    /// Heights strictly below the fork are inherited history; the fork block is the first
+    /// chain-specific one (the same boundary `SplitSummary.classify` uses).
+    func testBeforeForkBoundary() {
+        XCTAssertTrue(WalletTx.isBeforeFork(blockHeight: Int64(967_679), forkHeight: Int64(967_680)))
+        XCTAssertFalse(WalletTx.isBeforeFork(blockHeight: Int64(967_680), forkHeight: Int64(967_680)))
+        XCTAssertFalse(WalletTx.isBeforeFork(blockHeight: Int64(970_000), forkHeight: Int64(967_680)))
+    }
+
+    /// Unconfirmed txs, and networks that never forked (no fork height), are never "before the fork".
+    func testBeforeForkNeedsBothHeights() {
+        XCTAssertFalse(WalletTx.isBeforeFork(blockHeight: nil, forkHeight: Int64(967_680)))
+        XCTAssertFalse(WalletTx.isBeforeFork(blockHeight: Int64(100), forkHeight: nil))
+    }
+
+    func testBeforeForkDefaultsToFalse() {
+        XCTAssertFalse(tx(netSats: 5, feeSats: nil).isBeforeFork)
+    }
+
+    /// Re-dating keeps every other field, including the ones added after the call sites were written.
+    func testWithTimestampKeepsEveryOtherField() {
+        let original = WalletTx(txid: "t", netSats: Int64(500), feeSats: nil, confirmations: Int32(3),
+                                timestampEpochSeconds: nil, isRBF: false, blockHeight: Int64(839), vsize: nil,
+                                coinNewsKind: nil, receivedSats: Int64(500),
+                                sidechainDepositSlot: Int32(9), sidechainDepositAddress: "addr", isBeforeFork: true)
+        let dated = original.withTimestamp(Int64(1_790_000_000))
+        XCTAssertEqual(dated.timestampEpochSeconds, Int64(1_790_000_000))
+        XCTAssertEqual(dated.sidechainDepositSlot, Int32(9))
+        XCTAssertEqual(dated.sidechainDepositAddress, "addr")
+        XCTAssertTrue(dated.isBeforeFork)
+        XCTAssertEqual(dated.blockHeight, Int64(839))
+        XCTAssertEqual(dated.receivedSats, Int64(500))
+    }
 }

@@ -86,6 +86,9 @@ struct ThunderEsploraBackend: ThunderBackend {
         let txPages = try await concurrentMap(used) { address in
             try await allTransactions(of: address)
         }
+        let depositPages = try await concurrentMap(used) { address in
+            (address, try await client.addressDeposits(address))
+        }
 
         var utxos: [ThunderPointedOutput] = []
         for (address, rows) in utxoPages {
@@ -93,6 +96,7 @@ struct ThunderEsploraBackend: ThunderBackend {
             utxos.append(contentsOf: rows.compactMap { $0.pointedOutput(address: parsed) })
         }
         let transactions = ThunderEsploraHistory.build(txs: txPages.flatMap { $0 },
+                                                       deposits: depositPages,
                                                        ours: Set(addresses),
                                                        tipHeight: tipHeight)
         return ThunderScan(utxos: utxos, transactions: transactions)

@@ -28,6 +28,8 @@ import WalletService
         var usedAddresses: Set<String> = []
         /// address → its UTXO rows, as JSON array text.
         var utxosByAddress: [String: String] = [:]
+        /// address → its deposit rows (`/address/{a}/deposits`), as JSON array text.
+        var depositsByAddress: [String: String] = [:]
         /// address → pages of history, as JSON array text. Served in order, then `[]`.
         var txPagesByAddress: [String: [String]] = [:]
         /// A path suffix that should fail with a 500.
@@ -57,6 +59,9 @@ import WalletService
             }
             if path.hasSuffix("/utxo") {
                 return (Data((utxosByAddress[address] ?? "[]").utf8), 200)
+            }
+            if path.hasSuffix("/deposits") {
+                return (Data((depositsByAddress[address] ?? "[]").utf8), 200)
             }
             if path.contains("/txs/chain") {
                 let pages = txPagesByAddress[address] ?? []
@@ -144,7 +149,7 @@ import WalletService
         _ = try await index.service().sync(walletId: "w1")
 
         // The window is revealed(0) + gap limit + 1 = 21 addresses, each probed once.
-        #expect(index.paths(containing: "/address/").filter { !$0.contains("/utxo") && !$0.contains("/txs") }.count == 21)
+        #expect(index.paths(containing: "/address/").filter { !$0.contains("/utxo") && !$0.contains("/txs") && !$0.contains("/deposits") }.count == 21)
         // …but only the one used address was fetched in full.
         #expect(index.paths(containing: "/utxo").count == 1)
         #expect(index.paths(containing: "/txs/chain").count == 1)
@@ -204,6 +209,60 @@ import WalletService
         #expect(history[0].confirmations == 11)
         #expect(history[0].timestampEpochSeconds == 1_750_000_000)
         #expect(history[0].netSats == 42_000)
+    }
+
+    /// A wallet funded only by a BIP300 deposit: the balance comes from `/utxo`, but `/txs` is EMPTY
+    /// (a deposit isn't a Thunder transaction). The history row has to come from `/deposits`. This is
+    /// the real betanet shape (deposit f83c5c7a…, credited at Thunder height 839, no block time).
+    @Test func aDepositShowsUpInHistory() async throws {
+        let deposit = """
+        [{"txid":"f83c5c7a975798aefa35a98299b31bebcf4dda5edf885bd6f893244a1b2688c5","vout":0,"value":10000000,
+          "status":{"confirmed":true,"block_height":839,
+                    "block_hash":"d00eaf363652d161f014f6fef2e3b56861455472cd39e94050952621a9d82a51","block_time":null},
+          "outpoint_kind":"deposit","height_exact":true,"content_type":"value","content":{"Value":10000000}}]
+        """
+        let index = Index()
+        index.tipHeight = 859
+        index.usedAddresses = [Self.address0]
+        index.utxosByAddress[Self.address0] = deposit
+        index.depositsByAddress[Self.address0] = deposit
+
+        let service = index.service()
+        let balance = try await service.sync(walletId: "w1")
+        #expect(balance.sats == 10_000_000)
+
+        let history = try service.transactions(walletId: "w1")
+        #expect(history.count == 1)
+        let row = try #require(history.first)
+        #expect(row.txid == "f83c5c7a975798aefa35a98299b31bebcf4dda5edf885bd6f893244a1b2688c5")   // the MAINCHAIN tx
+        #expect(row.netSats == 10_000_000)
+        #expect(row.isReceived)
+        #expect(row.isSidechainDeposit)
+        #expect(row.sidechainDepositSlot == 9)
+        #expect(row.sidechainDepositAddress == Self.address0)
+        #expect(row.blockHeight == 839)
+        #expect(row.confirmations == 21)
+        // The index gives deposits no block time, so the service dates the row by when this device
+        // first saw it, like any undated Thunder row. The deposit fields must survive that re-dating.
+        #expect(row.timestampEpochSeconds != nil)
+        #expect(row.feeSats == nil)                 // paid on the mainchain, not by this wallet
+        #expect(index.paths(containing: "/deposits").count == 1)   // only the used address is asked
+    }
+
+    /// Deposits are keyed by outpoint, so the same deposit reported twice is one row, and anything
+    /// that isn't a deposit on that route is ignored.
+    @Test func depositRowsAreDeduplicatedAndFiltered() {
+        let status = ThunderEsploraStatus(confirmed: true, blockHeight: 10, blockHash: nil, blockTime: nil)
+        func row(_ txid: String, kind: String) throws -> ThunderEsploraUTXO {
+            try JSONDecoder().decode(ThunderEsploraUTXO.self, from: Data("""
+            {"txid":"\(txid)","vout":0,"value":500,"status":{"confirmed":true,"block_height":10},
+             "outpoint_kind":"\(kind)"}
+            """.utf8))
+        }
+        _ = status
+        let rows = (try? [row("aa", kind: "deposit"), row("aa", kind: "deposit"), row("bb", kind: "regular")]) ?? []
+        let history = ThunderEsploraHistory.build(txs: [], deposits: [("addr", rows)], ours: ["addr"], tipHeight: 10)
+        #expect(history.map(\.txid) == ["aa"])
     }
 
     /// A wallet's history is paged 25 at a time. Paging must follow the cursor and stop on a short
@@ -356,7 +415,7 @@ import WalletService
         #expect(balance.sats == 500)
         #expect(store.revealedIndex(walletId: "w1") == 0)
         // Only the initial window was probed: nothing in its trailing stretch was used.
-        let probes = index.paths(containing: "/address/").filter { !$0.contains("/utxo") && !$0.contains("/txs") }
+        let probes = index.paths(containing: "/address/").filter { !$0.contains("/utxo") && !$0.contains("/txs") && !$0.contains("/deposits") }
         #expect(probes.count == 21)
     }
 
@@ -372,7 +431,7 @@ import WalletService
         // Initial window + at most maxDiscoveryRounds batches of gapLimit.
         let ceiling = 21 + ThunderService.maxDiscoveryRounds * Int(ThunderService.gapLimit)
         #expect(store.revealedIndex(walletId: "w1") < UInt32(ceiling))
-        let probes = index.paths(containing: "/address/").filter { !$0.contains("/utxo") && !$0.contains("/txs") }
+        let probes = index.paths(containing: "/address/").filter { !$0.contains("/utxo") && !$0.contains("/txs") && !$0.contains("/deposits") }
         #expect(probes.count <= ceiling)
     }
 

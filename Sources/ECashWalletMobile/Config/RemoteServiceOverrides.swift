@@ -24,6 +24,7 @@ enum RemoteServiceOverrides {
     private static func faucetCooldownKey(_ n: WalletNetwork) -> String { "remote.svc.faucet.\(n.rawValue).cooldown" }
     private static func explorerKey(_ n: WalletNetwork) -> String { "remote.svc.explorer.\(n.rawValue).template" }
     private static func esploraKey(_ n: WalletNetwork) -> String { "remote.svc.esplora.\(n.rawValue).url" }
+    private static func enforcerKey(_ n: WalletNetwork) -> String { "remote.svc.enforcer.\(n.rawValue).url" }
 
     private static func trimmedOrNil(_ s: String?) -> String? {
         guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
@@ -90,6 +91,18 @@ enum RemoteServiceOverrides {
         UserDefaults.standard.set(cleaned, forKey: esploraKey(network))
     }
 
+    /// Remotely-configured BIP300 enforcer URL for a network, or nil if none stored
+    /// (`EnforcerEndpointRegistry`).
+    static func enforcerURL(for network: WalletNetwork) -> URL? {
+        guard let s = trimmedOrNil(defaults.string(forKey: enforcerKey(network))) else { return nil }
+        return URL(string: s)
+    }
+
+    static func setEnforcerURL(_ url: String, for network: WalletNetwork) {
+        guard let clean = trimmedOrNil(url) else { return }
+        defaults.set(clean, forKey: enforcerKey(network))
+    }
+
     static func setExplorerTemplate(_ template: String, for network: WalletNetwork) {
         guard let clean = trimmedOrNil(template), clean.contains("{txid}") else { return }
         defaults.set(clean, forKey: explorerKey(network))
@@ -104,6 +117,7 @@ enum RemoteServiceOverrides {
             defaults.removeObject(forKey: faucetAmountKey(n))
             defaults.removeObject(forKey: faucetCooldownKey(n))
             defaults.removeObject(forKey: explorerKey(n))
+            defaults.removeObject(forKey: enforcerKey(n))
         }
     }
 }

@@ -195,10 +195,7 @@ final class ThunderService: WalletOps {
         let firstSeen = firstSeenStore.firstSeen(walletId: walletId)
         let stamped = transactions.map { tx -> WalletTx in
             guard tx.timestampEpochSeconds == nil, let seen = firstSeen[tx.txid] else { return tx }
-            return WalletTx(txid: tx.txid, netSats: tx.netSats, feeSats: tx.feeSats,
-                            confirmations: tx.confirmations, timestampEpochSeconds: seen,
-                            isRBF: tx.isRBF, blockHeight: tx.blockHeight, vsize: tx.vsize,
-                            coinNewsKind: tx.coinNewsKind, receivedSats: tx.receivedSats)
+            return tx.withTimestamp(seen)
         }
         return stamped.sorted { ($0.timestampEpochSeconds ?? 0) > ($1.timestampEpochSeconds ?? 0) }
     }
@@ -243,6 +240,12 @@ final class ThunderService: WalletOps {
     /// Splitting coins guards against the eCash fork's replay exposure — a concern that belongs to the
     /// Bitcoin/eCash chains, not to Thunder, which is its own chain with its own signature scheme.
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
+        throw ThunderError.unsupportedOperation
+    }
+
+    /// Thunder is itself a sidechain: deposits are made FROM a mainchain wallet INTO it, never from it.
+    func depositToSidechain(walletId: String, slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
+                            treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) async throws -> WalletTx {
         throw ThunderError.unsupportedOperation
     }
 

@@ -18,6 +18,8 @@ struct TxRow: View {
     let tx: WalletTx
     let unitLabel: String
     var fiatText: String? = nil
+    /// For a sidechain deposit: the sidechain's name, if known (`AppState.sidechainName(for:)`).
+    var sidechainName: String? = nil
 
     var body: some View {
         HStack(spacing: Theme.Space.x3) {
@@ -30,6 +32,14 @@ struct TxRow: View {
                         Text("Pending", bundle: .module, comment: "tx row: unconfirmed tag")
                             .font(.jbMono(11, .medium))
                             .foregroundStyle(Theme.Colors.warning)
+                    } else if tx.isBeforeFork {
+                        // Inherited history: confirmed before eCash forked from Bitcoin, so it's
+                        // on both chains. Real and part of the balance, just labelled.
+                        Text("Before the fork", bundle: .module,
+                             comment: "tx row tag: confirmed before eCash forked from Bitcoin (on both chains)")
+                            .font(.jbMono(11, .medium))
+                            .foregroundStyle(Theme.Colors.text2)
+                            .singleLine()
                     }
                 }
                 Text(metaText, bundle: .module)
@@ -66,7 +76,13 @@ struct TxRow: View {
     /// Title line: CoinNews posts read "CoinNews story / topic / …" (a 0-value OP_RETURN is not a
     /// real "Sent"); everything else is the usual Received/Sent.
     @ViewBuilder private var titleLabel: some View {
-        if let kind = tx.coinNewsKind {
+        if let slot = tx.sidechainDepositSlot {
+            // The amount column already shows the deposit (net minus fee), so the title just names
+            // where it went.
+            SidechainDepositTitle(name: sidechainName, slot: slot, received: tx.isReceived)
+                .font(.grotesk(16, .semibold))
+                .foregroundStyle(Theme.Colors.text0)
+        } else if let kind = tx.coinNewsKind {
             Text(verbatim: "CoinNews \(Self.displayKind(kind))")
                 .font(.grotesk(16, .semibold))
                 .foregroundStyle(Theme.Colors.text0)
@@ -109,18 +125,19 @@ struct TxRow: View {
     }
 
     private var chipIcon: Icon {
+        if tx.isSidechainDeposit { return Icon.sidechains }
         if tx.isCoinNews { return Icon.news }
         return tx.isReceived ? Icon.receive : Icon.send
     }
 
     private var chipTint: Color {
-        if tx.isCoinNews { return Theme.Colors.accentTint }
+        if tx.isSidechainDeposit || tx.isCoinNews { return Theme.Colors.accentTint }
         if isPending { return Theme.Colors.warningTint }
         return tx.isReceived ? Theme.Colors.positiveTint : Theme.Colors.bg2
     }
 
     private var chipGlyph: Color {
-        if tx.isCoinNews { return Theme.Colors.accent }
+        if tx.isSidechainDeposit || tx.isCoinNews { return Theme.Colors.accent }
         if isPending { return Theme.Colors.warning }
         return tx.isReceived ? Theme.Colors.positive : Theme.Colors.text1
     }
@@ -144,6 +161,9 @@ struct TxRow: View {
 
     private var dateText: String {
         guard let epoch = tx.timestampEpochSeconds else {
+            // Confirmed but undated (the Thunder index gives deposits no block time): say where it
+            // is rather than claim it just happened.
+            if tx.confirmations > 0, let height = tx.blockHeight { return "Block \(height)" }
             return "Just now"
         }
         let date = Date(timeIntervalSince1970: TimeInterval(epoch))

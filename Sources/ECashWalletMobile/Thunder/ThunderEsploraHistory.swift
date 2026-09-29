@@ -31,12 +31,23 @@ enum ThunderEsploraHistory {
     ///     to a third of our addresses appears three times). Deduplicated here by txid.
     ///   - ours: the wallet's address window, base58.
     ///   - tipHeight: the indexed tip, for confirmation depth.
-    static func build(txs: [ThunderEsploraTx], ours: Set<String>, tipHeight: Int64) -> [WalletTx] {
+    ///   - deposits: per address, the BIP300 deposits that credited it (`/address/{a}/deposits`).
+    ///     A deposit isn't a Thunder transaction, so it never appears in `txs`; each becomes its own
+    ///     received row, keyed by its MAINCHAIN txid.
+    static func build(txs: [ThunderEsploraTx], deposits: [(String, [ThunderEsploraUTXO])] = [],
+                      ours: Set<String>, tipHeight: Int64) -> [WalletTx] {
         var seen = Set<String>()
         var out: [WalletTx] = []
         for tx in txs where !seen.contains(tx.txid) {
             seen.insert(tx.txid)
             out.append(row(tx: tx, ours: ours, tipHeight: tipHeight))
+        }
+        var seenDeposits = Set<String>()
+        for (address, rows) in deposits {
+            for deposit in rows where deposit.outpointKind == "deposit" {
+                guard seenDeposits.insert("\(deposit.txid):\(deposit.vout)").inserted else { continue }
+                out.append(depositRow(deposit, address: address, tipHeight: tipHeight))
+            }
         }
         // Newest first: by height, then by time for two in the same block. A row the index somehow
         // left undated sorts oldest rather than jumping to the top.
@@ -45,6 +56,24 @@ enum ThunderEsploraHistory {
             if lh != rh { return lh > rh }
             return (lhs.timestampEpochSeconds ?? 0) > (rhs.timestampEpochSeconds ?? 0)
         }
+    }
+
+    /// A deposit, seen from the Thunder side: coins arriving from the mainchain. `txid` is the
+    /// mainchain deposit transaction (the detail sheet links it to the mainchain explorer). The
+    /// sidechain fields mark it as a deposit, so it gets the sidechain icon and label.
+    private static func depositRow(_ deposit: ThunderEsploraUTXO, address: String, tipHeight: Int64) -> WalletTx {
+        WalletTx(txid: deposit.txid,
+                 netSats: deposit.value,
+                 feeSats: nil,                         // paid on the mainchain, by the depositor
+                 confirmations: deposit.status.confirmations(tipHeight: tipHeight),
+                 timestampEpochSeconds: deposit.status.blockTime,
+                 isRBF: false,
+                 blockHeight: deposit.status.blockHeight,
+                 vsize: nil,
+                 coinNewsKind: nil,
+                 receivedSats: deposit.value,
+                 sidechainDepositSlot: Int32(ThunderAddress.sidechainNumber),
+                 sidechainDepositAddress: address)
     }
 
     private static func row(tx: ThunderEsploraTx, ours: Set<String>, tipHeight: Int64) -> WalletTx {

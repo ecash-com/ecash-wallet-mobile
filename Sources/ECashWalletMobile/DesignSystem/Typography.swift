@@ -43,7 +43,8 @@ extension Font {
 extension Theme {
     /// Named text styles. Headings are Space Grotesk; everything else is JetBrains Mono.
     /// Apply with `.textStyle(.h1)` / `.textStyle(.button)` so font, tracking, and case all
-    /// come from here — no ad-hoc fonts at call sites. For numbers add `.monospacedDigit()`.
+    /// come from here — no ad-hoc fonts at call sites. Numbers need nothing extra: JetBrains Mono is
+    /// fixed-width already (and `.monospacedDigit()` doesn't compile on Fuse-Android).
     enum TextStyle {
         case display   // hero balance — Space Grotesk
         case h1        // screen titles — Space Grotesk

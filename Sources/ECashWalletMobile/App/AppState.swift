@@ -33,7 +33,11 @@ final class AppState {
     /// Sync lifecycle for the selected wallet, so the UI can show a spinner / error.
     private(set) var syncState: SyncState = .idle
     /// The selected wallet's transactions, newest first (pending at the top). Cached, then refreshed.
-    private(set) var transactions: [WalletTx] = []
+    private(set) var transactions: [WalletTx] = [] {
+        // Every path that loads transactions (sync, rescan, cached load, a just-sent tx) lands here,
+        // so this is the one place to notice a deposit to a sidechain whose name we don't know yet.
+        didSet { resolveSidechainNamesIfNeeded() }
+    }
     /// The selected wallet's coin-split status (eCash only; nil elsewhere). Recomputed each sync.
     /// Drives the Home "split your coins" nudge (`needsSplitCount > 0`).
     private(set) var splitSummary: SplitSummary?
@@ -89,6 +93,14 @@ final class AppState {
     private(set) var coinNews: CoinNewsViewModel
     private var coinNewsByNetwork: [WalletNetwork: CoinNewsViewModel] = [:]
     private var coinNewsNetwork: WalletNetwork?
+    /// One Sidechains view model per network, kept so reopening the screen shows the last list at
+    /// once while it refreshes (`makeSidechainsViewModel`).
+    @ObservationIgnored private var sidechainsByNetwork: [WalletNetwork: SidechainsViewModel] = [:]
+    /// Sidechain names (slot → title) per network, for labelling deposits in Activity. Observed, so
+    /// a row reading "slot 9" updates to "Thunder" when the lookup lands. Seeded from
+    /// `SidechainNameCache`, refreshed from the enforcer.
+    private(set) var sidechainNames: [WalletNetwork: [Int: String]] = [:]
+    @ObservationIgnored private var sidechainNameLookups: Set<WalletNetwork> = []
 
     /// The selected wallet's CoinNews feed (cached per network). `nil` only with no wallet.
     private func feed(for network: WalletNetwork) -> CoinNewsViewModel {
@@ -231,6 +243,9 @@ final class AppState {
             RemoteServiceOverrides.setFaucet(url: f.url, amount: f.amount,
                                              cooldownSeconds: f.cooldownSeconds, for: f.network)
         }
+        for en in config.resolvedEnforcers() {
+            RemoteServiceOverrides.setEnforcerURL(en.url, for: en.network)
+        }
         for e in config.resolvedExplorers() {
             RemoteServiceOverrides.setExplorerTemplate(e.txTemplate, for: e.network)
         }
@@ -295,6 +310,13 @@ final class AppState {
     var faucetAvailable: Bool {
         guard let network = selectedWallet?.network else { return false }
         return FaucetRegistry.isAvailable(on: network)
+    }
+
+    /// Whether to offer the Sidechains screen for the selected wallet's network: only where a BIP300
+    /// enforcer is known (`EnforcerEndpointRegistry`), which is betanet today. Drives the Home row.
+    var sidechainsAvailable: Bool {
+        guard let network = selectedWallet?.network else { return false }
+        return EnforcerEndpointRegistry.isAvailable(on: network)
     }
 
     /// Display unit label (sBTC / tBTC / BTC) for the selected wallet's network.
@@ -792,6 +814,114 @@ final class AppState {
                 guard self.appLock.enabled else { return true }
                 return await DeviceAuth.authenticate(reason: reason)
             })
+    }
+
+    /// Vend the Sidechains view model for the selected wallet's network, or nil where there's no
+    /// enforcer. Cached per network; a changed enforcer URL (remote config) builds a fresh one.
+    func makeSidechainsViewModel() -> SidechainsViewModel? {
+        guard let network = selectedWallet?.network,
+              let endpoint = EnforcerEndpointRegistry.endpoint(for: network) else { return nil }
+        if let cached = sidechainsByNetwork[network], sidechainsEndpoints[network] == endpoint {
+            return cached
+        }
+        let params = NetworkRegistry.params(for: network)
+        let vm = SidechainsViewModel(network: network,
+                                     networkDisplayName: params.displayName,
+                                     unitLabel: params.unitLabel,
+                                     enforcer: EnforcerClient(endpoint: endpoint),
+                                     onLoaded: { [weak self] list in self?.recordSidechainNames(list, on: network) })
+        sidechainsByNetwork[network] = vm
+        sidechainsEndpoints[network] = endpoint
+        return vm
+    }
+    @ObservationIgnored private var sidechainsEndpoints: [WalletNetwork: URL] = [:]
+
+    /// Vend a deposit flow into `sidechain` from the selected wallet, or nil where deposits aren't
+    /// possible (no enforcer for this network). The wallet id and network are captured now, so
+    /// switching wallets mid-flow can't redirect which wallet pays (same rule as Send and Split).
+    func makeSidechainDepositViewModel(sidechain: Sidechain) -> SidechainDepositViewModel? {
+        guard let id = selectedWalletId, let wallet = selectedWallet,
+              let endpoint = EnforcerEndpointRegistry.endpoint(for: wallet.network) else { return nil }
+        let network = wallet.network
+        let params = NetworkRegistry.params(for: network)
+        let ops = walletOps
+        // The user's wallets ON THIS SIDECHAIN (betanet Thunder for betanet slot 9, nothing
+        // else today), exactly like Send's same-network list.
+        let receiving = SidechainWalletNetwork.walletNetwork(forSlot: sidechain.slot, onMainchain: network)
+        let destinations = manager.wallets
+            .filter { receiving != nil && $0.network == receiving }
+            .map { SendViewModel.Destination(id: $0.id, label: $0.label, balance: balanceSummary(walletId: $0.id)) }
+        return SidechainDepositViewModel(
+            sidechain: sidechain,
+            network: network,
+            networkDisplayName: params.displayName,
+            unitLabel: params.unitLabel,
+            spendable: balance,
+            withdrawalBlocks: sidechainsByNetwork[network]?.minimumWithdrawalBlocks,
+            enforcer: EnforcerClient(endpoint: endpoint),
+            deposit: { slot, address, amount, feeRate, treasury in
+                try await ops.depositToSidechain(walletId: id, slot: slot, address: address, amount: amount,
+                                                 feeRate: feeRate, treasuryTxid: treasury?.txid,
+                                                 treasuryVout: Int32(treasury?.vout ?? 0),
+                                                 treasuryValueSats: treasury?.valueSats ?? 0)
+            },
+            authorize: { reason in
+                // Device auth before any deposit when app-lock is on (§7), exactly like Send.
+                guard self.appLock.enabled else { return true }
+                return await DeviceAuth.authenticate(reason: reason)
+            },
+            onDone: { tx in
+                self.insertPending(tx)
+                self.recordSidechainNames([sidechain], on: network)
+                Task { await self.sync() }
+            },
+            destinations: destinations,
+            addressForDestination: { walletId in
+                // `unused: true`: the wallet's current address. Picking must not burn index space.
+                try await ops.receiveAddress(walletId: walletId, unused: true).address
+            })
+    }
+
+    /// The name of the sidechain a deposit went to, on the selected wallet's network, or nil if
+    /// it isn't a deposit or the name isn't known (yet). Callers fall back to "slot N".
+    func sidechainName(for tx: WalletTx) -> String? {
+        guard let slot = tx.sidechainDepositSlot, let network = selectedWallet?.network else { return nil }
+        return sidechainNames[network]?[Int(slot)]
+    }
+
+    /// If Activity holds a deposit to a slot we can't name, fetch the list once. Cheap (one
+    /// request) and rare (only when a new sidechain shows up in history), and it means the user
+    /// never has to open the Sidechains screen first for their Activity to read properly.
+    private func resolveSidechainNamesIfNeeded() {
+        guard let network = selectedWallet?.network else { return }
+        var slots = Set<Int>()
+        for tx in transactions {
+            if let slot = tx.sidechainDepositSlot { slots.insert(Int(slot)) }
+        }
+        guard !slots.isEmpty else { return }
+        if sidechainNames[network] == nil {
+            let cached = SidechainNameCache.load(for: network)
+            if !cached.isEmpty { sidechainNames[network] = cached }
+        }
+        let known = sidechainNames[network] ?? [:]
+        guard slots.contains(where: { known[$0] == nil }),
+              !sidechainNameLookups.contains(network),
+              let endpoint = EnforcerEndpointRegistry.endpoint(for: network) else { return }
+        sidechainNameLookups.insert(network)
+        Task {
+            defer { self.sidechainNameLookups.remove(network) }
+            if let list = try? await EnforcerClient(endpoint: endpoint).sidechains() {
+                self.recordSidechainNames(list, on: network)
+            }
+        }
+    }
+
+    private func recordSidechainNames(_ list: [Sidechain], on network: WalletNetwork) {
+        var names = sidechainNames[network] ?? SidechainNameCache.load(for: network)
+        for sidechain in list { names[sidechain.slot] = sidechain.title }
+        guard names != sidechainNames[network] else { return }
+        sidechainNames[network] = names
+        SidechainNameCache.save(names, for: network)
     }
 
     /// Vend a `FaucetViewModel` for the selected wallet (signet faucet — valueless test coins), or

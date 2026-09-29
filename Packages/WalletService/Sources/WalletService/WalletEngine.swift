@@ -87,6 +87,15 @@ public protocol WalletEngineProtocol: AnyObject {
     /// spendable coins, adds change, signs, and broadcasts. Returns the optimistic pending tx.
     func publishData(_ data: Data, feeRate: FeeRate) throws -> WalletTx
 
+    /// Deposit `amount` into sidechain `slot`, crediting sidechain `address` (the bare address, not
+    /// the `s<slot>_…` display form). A BIP300 M5: spends the sidechain's current treasury (when it
+    /// has one) and recreates it holding `amount` more, with the address in the OP_RETURN right
+    /// after it. The treasury outpoint and value come from the enforcer; the engine re-verifies them
+    /// against this wallet's own backend before building. `treasuryTxid == nil` means the slot has
+    /// never been deposited to. See `docs/sidechain-deposits.md`.
+    func depositToSidechain(slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
+                            treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) throws -> WalletTx
+
     /// Sync against the wallet's network backend. Off the main actor.
     func sync() async throws
 }
@@ -172,6 +181,8 @@ public final class WalletEngine: WalletEngineProtocol {
         // Build into a Swift array (not `.map`): a `.map` over the Kotlin `List` bdk-android
         // returns produces a Kotlin `List`, which mismatches our `[WalletTx]` (Skip `Array`).
         var result: [WalletTx] = []
+        // Same boundary split-coins classifies against (remote config first, bundled fallback).
+        let forkHeight = WalletManager.effectiveForkHeight(for: network)
         for canonical in wallet.transactions() {
             let tx = canonical.transaction
             let flow = wallet.sentAndReceived(tx: tx)
@@ -213,6 +224,11 @@ public final class WalletEngine: WalletEngineProtocol {
             }
             #endif
 
+            let scripts = outputScripts(of: tx)
+            var deposit: DrivechainDeposit? = nil
+            if let opcode = Drivechain.opcode(for: network) {
+                deposit = Drivechain.deposit(inOutputScripts: scripts, opcode: opcode)
+            }
             result.append(WalletTx(txid: "\(tx.computeTxid())",
                                    netSats: netSats,
                                    feeSats: feeSats,
@@ -221,8 +237,12 @@ public final class WalletEngine: WalletEngineProtocol {
                                    isRBF: tx.isExplicitlyRbf(),
                                    blockHeight: blockHeight,
                                    vsize: Int64(tx.vsize()),
-                                   coinNewsKind: coinNewsKind(of: tx),
-                                   receivedSats: Int64(flow.received.toSat())))
+                                   coinNewsKind: WalletEngine.coinNewsKind(inOutputScripts: scripts),
+                                   receivedSats: Int64(flow.received.toSat()),
+                                   sidechainDepositSlot: deposit?.slot,
+                                   sidechainDepositAddress: deposit?.address,
+                                   isBeforeFork: WalletTx.isBeforeFork(blockHeight: blockHeight,
+                                                                       forkHeight: forkHeight)))
         }
         return result
     }
@@ -233,17 +253,26 @@ public final class WalletEngine: WalletEngineProtocol {
     // (`OP_RETURN ‖ push("CN" ‖ typeTag ‖ …)`) and label the tx for the Activity list. Pure byte
     // inspection — no decode of the message body.
 
-    /// The CoinNews kind for a transaction, by scanning its outputs for a CoinNews OP_RETURN.
-    private func coinNewsKind(of tx: Transaction) -> String? {
+    /// Every output's scriptPubKey, in order. The one platform-branched step; the classifiers
+    /// (CoinNews, sidechain deposits) are pure functions over these bytes.
+    private func outputScripts(of tx: Transaction) -> [Data] {
+        var scripts: [Data] = []
         for out in tx.output() {
             // `Script.toBytes()` → `Data` (bdk-swift) / `ByteArray` (bdk-android, wrap with
             // `Data(platformValue:)`, same as `addData`).
             #if SKIP
-            let script = Data(platformValue: out.scriptPubkey.toBytes())
+            scripts.append(Data(platformValue: out.scriptPubkey.toBytes()))
             #else
-            let script = out.scriptPubkey.toBytes()
+            scripts.append(out.scriptPubkey.toBytes())
             #endif
-            if let kind = WalletEngine.coinNewsKind(fromScript: script) { return kind }
+        }
+        return scripts
+    }
+
+    /// The CoinNews kind for a transaction, from the first output that's a CoinNews OP_RETURN.
+    static func coinNewsKind(inOutputScripts scripts: [Data]) -> String? {
+        for script in scripts {
+            if let kind = coinNewsKind(fromScript: script) { return kind }
         }
         return nil
     }
@@ -570,7 +599,7 @@ public final class WalletEngine: WalletEngineProtocol {
 
     /// The shared tail of `send`/`sweep`: sign the built PSBT on demand, broadcast it, fold it into the
     /// wallet graph, and return the optimistic `WalletTx`.
-    private func finalizeAndBroadcast(_ psbt: Psbt) throws -> WalletTx {
+    private func finalizeAndBroadcast(_ psbt: Psbt, beforeBroadcast: ((Transaction) throws -> Void)? = nil) throws -> WalletTx {
         // Sign ON DEMAND. The watch-only wallet can't sign; `signPsbt` transiently materializes the
         // key, signs, and drops it (§7). A signing failure must never leak key/descriptor (§2/§8).
         do {
@@ -589,6 +618,8 @@ public final class WalletEngine: WalletEngineProtocol {
         } catch {
             throw WalletError.signingFailed
         }
+        // A last look at exactly what's about to be broadcast (deposits re-check their shape).
+        if let beforeBroadcast { try beforeBroadcast(tx) }
         do {
             switch backend.kind {
             case .electrum:
@@ -723,6 +754,229 @@ public final class WalletEngine: WalletEngineProtocol {
                         blockHeight: nil,
                         vsize: Int64(tx.vsize()),
                         coinNewsKind: WalletEngine.coinNewsKind(fromPayload: data))
+    }
+
+    // MARK: - Sidechain deposits (BIP300 M5)
+
+    /// How many times to rebuild a deposit looking for a valid output order. bdk-ffi 2.3.1 can't
+    /// set `TxOrdering` (outputs are shuffled), so the OP_RETURN lands right after the treasury in
+    /// 1 build of 3 with change, 1 of 2 without. 32 attempts → failure odds below one in a million.
+    /// Drop this loop once bdk-ffi exposes ordering (`docs/sidechain-deposits.md` §4a).
+    static let depositOrderingAttempts = 32
+
+    public func depositToSidechain(slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
+                                   treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) throws -> WalletTx {
+        // The treasury's previous transaction comes from THIS wallet's own backend, never from the
+        // enforcer: a misrouted enforcer can report another chain's treasury (§3 of the doc), and
+        // this is where that gets caught.
+        var previous: Transaction? = nil
+        if let treasuryTxid {
+            let txid: Txid
+            do {
+                txid = try Txid.fromString(hex: treasuryTxid)
+            } catch {
+                throw WalletError.sidechainTreasuryMismatch
+            }
+            previous = try fetchTreasuryTransaction(txid: txid, vout: treasuryVout)
+        }
+        let prepared = try prepareDeposit(slot: slot, address: address, amount: amount, feeRate: feeRate,
+                                          previousTreasury: previous, treasuryTxid: treasuryTxid,
+                                          treasuryVout: treasuryVout, treasuryValueSats: treasuryValueSats)
+
+        // Sign on demand, check the SIGNED transaction once more, broadcast, fold in.
+        let sent = try finalizeAndBroadcast(prepared.psbt, beforeBroadcast: { tx in
+            guard self.isExpectedDeposit(tx, prepared) else { throw WalletError.depositShapeInvalid }
+        })
+        return WalletTx(txid: sent.txid, netSats: sent.netSats, feeSats: sent.feeSats,
+                        confirmations: sent.confirmations, timestampEpochSeconds: sent.timestampEpochSeconds,
+                        isRBF: sent.isRBF, blockHeight: sent.blockHeight, vsize: sent.vsize,
+                        receivedSats: sent.receivedSats,
+                        sidechainDepositSlot: slot, sidechainDepositAddress: address)
+    }
+
+    /// A built, order-checked, UNSIGNED deposit plus what it must still look like after signing.
+    struct PreparedDeposit {
+        let psbt: Psbt
+        let opcode: UInt8
+        let slot: Int32
+        let address: String
+        let treasurySats: Int64
+        let treasuryKey: String?
+    }
+
+    /// Everything about a deposit that doesn't need the network: check the inputs, verify the
+    /// treasury's previous transaction really holds this slot's treasury at the claimed value, and
+    /// build until the outputs come out in a valid order. Separate from the fetch and the broadcast
+    /// so a real-BDK test can drive it with a fake treasury (`DepositEngineTests`).
+    func prepareDeposit(slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
+                        previousTreasury: Transaction?, treasuryTxid: String?, treasuryVout: Int32,
+                        treasuryValueSats: Int64) throws -> PreparedDeposit {
+        // 1. Inputs we can check without the network.
+        guard let opcode = Drivechain.opcode(for: network) else { throw WalletError.sidechainNotSupported }
+        guard slot >= Int32(0), slot <= Int32(255) else { throw WalletError.sidechainNotSupported }
+        guard let addressBytes = Drivechain.depositAddressBytes(address) else { throw WalletError.invalidSidechainAddress }
+        guard amount.sats > Int64(0) else { throw WalletError.dustAmount }
+        guard treasuryValueSats >= Int64(0), treasuryVout >= Int32(0) else { throw WalletError.sidechainTreasuryMismatch }
+        let treasuryScriptBytes = Drivechain.treasuryScript(opcode: opcode, slot: slot)
+
+        // 2. The treasury: the claimed output must be THIS slot's treasury script at exactly the
+        //    claimed value, or the new treasury value we'd write would be wrong.
+        var treasuryOutpoint: OutPoint? = nil
+        var treasuryInput: Input? = nil
+        var treasuryKey: String? = nil
+        if let treasuryTxid {
+            guard let previous = previousTreasury else { throw WalletError.sidechainTreasuryMismatch }
+            guard "\(previous.computeTxid())".lowercased() == treasuryTxid.lowercased() else {
+                throw WalletError.sidechainTreasuryMismatch
+            }
+            let outputs = previous.output()
+            // bdk-android hands back a Kotlin `List` (`.size`); bdk-swift an array (`.count`).
+            #if SKIP
+            let outputCount = outputs.size
+            #else
+            let outputCount = outputs.count
+            #endif
+            guard Int(treasuryVout) < outputCount else { throw WalletError.sidechainTreasuryMismatch }
+            let out = outputs[Int(treasuryVout)]
+            #if SKIP
+            let outScript = Data(platformValue: out.scriptPubkey.toBytes())
+            #else
+            let outScript = out.scriptPubkey.toBytes()
+            #endif
+            guard outScript == treasuryScriptBytes,
+                  Int64(out.value.toSat()) == treasuryValueSats else { throw WalletError.sidechainTreasuryMismatch }
+            treasuryOutpoint = OutPoint(txid: previous.computeTxid(), vout: UInt32(treasuryVout))
+            treasuryInput = WalletEngine.treasuryPsbtInput(previous)
+            treasuryKey = "\(treasuryTxid.lowercased()):\(treasuryVout)"
+        } else if treasuryValueSats != Int64(0) {
+            // No treasury yet, so there's nothing it could hold.
+            throw WalletError.sidechainTreasuryMismatch
+        }
+        let newTreasurySats = treasuryValueSats + amount.sats
+
+        // 3. Build, keeping only a build whose outputs are in a valid order (see
+        //    `depositOrderingAttempts`). A rejected build is cancelled so it doesn't burn a change
+        //    address: enough burnt ones would push the real change past a restore's gap limit.
+        var attempt = 0
+        while attempt < WalletEngine.depositOrderingAttempts {
+            attempt += 1
+            let psbt: Psbt
+            do {
+                psbt = try buildDepositPsbt(treasuryScript: treasuryScriptBytes, treasurySats: newTreasurySats,
+                                            addressBytes: addressBytes, feeRate: feeRate,
+                                            treasuryOutpoint: treasuryOutpoint, treasuryInput: treasuryInput)
+            } catch let e as WalletError {
+                throw e
+            } catch {
+                throw WalletError.mapping(rawDescription: "\(error)")
+            }
+            let unsigned: Transaction
+            do {
+                unsigned = try psbt.extractTx()
+            } catch {
+                throw WalletError.depositShapeInvalid
+            }
+            let prepared = PreparedDeposit(psbt: psbt, opcode: opcode, slot: slot, address: address,
+                                           treasurySats: newTreasurySats, treasuryKey: treasuryKey)
+            if isExpectedDeposit(unsigned, prepared) { return prepared }
+            wallet.cancelTx(tx: unsigned)
+        }
+        throw WalletError.depositShapeInvalid
+    }
+
+    private func buildDepositPsbt(treasuryScript: Data, treasurySats: Int64, addressBytes: Data, feeRate: FeeRate,
+                                  treasuryOutpoint: OutPoint?, treasuryInput: Input?) throws -> Psbt {
+        #if SKIP
+        let bdkFeeRate = try org.bitcoindevkit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
+        let bdkTreasuryAmount = org.bitcoindevkit.Amount.fromSat(satoshi: UInt64(treasurySats))
+        let script = Script(rawOutputScript: treasuryScript.platformValue)
+        #else
+        let bdkFeeRate = try BitcoinDevKit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
+        let bdkTreasuryAmount = BitcoinDevKit.Amount.fromSat(satoshi: UInt64(treasurySats))
+        let script = Script(rawOutputScript: treasuryScript)
+        #endif
+        // Same spend policy as send: confirmed coins + our own change only.
+        let untrusted: [OutPoint] = untrustedUnconfirmedOutpoints()
+        #if SKIP
+        let unspendable = untrusted.kotlin() as! kotlin.collections.List<OutPoint>
+        let withData = TxBuilder()
+            .addRecipient(script: script, amount: bdkTreasuryAmount)
+            .addData(data: addressBytes.platformValue)
+        #else
+        let unspendable = untrusted
+        let withData = TxBuilder()
+            .addRecipient(script: script, amount: bdkTreasuryAmount)
+            .addData(data: addressBytes)
+        #endif
+        var builder = withData
+            .feeRate(feeRate: bdkFeeRate)
+            .unspendable(unspendable: unspendable)
+        if let outpoint = treasuryOutpoint, let input = treasuryInput {
+            // The treasury is anyone-can-spend by consensus: no signature, an empty scriptSig, and
+            // no satisfaction weight beyond that (the enforcer's own builder uses zero too).
+            builder = try builder.addForeignUtxo(outpoint: outpoint, psbtInput: input,
+                                                 satisfactionWeight: UInt64(0))
+        }
+        builder = applyingReplayProtection(builder)
+        return try builder.finish(wallet: wallet)
+    }
+
+    /// `Drivechain.isValidDeposit` over a BDK transaction.
+    func isExpectedDeposit(_ tx: Transaction, _ deposit: PreparedDeposit) -> Bool {
+        var values: [Int64] = []
+        for out in tx.output() { values.append(Int64(out.value.toSat())) }
+        var inputs: [String] = []
+        for input in tx.input() {
+            inputs.append("\(input.previousOutput.txid)".lowercased() + ":\(input.previousOutput.vout)")
+        }
+        return Drivechain.isValidDeposit(outputScripts: outputScripts(of: tx), outputValues: values, inputs: inputs,
+                                         opcode: deposit.opcode, slot: deposit.slot, address: deposit.address,
+                                         expectedTreasuryValue: deposit.treasurySats, treasuryOutpoint: deposit.treasuryKey)
+    }
+
+    /// The treasury's previous transaction, from this wallet's own backend. Fails as a mismatch when
+    /// the backend doesn't know it (the enforcer is on another chain), and as busy when Esplora says
+    /// the treasury is already spent (another deposit or a withdrawal got there first).
+    private func fetchTreasuryTransaction(txid: Txid, vout: Int32) throws -> Transaction {
+        switch backend.kind {
+        case .esplora:
+            let client = EsploraClient(url: backend.url, proxy: backend.socks5)
+            let fetched: Transaction?
+            do {
+                fetched = try client.getTx(txid: txid)
+            } catch {
+                throw WalletError.sidechainTreasuryMismatch
+            }
+            guard let fetched else { throw WalletError.sidechainTreasuryMismatch }
+            if let status = try? client.getOutputStatus(txid: txid, vout: UInt64(vout)), status.spent {
+                throw WalletError.sidechainTreasuryBusy
+            }
+            return fetched
+        case .electrum:
+            do {
+                let client = try ElectrumClient(url: backend.url, socks5: backend.socks5)
+                let raw = try client.transactionGetRaw(txid: txid)
+                return try Transaction(transactionBytes: raw)
+            } catch {
+                throw WalletError.sidechainTreasuryMismatch
+            }
+        case .thunder, .thunderEsplora:
+            throw WalletError.sidechainNotSupported
+        }
+    }
+
+    /// The PSBT input for spending a treasury: the full previous transaction (the treasury is a
+    /// bare, non-segwit script) and an already-final empty scriptSig. Kotlin gets a literal
+    /// constructor: bdk-android's `Input` takes Kotlin maps, which Swift dictionary literals don't
+    /// transpile to.
+    private static func treasuryPsbtInput(_ previous: Transaction) -> Input {
+        // SKIP REPLACE: return Input(previous, null, mapOf(), null, null, null, mapOf(), Script(ByteArray(0)), null, mapOf(), mapOf(), mapOf(), mapOf(), null, mapOf(), mapOf(), mapOf(), null, null, mapOf(), mapOf())
+        return Input(nonWitnessUtxo: previous, witnessUtxo: nil, partialSigs: [:], sighashType: nil,
+                     redeemScript: nil, witnessScript: nil, bip32Derivation: [:],
+                     finalScriptSig: Script(rawOutputScript: Data()), finalScriptWitness: nil,
+                     ripemd160Preimages: [:], sha256Preimages: [:], hash160Preimages: [:], hash256Preimages: [:],
+                     tapKeySig: nil, tapScriptSigs: [:], tapScripts: [:], tapKeyOrigins: [:],
+                     tapInternalKey: nil, tapMerkleRoot: nil, proprietary: [:], unknown: [:])
     }
 
     /// After a successful broadcast, fold the tx into the wallet's local graph so its inputs are

@@ -36,6 +36,12 @@ final class WalletManagerOps: WalletOps {
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
         try await manager.splitToSelf(walletId: walletId, feeRate: feeRate)
     }
+    func depositToSidechain(walletId: String, slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
+                            treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) async throws -> WalletTx {
+        try await manager.depositToSidechain(walletId: walletId, slot: slot, address: address, amount: amount,
+                                             feeRate: feeRate, treasuryTxid: treasuryTxid,
+                                             treasuryVout: treasuryVout, treasuryValueSats: treasuryValueSats)
+    }
     func splitSummary(walletId: String) throws -> SplitSummary {
         try manager.splitSummary(walletId: walletId)
     }

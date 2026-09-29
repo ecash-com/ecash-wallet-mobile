@@ -37,6 +37,10 @@ protocol WalletOps {
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx
     /// Split coins: drain the whole balance to a fresh address of ITSELF (wallet-owned destination).
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx
+    /// Deposit into a BIP300 sidechain (M5). `address` is the BARE sidechain address; the treasury
+    /// fields come from the enforcer and are re-verified by the engine (`docs/sidechain-deposits.md`).
+    func depositToSidechain(walletId: String, slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
+                            treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) async throws -> WalletTx
     /// Read-only split status (total spendable vs pre-fork amount that needs splitting).
     func splitSummary(walletId: String) throws -> SplitSummary
     func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary

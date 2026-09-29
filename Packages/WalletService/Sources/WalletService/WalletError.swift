@@ -39,6 +39,17 @@ public enum WalletError: Error, Equatable, Sendable {
     case copyMismatch
     /// The wallet's secret isn't in the Keychain, so there's nothing to copy.
     case keyUnavailable
+    /// Sidechain deposits aren't available on this wallet's network (no BIP300 there).
+    case sidechainNotSupported
+    /// The sidechain address can't be put in a deposit (empty, wrapped `s9_…` form, too long).
+    case invalidSidechainAddress
+    /// The treasury the enforcer reported isn't on this wallet's chain, or doesn't hold what the
+    /// enforcer said. Nothing is sent: building on it would fail at best.
+    case sidechainTreasuryMismatch
+    /// The treasury has already been spent (someone else's deposit or a withdrawal is pending).
+    case sidechainTreasuryBusy
+    /// The built transaction didn't pass the deposit shape check, so it wasn't signed or sent.
+    case depositShapeInvalid
     /// A BDK error we don't have a specific case for. The associated string is a
     /// pre-scrubbed, user-safe summary — never the raw BDK description.
     case engine(String)
@@ -66,6 +77,11 @@ public enum WalletError: Error, Equatable, Sendable {
         case .alreadyOnNetwork: return "This wallet is already open on that network."
         case .copyMismatch: return "Couldn't open this wallet on that network. Nothing was changed."
         case .keyUnavailable: return "This wallet's key isn't available on this device."
+        case .sidechainNotSupported: return "Sidechain deposits aren't available on this network."
+        case .invalidSidechainAddress: return "That isn't a valid sidechain address."
+        case .sidechainTreasuryMismatch: return "Couldn't verify the sidechain on this network. Nothing was sent."
+        case .sidechainTreasuryBusy: return "Someone else just deposited to this sidechain. Try again in a minute."
+        case .depositShapeInvalid: return "Couldn't build a valid deposit. Nothing was sent."
         case .engine(let summary): return summary
         }
     }

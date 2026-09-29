@@ -148,12 +148,11 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
         .signet,
         .ecash,
         .ecashBeta,
-        // .thunder,   // HIDDEN until the drivechain-esplora index has walked blocks (2026-09-01).
-        //             // The backend itself is done and verified against the live service, but the
-        //             // index reports an empty chain, so a Thunder wallet would derive and hand out
-        //             // real addresses while showing a zero balance and no history — a user could
-        //             // receive real ECX and see nothing. Verified working with this uncommented;
-        //             // uncomment again once the index syncs (docs/thunder-sidechain-support.md §8e).
+        // Thunder: re-enabled 2026-09-29. It was hidden while the drivechain-esplora index held no
+        // blocks (2026-09-01), which would have shown a zero balance for real ECX. The betanet index
+        // is now walking (tip 859, advancing), and the app can deposit to Thunder. To hide it again,
+        // comment this line out: existing Thunder wallets keep resolving either way.
+        .thunder,
     ]
 
     /// **The eCash chain the app currently points at** for new wallets, imports, and investor
@@ -490,13 +489,33 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
     /// the engine boundary (the bridged surface stays String — never a raw enum). Lets the UI mark it.
     public let coinNewsKind: String?
 
+    /// If this tx is a BIP300 **deposit** to a sidechain (M5), the slot it credits (0–255); nil
+    /// otherwise. Detected from the output scripts at the engine boundary (`Drivechain.deposit`),
+    /// using this network's `OP_DRIVECHAIN` opcode. The app maps slot → name from the enforcer.
+    /// `Int32`, signed, for the bridge (see `feeSats`).
+    public let sidechainDepositSlot: Int32?
+    /// The sidechain address a deposit credits, as carried in its OP_RETURN (the bare address, not
+    /// the `s9_…_checksum` display form). Non-nil exactly when `sidechainDepositSlot` is.
+    public let sidechainDepositAddress: String?
+
+    /// True when this tx was confirmed BELOW the network's fork height: it's part of the history the
+    /// eCash chain inherited from Bitcoin, so it exists on both chains. Real, and shown, but labelled
+    /// (an imported pre-fork key otherwise looks like it's showing "Bitcoin transactions"). Always
+    /// false on networks that never forked and for unconfirmed txs.
+    public let isBeforeFork: Bool
+
     public var id: String { txid }
 
     public init(txid: String, netSats: Int64, feeSats: Int64?,
                 confirmations: Int32, timestampEpochSeconds: Int64?, isRBF: Bool,
                 blockHeight: Int64? = nil, vsize: Int64? = nil, coinNewsKind: String? = nil,
-                receivedSats: Int64? = nil) {
+                receivedSats: Int64? = nil,
+                sidechainDepositSlot: Int32? = nil, sidechainDepositAddress: String? = nil,
+                isBeforeFork: Bool = false) {
+        self.isBeforeFork = isBeforeFork
         self.receivedSats = receivedSats
+        self.sidechainDepositSlot = sidechainDepositSlot
+        self.sidechainDepositAddress = sidechainDepositAddress
         self.txid = txid
         self.netSats = netSats
         self.feeSats = feeSats
@@ -510,6 +529,28 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
 
     /// True if this transaction is a CoinNews post (any kind).
     public var isCoinNews: Bool { coinNewsKind != nil }
+
+    /// Whether a tx confirmed at `blockHeight` predates a fork at `forkHeight`. The fork block
+    /// itself is the first chain-specific block (same boundary as `SplitSummary.classify`), so
+    /// only heights strictly below it are shared history.
+    public static func isBeforeFork(blockHeight: Int64?, forkHeight: Int64?) -> Bool {
+        guard let height = blockHeight, let fork = forkHeight else { return false }
+        return height < fork
+    }
+
+    /// This transaction with a different timestamp and every other field unchanged. Use this rather
+    /// than rebuilding a `WalletTx` field by field: a hand copy silently drops whatever field is added
+    /// next (it dropped the sidechain-deposit fields from Thunder history once).
+    public func withTimestamp(_ epochSeconds: Int64?) -> WalletTx {
+        WalletTx(txid: txid, netSats: netSats, feeSats: feeSats, confirmations: confirmations,
+                 timestampEpochSeconds: epochSeconds, isRBF: isRBF, blockHeight: blockHeight, vsize: vsize,
+                 coinNewsKind: coinNewsKind, receivedSats: receivedSats,
+                 sidechainDepositSlot: sidechainDepositSlot, sidechainDepositAddress: sidechainDepositAddress,
+                 isBeforeFork: isBeforeFork)
+    }
+
+    /// True if this transaction deposited coins into a sidechain.
+    public var isSidechainDeposit: Bool { sidechainDepositSlot != nil }
 
     public var isReceived: Bool { netSats >= 0 }
     public var isConfirmed: Bool { confirmations > 0 }

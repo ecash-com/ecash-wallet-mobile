@@ -490,4 +490,71 @@ import WalletService
         #expect(config.resolvedDisplayNames().first { $0.network == WalletNetwork.ecash }?.name == "Drynet 4")
         #expect(config.resolvedForkHeights().first { $0.network == WalletNetwork.ecash }?.height == 961_632)
     }
+
+    // MARK: - The real eCash fork must not land on an existing network (docs/real-ecash-fork-transition.md §0)
+
+    /// A config with the real fork listed FIRST (the dangerous position: first usable entry wins)
+    /// under an id this build doesn't know, then the live alphanet and betanet entries.
+    private func configWithRealForkFirst(id: String) throws -> RemoteEndpointConfig {
+        let json = """
+        {"schema_version":1,"networks":[
+          {"id":"\(id)","family":"ecash","display_name":"eCash","fork_height":964000,
+           "backends":[{"kind":"esplora","url":"https://esplora.real-ecash.example"}],
+           "explorer_tx_template":"https://explorer.real-ecash.example/tx/{txid}",
+           "services":{"coinnews":{"url":"https://coinnews.real-ecash.example"},
+                       "enforcer":{"url":"https://seed.real-ecash.example/enforcer"}}},
+          {"id":"alphanet","family":"ecash","display_name":"Alphanet","fork_height":963648,
+           "backends":[{"kind":"esplora","url":"https://esplora.alpha.ecash.ninja"}]},
+          {"id":"betanet","family":"ecash","display_name":"Betanet","fork_height":967680,
+           "backends":[{"kind":"esplora","url":"https://esplora.beta.ecash.ninja"}]}
+        ]}
+        """
+        return try #require(RemoteEndpointConfig.parse(Data(json.utf8)))
+    }
+
+    @Test(arguments: ["ecash", "ecx", "mainnet", "ecash-mainnet", "ecashMain"])
+    func realForkUnderAnUnknownIdLeavesAlphanetAndBetanetAlone(id: String) throws {
+        let config = try configWithRealForkFirst(id: id)
+
+        // Alphanet wallets keep their own backend, fork height and name…
+        let backends = config.resolvedPrimaryBackends()
+        #expect(backends.first { $0.network == WalletNetwork.ecash }?.url == "https://esplora.alpha.ecash.ninja")
+        #expect(backends.first { $0.network == WalletNetwork.ecashBeta }?.url == "https://esplora.beta.ecash.ninja")
+        #expect(config.resolvedForkHeights().first { $0.network == WalletNetwork.ecash }?.height == 963_648)
+        #expect(config.resolvedDisplayNames().first { $0.network == WalletNetwork.ecash }?.name == "Alphanet")
+
+        // …and nothing from the unknown entry leaks into any network this build knows.
+        #expect(!backends.contains { $0.url.contains("real-ecash") })
+        #expect(!config.resolvedEsploraEndpoints().contains { $0.url.contains("real-ecash") })
+        #expect(config.resolvedCoinNews().isEmpty)
+        #expect(config.resolvedEnforcers().isEmpty)
+        #expect(!config.resolvedExplorers().contains { $0.txTemplate.contains("real-ecash") })
+    }
+
+    /// Ids match exactly: no raw-value match (`.ecashBeta`'s is "ecashBeta"; `.thunder`'s is
+    /// "thunder") and no family guess.
+    @Test func onlyAllowListedIdsMap() throws {
+        let json = """
+        {"schema_version":1,"networks":[
+          {"id":"ecashBeta","family":"ecash","backends":[{"kind":"esplora","url":"https://a.example"}]},
+          {"id":"thunder","family":"ecash","backends":[{"kind":"esplora","url":"https://b.example"}]},
+          {"family":"ecash","backends":[{"kind":"esplora","url":"https://c.example"}]},
+          {"id":"BITCOIN","family":"bitcoin","backends":[{"kind":"esplora","url":"https://d.example"}]}
+        ]}
+        """
+        let config = try #require(RemoteEndpointConfig.parse(Data(json.utf8)))
+        #expect(config.resolvedPrimaryBackends().isEmpty)
+    }
+
+    @Test func knownIdsStillMap() throws {
+        let entries = [("bitcoin", WalletNetwork.bitcoin), ("signet", .signet), ("alphanet", .ecash),
+                       ("betanet", .ecashBeta), ("drynet3", .ecash)]
+        for (id, network) in entries {
+            let json = """
+            {"schema_version":1,"networks":[{"id":"\(id)","backends":[{"kind":"esplora","url":"https://x.example"}]}]}
+            """
+            let config = try #require(RemoteEndpointConfig.parse(Data(json.utf8)))
+            #expect(config.resolvedPrimaryBackends().first?.network == network, "id \(id)")
+        }
+    }
 }

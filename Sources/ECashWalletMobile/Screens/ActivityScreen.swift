@@ -27,7 +27,8 @@ struct ActivityScreen: View {
                             detailTx = tx
                         } label: {
                             TxRow(tx: tx, unitLabel: app.unitLabel,
-                                  fiatText: app.fiatString(forSats: abs(tx.netSats)))
+                                  fiatText: app.fiatString(forSats: abs(tx.netSats)),
+                              sidechainName: app.sidechainName(for: tx))
                         }
                         .buttonStyle(.plain)
                     }
@@ -40,7 +41,8 @@ struct ActivityScreen: View {
         .task { await app.sync() }
         .sheet(item: $detailTx) { tx in
             if let wallet = app.selectedWallet {
-                TxDetailSheet(tx: tx, unitLabel: app.unitLabel, network: wallet.network)
+                TxDetailSheet(tx: tx, unitLabel: app.unitLabel, network: wallet.network,
+                              sidechainName: app.sidechainName(for: tx))
             }
         }
     }

@@ -627,6 +627,20 @@ public final class WalletManager: @unchecked Sendable {
         return try engine.sweep(to: address, feeRate: feeRate)
     }
 
+    /// Deposit into a sidechain (BIP300 M5). `address` is the BARE sidechain address (the app
+    /// unwraps `s<slot>_…_<checksum>` first). The treasury fields come from the enforcer and are
+    /// re-verified by the engine against this wallet's own backend; `treasuryTxid == nil` means the
+    /// slot has never been deposited to. Network I/O: call off the main actor. Bridged surface:
+    /// signed types only (`docs/sidechain-deposits.md`).
+    public func depositToSidechain(walletId: String, slot: Int32, address: String, amount: Amount,
+                                   feeRate: FeeRate, treasuryTxid: String?, treasuryVout: Int32,
+                                   treasuryValueSats: Int64) async throws -> WalletTx {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.depositToSidechain(slot: slot, address: address, amount: amount, feeRate: feeRate,
+                                             treasuryTxid: treasuryTxid, treasuryVout: treasuryVout,
+                                             treasuryValueSats: treasuryValueSats)
+    }
+
     /// Split coins: drain the wallet to a fresh address of ITSELF (wallet-owned destination). Separates
     /// fork-airdrop eCash from Bitcoin. No external address — the engine derives the destination.
     public func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {

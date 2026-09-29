@@ -16,6 +16,8 @@ struct TxDetailSheet: View {
     let tx: WalletTx
     let unitLabel: String
     let network: WalletNetwork
+    /// For a sidechain deposit: the sidechain's name, if known (`AppState.sidechainName(for:)`).
+    var sidechainName: String? = nil
     @State var copied = false   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
     @State var detailsExpanded = false   // CoinNews txs: raw tx rows fold into a DisclosureGroup
 
@@ -32,6 +34,9 @@ struct TxDetailSheet: View {
                         detailsDisclosure   // raw tx rows hidden until tapped
                     } else {
                         hero
+                        if let slot = tx.sidechainDepositSlot {
+                            depositCard(slot: slot)
+                        }
                         detailsCard
                     }
                     txidCard
@@ -53,13 +58,19 @@ struct TxDetailSheet: View {
     private var hero: some View {
         VStack(spacing: Theme.Space.x3) {
             ZStack {
-                Circle().fill(tx.isReceived ? Theme.Colors.positiveTint : Theme.Colors.bg2)
-                Image(icon: tx.isReceived ? Icon.receive : Icon.send)
+                Circle().fill(heroTint)
+                Image(icon: heroIcon)
                     .resizable().scaledToFit()
                     .frame(width: 26, height: 26)
-                    .foregroundStyle(tx.isReceived ? Theme.Colors.positive : Theme.Colors.text1)
+                    .foregroundStyle(heroGlyph)
             }
             .frame(width: 64, height: 64)
+
+            if let slot = tx.sidechainDepositSlot {
+                SidechainDepositTitle(name: sidechainName, slot: slot, received: tx.isReceived)
+                    .font(.grotesk(20, .semibold))
+                    .foregroundStyle(Theme.Colors.text0)
+            }
 
             VStack(spacing: 2) {
                 Text(verbatim: amountCoin)
@@ -78,9 +89,59 @@ struct TxDetailSheet: View {
                     .textStyle(.sm)
                     .foregroundStyle(Theme.Colors.text2)
             }
+
+            if tx.isBeforeFork {
+                Text("Before the fork: confirmed before \(NetworkRegistry.params(for: network).displayName) forked from Bitcoin, so this transaction is on both chains.",
+                     bundle: .module,
+                     comment: "tx detail: pre-fork explanation; %@ is the eCash network name")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, Theme.Space.x4)
+            }
         }
         .frame(maxWidth: .infinity)
         .padding(.top, Theme.Space.x4)
+    }
+
+    private var heroIcon: Icon {
+        if tx.isSidechainDeposit { return Icon.sidechains }
+        return tx.isReceived ? Icon.receive : Icon.send
+    }
+    private var heroTint: Color {
+        if tx.isSidechainDeposit { return Theme.Colors.accentTint }
+        return tx.isReceived ? Theme.Colors.positiveTint : Theme.Colors.bg2
+    }
+    private var heroGlyph: Color {
+        if tx.isSidechainDeposit { return Theme.Colors.accent }
+        return tx.isReceived ? Theme.Colors.positive : Theme.Colors.text1
+    }
+
+    // MARK: - Sidechain deposit
+
+    /// Where a deposit went: the sidechain (name + slot) and the sidechain address credited, as
+    /// written on-chain. The address is shown in full: it's the only way to check the right
+    /// account got the coins.
+    private func depositCard(slot: Int32) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x3) {
+            rowText("Sidechain", sidechainName.map { name in
+                Text("\(name) · slot \(String(slot))", bundle: .module,
+                     comment: "tx detail: sidechain name and slot; %1$@ name, %2$@ slot number")
+            } ?? Text("Slot \(String(slot))", bundle: .module, comment: "sidechain slot number; %@ is 0-255"))
+            if let address = tx.sidechainDepositAddress {
+                hairline
+                VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                    Text("Sidechain address", bundle: .module, comment: "tx detail: address a deposit credits")
+                        .textStyle(.sm)
+                        .foregroundStyle(Theme.Colors.text2)
+                    Text(verbatim: address)
+                        .font(.jbMono(13, .regular))
+                        .foregroundStyle(Theme.Colors.text0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .cardStyle()
     }
 
     // MARK: - CoinNews hero
@@ -273,7 +334,7 @@ struct TxDetailSheet: View {
 
     @ViewBuilder
     private var explorerButton: some View {
-        if let url = URL(string: RemoteServiceOverrides.explorerURL(for: tx.txid, on: network)) {
+        if let url = URL(string: RemoteServiceOverrides.explorerURL(for: tx.txid, on: explorerNetwork)) {
             Link(destination: url) {
                 HStack(spacing: Theme.Space.x2) {
                     Text("View on block explorer", bundle: .module, comment: "tx detail: open block explorer")
@@ -292,6 +353,15 @@ struct TxDetailSheet: View {
     }
 
     // MARK: - Derived values
+
+    /// Which chain's explorer shows this txid. A deposit seen from a sidechain wallet is a MAINCHAIN
+    /// transaction, so it opens the mainchain explorer; the sidechain's would 404.
+    private var explorerNetwork: WalletNetwork {
+        if tx.isSidechainDeposit, let mainchain = SidechainWalletNetwork.mainchain(ofSidechainWallet: network) {
+            return mainchain
+        }
+        return network
+    }
 
     /// Recipient amount (net minus fee for sends), signed like the row. For a self-transfer there is
     /// no recipient — netting the fee out would render the whole transaction as 0 — so the amount is

@@ -161,6 +161,24 @@ public final class MockWalletEngine: WalletEngineProtocol {
                         isRBF: true)
     }
 
+    /// The last deposit asked for: (slot, address, amount sats, treasury txid).
+    public var lastDeposit: (slot: Int32, address: String, amountSats: Int64, treasuryTxid: String?)? = nil
+
+    public func depositToSidechain(slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
+                                   treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) throws -> WalletTx {
+        if let error = errorToThrow { throw error }
+        lastDeposit = (slot, address, amount.sats, treasuryTxid)
+        lastSendFeeRate = feeRate
+        return WalletTx(txid: "mockdeposittxid",
+                        netSats: -(amount.sats + feeRate.satPerVByte),
+                        feeSats: feeRate.satPerVByte,
+                        confirmations: 0,
+                        timestampEpochSeconds: nil,
+                        isRBF: true,
+                        sidechainDepositSlot: slot,
+                        sidechainDepositAddress: address)
+    }
+
     public func sync() async throws {
         syncCallCount += 1
         if let error = errorToThrow { throw error }
