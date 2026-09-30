@@ -17,7 +17,7 @@ struct WalletSwitcherPill: View {
                     RoundedRectangle(cornerRadius: Theme.Radius.xs)
                         .fill(Theme.Colors.accent)
                     Text(initial)
-                        .font(.grotesk(13, .bold))
+                        .font(.satoshi(13, .bold))
                         .foregroundStyle(Theme.Colors.accentText)
                 }
                 .frame(width: 24, height: 24)

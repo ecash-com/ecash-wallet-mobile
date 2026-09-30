@@ -54,7 +54,7 @@ struct WalletManagerSheet: View {
                             VStack(alignment: .leading, spacing: Theme.Space.x1) {
                                 Text("Claim your ECX", bundle: .module,
                                      comment: "investor claim entry point")
-                                    .font(.grotesk(17, .semibold))
+                                    .font(.satoshi(17, .semibold))
                                     .foregroundStyle(Theme.Colors.text0)
                                 // "Nothing moves until you see the amount" is the reassurance that
                                 // matters: importing is read-only, and the balance appears before
@@ -162,7 +162,7 @@ struct WalletManagerSheet: View {
                         RoundedRectangle(cornerRadius: Theme.Radius.xs)
                             .fill(Theme.Colors.accent)
                         Text(String(wallet.label.prefix(1)).uppercased())
-                            .font(.grotesk(14, .bold))
+                            .font(.satoshi(14, .bold))
                             .foregroundStyle(Theme.Colors.accentText)
                     }
                     .frame(width: 30, height: 30)

@@ -99,3 +99,8 @@ GoogleService-Info.plist
 **/firebase-service-account*.json
 **/serviceAccountKey.json
 **/*-firebase-adminsdk-*.json
+
+# Satoshi (ITF Free Font License): may be embedded in the app, but NOT redistributed from a public
+# repo — fetched at build time by scripts/fetch-fonts.sh instead.
+Sources/ECashWalletMobile/Resources/Fonts/satoshi_*.ttf
+Android/app/src/main/res/font/satoshi_*.ttf

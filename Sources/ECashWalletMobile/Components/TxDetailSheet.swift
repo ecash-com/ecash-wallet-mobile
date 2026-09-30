@@ -68,7 +68,7 @@ struct TxDetailSheet: View {
 
             if let slot = tx.sidechainDepositSlot {
                 SidechainDepositTitle(name: sidechainName, slot: slot, received: tx.isReceived)
-                    .font(.grotesk(20, .semibold))
+                    .font(.satoshi(20, .semibold))
                     .foregroundStyle(Theme.Colors.text0)
             }
 
@@ -161,7 +161,7 @@ struct TxDetailSheet: View {
             .frame(width: 64, height: 64)
 
             Text(verbatim: coinNewsTitle)
-                .font(.grotesk(22, .semibold))
+                .font(.satoshi(22, .semibold))
                 .foregroundStyle(Theme.Colors.text0)
 
             statusPill

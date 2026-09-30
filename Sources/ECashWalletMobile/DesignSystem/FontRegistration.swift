@@ -12,8 +12,8 @@ import CoreText
 /// (`Bundle.module`), not the main app bundle, so `Info.plist`/`UIAppFonts` can't see them —
 /// we register them with CoreText instead.
 ///
-/// Android needs no registration: SkipUI resolves `Font.custom("SpaceGrotesk-Bold")` to the
-/// bundled font resource `spacegrotesk_bold` (which is why the files are named that way).
+/// Android needs no registration: SkipUI resolves `Font.custom("Satoshi-Bold")` to the
+/// bundled font resource `satoshi_bold` (which is why the files are named that way).
 enum FontRegistration {
     static func registerBundledFonts() {
         #if !os(Android)

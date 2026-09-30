@@ -97,7 +97,7 @@ struct NewsHubCard: View {
 
                 VStack(alignment: .leading, spacing: Theme.Space.x1) {
                     Text(title, bundle: .module)
-                        .font(.grotesk(17, .semibold))
+                        .font(.satoshi(17, .semibold))
                         .foregroundStyle(Theme.Colors.text0)
                     Text(subtitle, bundle: .module)
                         .textStyle(.xs)

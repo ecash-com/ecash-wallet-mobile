@@ -186,8 +186,8 @@ extension View {
 
     /// Cover the content whenever the scene isn't active — iOS can't block screenshots, but
     /// this keeps seeds out of the app switcher snapshot (§7). Android needs nothing here:
-    /// `FLAG_SECURE` (PlatformBridge.setSecureScreen) already blanks capture AND the recents
-    /// thumbnail.
+    /// `MainActivity` (Main.kt) disables the recents thumbnail app-wide via
+    /// `setRecentsScreenshotEnabled(false)` (API 33+; older devices are unprotected).
     @ViewBuilder
     func obscuredWhenBackgrounded() -> some View {
         #if os(iOS)

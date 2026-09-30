@@ -41,12 +41,17 @@ The domain views that have no system equivalent live in `Components/`: `WalletBu
 
 ## 0. Setup
 
-**Fonts — two families, both OFL/free** (bundled in `Resources/Fonts` for iOS **and**
-`Android/app/src/main/res/font` for Android; registered in `FontRegistration.swift`):
-- **Space Grotesk** — display, balances, headings (Regular / Medium / SemiBold / Bold).
+**Fonts — two families, per the eCash brand guidelines (ecash.com/brand)** (bundled in
+`Resources/Fonts` for iOS **and** `Android/app/src/main/res/font` for Android; registered in
+`FontRegistration.swift`):
+- **Satoshi** — display, balances, headings (Regular / Medium / Bold; no SemiBold exists, so
+  `.semibold` resolves to Medium — the brand sets headings at 500). ITF Free Font License: may be
+  embedded in the app but **not** redistributed from this public repo, so its `.ttf`s are gitignored
+  and fetched by `scripts/fetch-fonts.sh` (every build script, fastlane, and CI call it).
 - **JetBrains Mono** — body, labels, addresses, amounts, seeds (Regular / Medium / SemiBold).
 
-(IBM Plex from the original draft was dropped — two fonts only.) Every piece of text uses these via
+(Satoshi replaced Space Grotesk on 2026-09-30. The brand also moves body copy from JetBrains Mono to
+Satoshi, keeping mono for labels/technical text — not done yet.) Every piece of text uses these via
 `.textStyle(...)`; no system fonts anywhere. Fonts fail *silently* if a face is missing — verify by
 screenshot on both platforms.
 
@@ -102,16 +107,16 @@ The `bg*`/`text*` families are still the placeholder palette pending the ecash.c
 
 ## 2. Typography
 
-Two helpers in `Typography.swift`: `Font.grotesk(size, weight)` (Space Grotesk) and
-`Font.jbMono(size, weight)` (JetBrains Mono). Headings are Grotesk; everything else is JetBrains
+Two helpers in `Typography.swift`: `Font.satoshi(size, weight)` (Satoshi) and
+`Font.jbMono(size, weight)` (JetBrains Mono). Headings are Satoshi; everything else is JetBrains
 Mono. Apply via `.textStyle(.h1)` etc. so font + tracking + case all come from one place.
 
 | Token | Resolves to | Usage |
 |---|---|---|
-| `display` | `grotesk(40, .bold)`, tracking −0.8 | hero balance |
-| `h1` | `grotesk(28, .semibold)`, tracking −0.5 | screen titles |
-| `h2` | `grotesk(22, .semibold)` | section heads |
-| `h3` | `grotesk(18, .semibold)` | row titles |
+| `display` | `satoshi(40, .bold)`, tracking −0.8 | hero balance |
+| `h1` | `satoshi(28, .semibold)` → Medium, tracking −0.5 | screen titles |
+| `h2` | `satoshi(22, .semibold)` → Medium | section heads |
+| `h3` | `satoshi(18, .semibold)` → Medium | row titles |
 | `button` | `jbMono(16, .semibold)` | button labels |
 | `body` | `jbMono(15, .regular)` | default copy |
 | `sm` | `jbMono(13, .regular)` | secondary UI |
@@ -119,7 +124,7 @@ Mono. Apply via `.textStyle(.h1)` etc. so font + tracking + case all come from o
 | `overline` | `jbMono(11, .semibold)`, tracking 0.9, UPPERCASE | labels / section overlines (`text2`) |
 | `mono` | `jbMono(14, .regular)` | addresses, txids, seeds |
 
-**Numerals.** JetBrains Mono is fixed-width already; for Grotesk numbers add `.monospacedDigit()` so
+**Numerals.** JetBrains Mono is fixed-width already; for Satoshi numbers add `.monospacedDigit()` so
 balances don't jitter. Show full **8-dp** precision in detail views; fiat estimates are a `$0.00`
 placeholder until the rate service lands.
 
@@ -128,10 +133,10 @@ Text(app.balance.formattedCoin()).font(.jbMono(36, .medium))   // home balance
 Text("Received", bundle: .module, comment: "…").textStyle(.h3)
 ```
 
-**Navigation-bar titles** are Space Grotesk too, applied the platform-native way (not a custom
+**Navigation-bar titles** are Satoshi too, applied the platform-native way (not a custom
 principal toolbar item, so the native large-title behavior survives):
 - **iOS** — a global `UINavigationBarAppearance` (`BrandNavigationTitleFont`, applied once at the
-  app root): SpaceGrotesk-SemiBold for inline titles, SpaceGrotesk-Bold for large titles, at native
+  app root): Satoshi-Medium for inline titles, Satoshi-Bold for large titles, at native
   point sizes. Background/color stay native.
 - **Android** — a Compose `Typography` override in `Android/app/src/main/kotlin/Main.kt` (the
   `title*`/`headline*` roles SkipUI's top app bar reads). It *must* live in `Main.kt`: in a Fuse app

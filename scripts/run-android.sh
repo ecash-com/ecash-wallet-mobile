@@ -15,6 +15,7 @@
 # Usage:  scripts/run-android.sh [--release|--debug]   (default: --release)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+scripts/fetch-fonts.sh   # Satoshi is gitignored (licence) — fetched on demand
 
 ADB="$HOME/Library/Android/sdk/platform-tools/adb"
 command -v adb >/dev/null 2>&1 && ADB="$(command -v adb)"

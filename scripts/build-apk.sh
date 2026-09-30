@@ -20,6 +20,7 @@
 #         ARCH=x86_64 scripts/build-apk.sh  # Intel emulator only
 set -euo pipefail
 cd "$(dirname "$0")/.."
+scripts/fetch-fonts.sh   # Satoshi is gitignored (licence) — fetched on demand
 
 ARCH="${ARCH:-aarch64}"
 VERSION="$(grep -E '^MARKETING_VERSION' Skip.env | sed -E 's/.*=[[:space:]]*//' | tr -d '[:space:]')"

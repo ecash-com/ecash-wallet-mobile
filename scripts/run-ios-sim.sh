@@ -10,6 +10,7 @@
 # Usage:  scripts/run-ios-sim.sh [Debug|Release]   (default: Debug)
 set -euo pipefail
 cd "$(dirname "$0")/.."
+scripts/fetch-fonts.sh   # Satoshi is gitignored (licence) — fetched on demand
 
 SCHEME="ECashWalletMobile App"
 CONFIG="${1:-Debug}"

@@ -73,6 +73,15 @@ open class MainActivity: AppCompatActivity {
         UIApplication.launch(this)
         enableEdgeToEdge()
 
+        // Keep balances, addresses, and seed words out of the recents (app-switcher) thumbnail.
+        // Android grabs that snapshot as the activity pauses, before the SwiftUI PrivacyCover can
+        // draw, so the cover alone doesn't protect it. Unlike FLAG_SECURE this leaves screenshots
+        // allowed (screenshots are deliberately NOT blocked — CLAUDE.md §7). API 33+ only; on
+        // 28–32 the only equivalent is FLAG_SECURE, so older devices still show the live screen.
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.TIRAMISU) {
+            setRecentsScreenshotEnabled(false)
+        }
+
         setContent {
             val saveableStateHolder = rememberSaveableStateHolder()
             saveableStateHolder.SaveableStateProvider(true) {
@@ -203,20 +212,20 @@ internal fun SyncSystemBarsWithTheme() {
 private fun brandTitleTypography(): Typography {
     val ctx = LocalContext.current
     return remember {
-        // Space Grotesk — semibold for inline-title roles, bold for the large/headline roles
-        // (mirrors the iOS UINavigationBarAppearance: inline SemiBold, large Bold).
-        val semiId = ctx.resources.getIdentifier("spacegrotesk_semibold", "font", ctx.packageName)
-        val boldId = ctx.resources.getIdentifier("spacegrotesk_bold", "font", ctx.packageName)
+        // Satoshi — medium for inline-title roles, bold for the large/headline roles
+        // (mirrors the iOS UINavigationBarAppearance: inline Medium, large Bold).
+        val mediumId = ctx.resources.getIdentifier("satoshi_medium", "font", ctx.packageName)
+        val boldId = ctx.resources.getIdentifier("satoshi_bold", "font", ctx.packageName)
         val base = Typography()
-        if (semiId == 0 || boldId == 0) {
+        if (mediumId == 0 || boldId == 0) {
             base
         } else {
-            val semi = FontFamily(ctx.resources.getFont(semiId))
+            val medium = FontFamily(ctx.resources.getFont(mediumId))
             val bold = FontFamily(ctx.resources.getFont(boldId))
             base.copy(
-                titleLarge = base.titleLarge.copy(fontFamily = semi),
-                titleMedium = base.titleMedium.copy(fontFamily = semi),
-                titleSmall = base.titleSmall.copy(fontFamily = semi),
+                titleLarge = base.titleLarge.copy(fontFamily = medium),
+                titleMedium = base.titleMedium.copy(fontFamily = medium),
+                titleSmall = base.titleSmall.copy(fontFamily = medium),
                 headlineLarge = base.headlineLarge.copy(fontFamily = bold),
                 headlineMedium = base.headlineMedium.copy(fontFamily = bold),
                 headlineSmall = base.headlineSmall.copy(fontFamily = bold)

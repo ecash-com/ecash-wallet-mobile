@@ -4,29 +4,31 @@
 
 import SwiftUI
 
-// MARK: - Font families (DECIDED 2026-06-11)
+// MARK: - Font families (REVISED 2026-09-30 — eCash brand guidelines, ecash.com/brand)
 //
-// Two-font system: **Space Grotesk** for display/headings, **JetBrains Mono** for body, labels,
-// and all mono/numeric content (addresses, amounts). IBM Plex was dropped. Every piece of text
-// in the app uses these via `.textStyle(...)` — no system fonts anywhere (Jake's direction).
-// Bundled in BOTH Resources/Fonts (iOS) and Android/app/src/main/res/font (Android).
+// Two-font system: **Satoshi** for display/headings, **JetBrains Mono** for body, labels,
+// and all mono/numeric content (addresses, amounts). Satoshi replaced Space Grotesk; the brand also
+// moves body copy to Satoshi — not done yet. Every piece of text in the app uses these via
+// `.textStyle(...)` — no system fonts anywhere (Jake's direction).
+// Bundled in BOTH Resources/Fonts (iOS) and Android/app/src/main/res/font (Android); Satoshi's
+// files are gitignored and fetched by scripts/fetch-fonts.sh (licence — see that script).
 
 extension Font {
-    /// Space Grotesk — display & headings.
-    static func grotesk(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
-        .custom(groteskPS(weight), size: size)
+    /// Satoshi — display & headings.
+    static func satoshi(_ size: CGFloat, _ weight: Font.Weight = .bold) -> Font {
+        .custom(satoshiPS(weight), size: size)
     }
     /// JetBrains Mono — body, labels, addresses, amounts.
     static func jbMono(_ size: CGFloat, _ weight: Font.Weight = .regular) -> Font {
         .custom(jbMonoPS(weight), size: size)
     }
 
-    private static func groteskPS(_ w: Font.Weight) -> String {
+    private static func satoshiPS(_ w: Font.Weight) -> String {
         switch w {
-        case .medium: return "SpaceGrotesk-Medium"
-        case .semibold: return "SpaceGrotesk-SemiBold"
-        case .bold, .heavy, .black: return "SpaceGrotesk-Bold"
-        default: return "SpaceGrotesk-Regular"
+        // Satoshi has no SemiBold; the brand sets headings at 500, so semibold lands on Medium.
+        case .medium, .semibold: return "Satoshi-Medium"
+        case .bold, .heavy, .black: return "Satoshi-Bold"
+        default: return "Satoshi-Regular"
         }
     }
     private static func jbMonoPS(_ w: Font.Weight) -> String {
@@ -41,15 +43,15 @@ extension Font {
 // MARK: - Type scale
 
 extension Theme {
-    /// Named text styles. Headings are Space Grotesk; everything else is JetBrains Mono.
+    /// Named text styles. Headings are Satoshi; everything else is JetBrains Mono.
     /// Apply with `.textStyle(.h1)` / `.textStyle(.button)` so font, tracking, and case all
     /// come from here — no ad-hoc fonts at call sites. Numbers need nothing extra: JetBrains Mono is
     /// fixed-width already (and `.monospacedDigit()` doesn't compile on Fuse-Android).
     enum TextStyle {
-        case display   // hero balance — Space Grotesk
-        case h1        // screen titles — Space Grotesk
-        case h2        // section heads — Space Grotesk
-        case h3        // row titles — Space Grotesk
+        case display   // hero balance — Satoshi
+        case h1        // screen titles — Satoshi
+        case h2        // section heads — Satoshi
+        case h3        // row titles — Satoshi
         case button    // button labels — JetBrains Mono semibold
         case body      // default copy — JetBrains Mono
         case sm        // secondary UI — JetBrains Mono
@@ -59,10 +61,10 @@ extension Theme {
 
         var font: Font {
             switch self {
-            case .display:  return .grotesk(40, .bold)
-            case .h1:       return .grotesk(28, .semibold)
-            case .h2:       return .grotesk(22, .semibold)
-            case .h3:       return .grotesk(18, .semibold)
+            case .display:  return .satoshi(40, .bold)
+            case .h1:       return .satoshi(28, .semibold)
+            case .h2:       return .satoshi(22, .semibold)
+            case .h3:       return .satoshi(18, .semibold)
             case .button:   return .jbMono(16, .semibold)
             case .body:     return .jbMono(15, .regular)
             case .sm:       return .jbMono(13, .regular)

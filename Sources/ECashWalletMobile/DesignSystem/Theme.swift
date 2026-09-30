@@ -13,7 +13,7 @@ import SwiftUI
 /// - Colors are SwiftUI-native and resolve from the asset catalog (Any = light, Dark
 /// appearance). NO UIKit `UIColor { traitCollection }` — Skip maps the catalog to a
 /// Compose `ColorScheme` so light/dark works on both platforms with no view-level branching.
-/// - Type styles live in `Typography.swift` (`Font.grotesk/plex/mono` + `Theme.Typography`).
+/// - Type styles live in `Typography.swift` (`Font.satoshi/jbMono` + `Theme.Typography`).
 /// - Icons are NOT here — they use the Material Symbols `.symbolset` workflow, never SF Symbols.
 enum Theme {
 

@@ -7,6 +7,8 @@ default_platform(:ios)
 lane :assemble do |options|
   # only build the iOS side of the app
   ENV["SKIP_ZERO"] = "true"
+  # Satoshi is gitignored (its licence forbids redistribution from a public repo) — fetch it.
+  sh("../../scripts/fetch-fonts.sh")
   # Release signs MANUALLY with the App Store profile that `get_provisioning_profile` just created
   # and installed (its name lands in SIGH_PROFILE_NAME). Automatic signing can't be used headlessly
   # here: it selects the identity itself — refusing a pinned "Apple Distribution" — and can only

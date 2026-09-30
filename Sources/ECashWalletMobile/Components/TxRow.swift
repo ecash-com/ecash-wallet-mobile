@@ -80,23 +80,23 @@ struct TxRow: View {
             // The amount column already shows the deposit (net minus fee), so the title just names
             // where it went.
             SidechainDepositTitle(name: sidechainName, slot: slot, received: tx.isReceived)
-                .font(.grotesk(16, .semibold))
+                .font(.satoshi(16, .semibold))
                 .foregroundStyle(Theme.Colors.text0)
         } else if let kind = tx.coinNewsKind {
             Text(verbatim: "CoinNews \(Self.displayKind(kind))")
-                .font(.grotesk(16, .semibold))
+                .font(.satoshi(16, .semibold))
                 .foregroundStyle(Theme.Colors.text0)
         } else if tx.isSelfTransfer {
             // A split or self-sweep didn't pay anyone — calling it "Sent" next to a fee-sized
             // amount is what makes it look like a failed send.
             Text("Sent to yourself", bundle: .module, comment: "tx row: coins moved between the user's own addresses (split / self-sweep)")
-                .font(.grotesk(16, .semibold))
+                .font(.satoshi(16, .semibold))
                 .foregroundStyle(Theme.Colors.text0)
         } else {
             (tx.isReceived
                 ? Text("Received", bundle: .module, comment: "tx row: incoming")
                 : Text("Sent", bundle: .module, comment: "tx row: outgoing"))
-                .font(.grotesk(16, .semibold))
+                .font(.satoshi(16, .semibold))
                 .foregroundStyle(Theme.Colors.text0)
         }
     }

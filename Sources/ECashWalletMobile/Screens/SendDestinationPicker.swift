@@ -64,7 +64,7 @@ struct SendDestinationPicker: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.xs)
                     .fill(Theme.Colors.accent)
                 Text(String(destination.label.prefix(1)).uppercased())
-                    .font(.grotesk(14, .bold))
+                    .font(.satoshi(14, .bold))
                     .foregroundStyle(Theme.Colors.accentText)
             }
             .frame(width: 30, height: 30)

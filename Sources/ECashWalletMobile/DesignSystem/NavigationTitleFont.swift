@@ -41,8 +41,8 @@ struct BrandNavigationTitleFont: ViewModifier {
     /// is unavailable (the Android / transpile build).
     static func applyIOSAppearance() {
         #if canImport(UIKit)
-        let inlineFont = UIFont(name: "SpaceGrotesk-SemiBold", size: 17)
-        let largeFont = UIFont(name: "SpaceGrotesk-Bold", size: 34)
+        let inlineFont = UIFont(name: "Satoshi-Medium", size: 17)
+        let largeFont = UIFont(name: "Satoshi-Bold", size: 34)
 
         func restyle(_ appearance: UINavigationBarAppearance) {
             if let inlineFont { appearance.titleTextAttributes[.font] = inlineFont }

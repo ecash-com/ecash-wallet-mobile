@@ -242,7 +242,7 @@ app screen and this table should be kept in sync.
 | [swift-qrcode-generator](https://github.com/fwcd/swift-qrcode-generator) | Receive QR codes | MIT |
 | [SkipQRCode](https://source.skip.tools/skip-qrcode) | Send QR scanning (Android camera) | LGPL-3.0 |
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | Mono / numeric typeface | OFL-1.1 |
-| [Space Grotesk](https://github.com/floriankarsten/space-grotesk) | Display typeface | OFL-1.1 |
+| [Satoshi](https://www.fontshare.com/fonts/satoshi) | Display typeface (not in the repo — fetched at build time by `scripts/fetch-fonts.sh`) | ITF Free Font License |
 | [Material Symbols](https://github.com/google/material-design-icons) | Icon set (`.symbolset`) | Apache-2.0 |
 
 > Release note: bundling the **full license texts / copyright notices** (required by MIT/Apache/OFL)

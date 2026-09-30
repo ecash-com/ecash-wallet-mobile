@@ -192,6 +192,10 @@ jobs:
       # optimized Swift) AND faster at runtime, and it needs NO extra secrets — the release
       # signingConfig signs with the debug keystore ensured above, so this is still a freely-
       # sideloadable, debug-key-signed APK (same as before, just smaller).
+      # Satoshi is gitignored (its licence forbids redistribution from a public repo) — fetch it.
+      - name: Fetch fonts
+        run: scripts/fetch-fonts.sh
+
       - name: Build release APK
         run: skip export --release --no-ios --arch aarch64
 

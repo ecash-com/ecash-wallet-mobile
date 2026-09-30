@@ -57,9 +57,9 @@ extension OpenSourceLicense {
             license: "OFL-1.1",
             url: "https://github.com/JetBrains/JetBrainsMono"),
         OpenSourceLicense(
-            name: "Space Grotesk",
-            license: "OFL-1.1",
-            url: "https://github.com/floriankarsten/space-grotesk"),
+            name: "Satoshi",
+            license: "ITF Free Font License",
+            url: "https://www.fontshare.com/fonts/satoshi"),
         OpenSourceLicense(
             name: "Material Symbols",
             license: "Apache-2.0",
