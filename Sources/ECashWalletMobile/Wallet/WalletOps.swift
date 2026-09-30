@@ -45,4 +45,12 @@ protocol WalletOps {
     func splitSummary(walletId: String) throws -> SplitSummary
     func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary
     func splitCandidates(walletId: String) throws -> [Utxo]
+    /// Purge engine-held state for a wallet that is being removed (Golden Rule §5). The BDK side purges
+    /// through `WalletManager.removeWallet`, so its implementation is the default no-op; Thunder keeps
+    /// app-side stores (revealed index, first-seen times, account public key) that must go too.
+    func forget(walletId: String)
+}
+
+extension WalletOps {
+    func forget(walletId: String) {}
 }

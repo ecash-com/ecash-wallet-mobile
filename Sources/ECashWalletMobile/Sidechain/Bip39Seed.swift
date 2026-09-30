@@ -15,7 +15,7 @@ enum Bip39Seed {
     static func seed(mnemonic: String, passphrase: String = "") -> [UInt8] {
         let password = Array(mnemonic.decomposedStringWithCompatibilityMapping.utf8)
         let salt = Array(("mnemonic" + passphrase).decomposedStringWithCompatibilityMapping.utf8)
-        return ThunderCrypto.pbkdf2HMACSHA512(
+        return SidechainHash.pbkdf2HMACSHA512(
             password: password, salt: salt, iterations: 2048, derivedKeyLength: 64)
     }
 }

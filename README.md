@@ -242,6 +242,7 @@ app screen and this table should be kept in sync.
 | [swift-qrcode-generator](https://github.com/fwcd/swift-qrcode-generator) | Receive QR codes | MIT |
 | [SkipQRCode](https://source.skip.tools/skip-qrcode) | Send QR scanning (Android camera) | LGPL-3.0 |
 | [JetBrains Mono](https://github.com/JetBrains/JetBrainsMono) | Mono / numeric typeface | OFL-1.1 |
+| [libsodium](https://github.com/jedisct1/libsodium) (ristretto255 subset, vendored in `Packages/Ristretto255`) | Thunder sidechain keys & signatures | ISC |
 | [Satoshi](https://www.fontshare.com/fonts/satoshi) | Display typeface (not in the repo — fetched at build time by `scripts/fetch-fonts.sh`) | ITF Free Font License |
 | [Material Symbols](https://github.com/google/material-design-icons) | Icon set (`.symbolset`) | Apache-2.0 |
 

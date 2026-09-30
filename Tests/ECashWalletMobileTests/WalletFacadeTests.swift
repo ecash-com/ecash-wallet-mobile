@@ -33,6 +33,7 @@ import WalletService
             calls.append("sweep:\(walletId)")
             return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
         }
+        func forget(walletId: String) { calls.append("forget:\(walletId)") }
         func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
             calls.append("split:\(walletId)")
             return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
@@ -85,6 +86,15 @@ import WalletService
         #expect(try facade.balance(walletId: "thunder-id") == Amount(sats: 2))   // the Thunder side's canned value
         #expect(thunder.calls == ["balance:thunder-id"])
         #expect(primary.calls.isEmpty)
+    }
+
+    /// Removal may already have dropped the wallet from the manager, so routing can't tell which engine
+    /// held it — forget must reach both.
+    @Test func forgetReachesBothEngines() {
+        let (facade, primary, thunder) = makeFacade()
+        facade.forget(walletId: "gone")
+        #expect(primary.calls == ["forget:gone"])
+        #expect(thunder.calls == ["forget:gone"])
     }
 
     @Test func otherWalletsRouteToBDK() async throws {

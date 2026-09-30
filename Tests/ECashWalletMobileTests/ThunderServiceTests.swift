@@ -20,7 +20,7 @@ import WalletService
     private static let mnemonic = "abandon abandon abandon abandon abandon abandon "
         + "abandon abandon abandon abandon abandon about"
     /// Index-0 address for the mnemonic above (pinned in ThunderWalletTests).
-    private static let address0 = "38VvRdmcQREr1UAcZma98WLFVpAp"
+    private static let address0 = "NKqSr4bQejFbKpd5yLQgWEiMJFx"
 
     /// A service whose RPC returns `utxosJSON` for `get_utxos` and `txid` for `submit_transaction`,
     /// recording every request body it was sent.
@@ -30,9 +30,12 @@ import WalletService
                                 submitTxid: String = "aa",
                                 requests: RequestLog = RequestLog(),
                                 indexStore: ThunderAddressIndexStoring = InMemoryThunderAddressIndexStore(),
+                                firstSeenStore: ThunderFirstSeenStoring = InMemoryThunderFirstSeenStore(),
+                                accountKeyStore: ThunderAccountKeyStoring = InMemoryThunderAccountKeyStore(),
+                                mnemonicReads: MnemonicReads = MnemonicReads(),
                                 mnemonic: String? = mnemonic) -> ThunderService {
         ThunderService(
-            loadMnemonic: { _ in mnemonic },
+            loadMnemonic: { _ in mnemonicReads.count += 1; return mnemonic },
             makeBackend: {
                 ThunderRPCBackend(client: ThunderRPCClient(endpoint: "http://127.0.0.1:6009") { request in
                     let body = request.httpBody ?? Data()
@@ -54,7 +57,9 @@ import WalletService
                     }
                 })
             },
-            indexStore: indexStore)
+            indexStore: indexStore,
+            firstSeenStore: firstSeenStore,
+            accountKeyStore: accountKeyStore)
     }
 
     private static func utxoJSON(address: String, sats: UInt64, vout: Int,
@@ -112,6 +117,56 @@ import WalletService
         } catch {
             Issue.record("wrong error type: \(error)")
         }
+    }
+
+    // MARK: - Watch-only (thunder-rust 0.18 non-hardened address keys)
+
+    /// Addresses come from the cached account PUBLIC key: the mnemonic is read once — to compute that
+    /// key — and never again for receive, change or sync. Only signing reads it after that.
+    @Test func addressesNeedTheMnemonicOnlyOnce() async throws {
+        let reads = MnemonicReads()
+        let service = Self.service(mnemonicReads: reads)
+        _ = try await service.receiveAddress(walletId: "w1", unused: true)
+        _ = try await service.receiveAddress(walletId: "w1", unused: false)
+        _ = try await service.sync(walletId: "w1")
+        #expect(reads.count == 1)
+    }
+
+    @Test func cachedAccountKeyServesAddressesWithoutAnyMnemonic() async throws {
+        let store = InMemoryThunderAccountKeyStore()
+        _ = try await Self.service(accountKeyStore: store).receiveAddress(walletId: "w1", unused: true)
+        // A relaunch where the Keychain is unavailable still lists addresses — and the same ones.
+        let watchOnly = Self.service(accountKeyStore: store, mnemonic: nil)
+        #expect(try await watchOnly.receiveAddress(walletId: "w1", unused: true).address == Self.address0)
+    }
+
+    @Test func signingStillReadsTheMnemonic() async throws {
+        let reads = MnemonicReads()
+        let service = Self.service(utxosJSON: "[\(Self.utxoJSON(address: Self.address0, sats: 50_000, vout: 0))]",
+                                   mnemonicReads: reads)
+        _ = try await service.sync(walletId: "w1")
+        let before = reads.count
+        _ = try await service.send(walletId: "w1", to: Self.address0, amount: Amount(sats: 10_000),
+                                   feeRate: FeeRate(satPerVByte: 1))
+        #expect(reads.count == before + 1)
+    }
+
+    @Test func forgetPurgesEveryPerWalletStore() async throws {
+        let index = InMemoryThunderAddressIndexStore()
+        let firstSeen = InMemoryThunderFirstSeenStore()
+        let accountKeys = InMemoryThunderAccountKeyStore()
+        let service = Self.service(indexStore: index, firstSeenStore: firstSeen, accountKeyStore: accountKeys)
+        _ = try await service.receiveAddress(walletId: "w1", unused: false)
+        _ = try await service.receiveAddress(walletId: "w2", unused: false)
+        firstSeen.record(txids: ["aa"], walletId: "w1", now: 1)
+
+        service.forget(walletId: "w1")
+        #expect(index.revealedIndex(walletId: "w1") == 0)
+        #expect(firstSeen.firstSeen(walletId: "w1").isEmpty)
+        #expect(accountKeys.accountKey(walletId: "w1") == nil)
+        // Only the removed wallet.
+        #expect(index.revealedIndex(walletId: "w2") == 1)
+        #expect(accountKeys.accountKey(walletId: "w2") != nil)
     }
 
     // MARK: - Balance / sync
@@ -215,7 +270,7 @@ import WalletService
         #expect(inputs.count == 1)
         #expect(outputs.count == 2)                                    // payment + change
         #expect(authorizations.count == inputs.count)                  // exactly one per input
-        #expect((authorizations[0]["signature"] as? [Int])?.count == 64)
+        #expect((authorizations[0]["signature"] as? String)?.count == 128)   // hex (thunder-rust ≥ 0.18)
         #expect((transaction["proof"] as? [String: Any])?["targets"] as? [Int] == [])
     }
 
@@ -321,4 +376,9 @@ final class RequestLog: @unchecked Sendable {
         }
         return nil
     }
+}
+
+/// Counts `loadMnemonic` calls — the watch-only tests assert when the secret is (not) read.
+final class MnemonicReads: @unchecked Sendable {
+    var count = 0
 }

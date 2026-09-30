@@ -12,7 +12,7 @@ import Foundation
 /// are what should fail first.
 @Suite struct ThunderRPCTests {
 
-    private static let address = "38VvRdmcQREr1UAcZma98WLFVpAp"   // index-0 golden (ThunderWallet)
+    private static let address = "NKqSr4bQejFbKpd5yLQgWEiMJFx"   // index-0 golden (ThunderWallet)
 
     // MARK: - Decoding `get_utxos`
 
@@ -122,8 +122,9 @@ import Foundation
 
         // authorizations: number arrays, not hex strings.
         let authorizations = try #require(root["authorizations"] as? [[String: Any]])
-        #expect((authorizations[0]["verifying_key"] as? [Int])?.count == 32)
-        #expect((authorizations[0]["signature"] as? [Int])?.count == 64)
+        // thunder-rust ≥ 0.18: frost-ristretto255 keys/signatures serialize as hex strings.
+        #expect((authorizations[0]["verifying_key"] as? String)?.count == 64)
+        #expect((authorizations[0]["signature"] as? String)?.count == 128)
     }
 
     // MARK: - Client envelope

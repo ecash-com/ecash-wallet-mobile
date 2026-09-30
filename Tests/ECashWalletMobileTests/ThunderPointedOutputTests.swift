@@ -72,7 +72,7 @@ import Blake3
 
     @Test func withdrawalValueIncludesTheMainchainFee() {
         // Both the payout and the mainchain fee leave the sidechain (thunder-rust `GetValue`).
-        let content = ThunderOutputContent.withdrawal(sats: 1_000, mainFeeSats: 300, mainScriptPubKey: [0x00])
+        let content = ThunderOutputContent.withdrawal(sats: 1_000, mainFeeSats: 300, mainAddress: "stand-in", mainScriptPubKey: [0x00])
         #expect(content.valueSats == 1_300)
         #expect(ThunderOutputContent.value(sats: 1_000).valueSats == 1_000)
     }

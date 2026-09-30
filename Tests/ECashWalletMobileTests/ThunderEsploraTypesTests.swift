@@ -17,7 +17,7 @@ import Foundation
 @Suite struct ThunderEsploraTypesTests {
 
     /// Index-0 address for the standard test mnemonic (pinned in ThunderWalletTests).
-    private static let address = "38VvRdmcQREr1UAcZma98WLFVpAp"
+    private static let address = "NKqSr4bQejFbKpd5yLQgWEiMJFx"
     private static let txidHex = String(repeating: "11", count: 32)
 
     private static func utxo(_ json: String) throws -> ThunderEsploraUTXO {
@@ -206,5 +206,13 @@ import Foundation
         """
         let info = try JSONDecoder().decode(ThunderEsploraAddressInfo.self, from: Data(json.utf8))
         #expect(info.isUsed)
+    }
+
+    @Test func mempoolOnlyActivityCountsAsUsed() throws {
+        let json = #"{"address":"x","chain_stats":{"funded_txo_count":0,"funded_txo_sum":0,"spent_txo_count":0,"spent_txo_sum":0,"tx_count":0},"mempool_stats":{"funded_txo_count":1,"funded_txo_sum":29730,"spent_txo_count":0,"spent_txo_sum":0,"tx_count":1}}"#
+        let info = try JSONDecoder().decode(ThunderEsploraAddressInfo.self, from: Data(json.utf8))
+        #expect(info.isUsed)
+        let neither = #"{"address":"x","chain_stats":{"funded_txo_count":0,"tx_count":0}}"#
+        #expect(!(try JSONDecoder().decode(ThunderEsploraAddressInfo.self, from: Data(neither.utf8))).isUsed)
     }
 }

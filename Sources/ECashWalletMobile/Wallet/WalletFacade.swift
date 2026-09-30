@@ -66,4 +66,10 @@ final class WalletFacade: WalletOps {
     func splitCandidates(walletId: String) throws -> [Utxo] {
         try route(walletId).splitCandidates(walletId: walletId)
     }
+    /// BOTH engines, not `route`: removal may already have taken the wallet out of the manager, so
+    /// `isThunder` can no longer tell. Forgetting an id an engine never held is a harmless no-op.
+    func forget(walletId: String) {
+        primary.forget(walletId: walletId)
+        thunder.forget(walletId: walletId)
+    }
 }

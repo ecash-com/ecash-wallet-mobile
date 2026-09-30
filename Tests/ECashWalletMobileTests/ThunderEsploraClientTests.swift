@@ -44,7 +44,7 @@ import Foundation
         }
     }
 
-    private static let address = "38VvRdmcQREr1UAcZma98WLFVpAp"
+    private static let address = "NKqSr4bQejFbKpd5yLQgWEiMJFx"
 
     // MARK: - Route composition
 

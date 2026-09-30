@@ -40,7 +40,7 @@ struct ThunderEsploraLiveTests {
 
     /// Index-0 address for the standard test mnemonic. Nobody has ever paid it; it is here to prove
     /// the address routes answer in the shape we decode, not to find coins.
-    private static let address = "38VvRdmcQREr1UAcZma98WLFVpAp"
+    private static let address = "NKqSr4bQejFbKpd5yLQgWEiMJFx"
 
     /// The tip either parses as a height or reports the index as empty. Both are healthy answers, and
     /// which one we get is the live status of the deployment.

@@ -31,6 +31,8 @@ struct ThunderEsploraBackend: ThunderBackend {
     /// address at 500 transactions — far past any real wallet, and it means a server that kept
     /// answering full pages could never spin us forever.
     static let maxHistoryPages = 20
+    /// Rows per `/txs/chain` page (the index's fixed page size); fewer means it was the last page.
+    static let historyPageSize = 25
 
     init(client: ThunderEsploraClient) { self.client = client }
 
@@ -91,15 +93,20 @@ struct ThunderEsploraBackend: ThunderBackend {
         }
 
         var utxos: [ThunderPointedOutput] = []
+        var pendingSats: UInt64 = 0
         for (address, rows) in utxoPages {
             guard let parsed = ThunderAddress(base58: address) else { continue }
-            utxos.append(contentsOf: rows.compactMap { $0.pointedOutput(address: parsed) })
+            for row in rows {
+                guard let output = row.pointedOutput(address: parsed) else { continue }
+                // Only confirmed coins are spendable (see ThunderScan.pendingSats).
+                if row.status.confirmed { utxos.append(output) } else { pendingSats &+= output.valueSats }
+            }
         }
         let transactions = ThunderEsploraHistory.build(txs: txPages.flatMap { $0 },
                                                        deposits: depositPages,
                                                        ours: Set(addresses),
                                                        tipHeight: tipHeight)
-        return ThunderScan(utxos: utxos, transactions: transactions)
+        return ThunderScan(utxos: utxos, transactions: transactions, pendingSats: pendingSats)
     }
 
     func spendableUTXOs(addresses: [String]) async throws -> [ThunderPointedOutput] {
@@ -111,7 +118,8 @@ struct ThunderEsploraBackend: ThunderBackend {
         var out: [ThunderPointedOutput] = []
         for (address, rows) in pages {
             guard let parsed = ThunderAddress(base58: address) else { continue }
-            out.append(contentsOf: rows.compactMap { $0.pointedOutput(address: parsed) })
+            // Confirmed only: the node can't spend an output that isn't in a block yet.
+            out.append(contentsOf: rows.filter(\.status.confirmed).compactMap { $0.pointedOutput(address: parsed) })
         }
         return out
     }
@@ -122,23 +130,31 @@ struct ThunderEsploraBackend: ThunderBackend {
 
     // MARK: - Internals
 
-    /// Every confirmed transaction touching one address, paging until the index returns a short page.
+    /// Every transaction touching one address, paging until the index returns a short page.
     ///
-    /// The cursor is the **last** txid of a page, which the index resolves back to a height and
-    /// continues below. A page that repeats the cursor's transaction would loop, so paging also stops
-    /// if a page adds nothing new.
+    /// The cursor is the last CONFIRMED txid of a page, which the index resolves back to a height and
+    /// continues below. The index now also lists unconfirmed transactions (newest first, on page one);
+    /// one of those has no height, so using it as the cursor 404s — which is how a successful send once
+    /// turned every following sync into "Couldn't reach the network" (2026-09-30). So: stop on a short
+    /// page, never page from an unconfirmed row, and read a 404 on a follow-up page as "no more history"
+    /// rather than failing the whole sync. A page that repeats the cursor's transaction would loop, so
+    /// paging also stops if a page adds nothing new.
     private func allTransactions(of address: String) async throws -> [ThunderEsploraTx] {
         var out: [ThunderEsploraTx] = []
         var seen = Set<String>()
         var lastSeen: String? = nil
         for _ in 0..<Self.maxHistoryPages {
-            let page = try await client.addressTxs(address, lastSeen: lastSeen)
-            guard !page.isEmpty else { break }
+            let page: [ThunderEsploraTx]
+            do {
+                page = try await client.addressTxs(address, lastSeen: lastSeen)
+            } catch ThunderBackendError.server(code: 404, _) where lastSeen != nil {
+                break   // the cursor no longer resolves — nothing further back to fetch
+            }
             let fresh = page.filter { seen.insert($0.txid).inserted }
             out.append(contentsOf: fresh)
-            // A full page of nothing new means the cursor isn't advancing — stop rather than spin.
-            if fresh.isEmpty { break }
-            guard let cursor = page.last?.txid else { break }
+            // A short page is the last one; a page of nothing new means the cursor isn't advancing.
+            guard page.count >= Self.historyPageSize, !fresh.isEmpty,
+                  let cursor = page.last(where: { $0.status.confirmed })?.txid else { break }
             lastSeen = cursor
         }
         return out

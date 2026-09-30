@@ -7,8 +7,8 @@ import WalletService
 
 /// The Fuse-native Thunder engine — the `WalletOps` implementation for `.thunder` wallets, sitting
 /// beside the bridged BDK `WalletManager` and routed to by `WalletFacade`. Thunder shares nothing with
-/// Bitcoin (ed25519 keys, BLAKE3 addresses, Borsh serialization, a utreexo UTXO set), so none of BDK
-/// applies; this is built on the Thunder crypto in this folder.
+/// Bitcoin (FROST-ristretto255 keys, BLAKE3 addresses, Borsh serialization, a utreexo UTXO set), so none
+/// of BDK applies; this is built on the sidechain crypto in `Sidechain/` and the Thunder code here.
 ///
 /// **The thin-client flow** (agreed with the Thunder dev, docs/thunder-sidechain-support.md §8b — the
 /// node's half shipped in thunder-rust `2026-07-24-refactor`):
@@ -26,9 +26,9 @@ import WalletService
 /// date are stamped here from a local first-seen record (`datedNewestFirst`), in one place, so the
 /// fallback rule doesn't drift per backend.
 ///
-/// The mnemonic is loaded APP-SIDE, transiently: `loadMnemonic` reads the secure store only when
-/// derivation or signing needs it, and the derived `ThunderWallet` is dropped right after — the same
-/// sign-on-demand shape as the BDK path, on this side of the bridge.
+/// **Watch-only + sign-on-demand**, like the BDK path: addresses derive from the wallet's account PUBLIC
+/// key (`ThunderAccountKeyStoring`), computed from the seed once and cached. After that the mnemonic is
+/// loaded — app-side, transiently — only to SIGN, and the derived `ThunderWallet` is dropped right after.
 @MainActor
 final class ThunderService: WalletOps {
     private let loadMnemonic: (String) throws -> String?
@@ -37,6 +37,7 @@ final class ThunderService: WalletOps {
     private let makeBackend: @Sendable () -> ThunderBackend
     private let indexStore: ThunderAddressIndexStoring
     private let firstSeenStore: ThunderFirstSeenStoring
+    private let accountKeyStore: ThunderAccountKeyStoring
     /// Clock seam so tests don't depend on the wall clock.
     private let now: @Sendable () -> Int64
 
@@ -48,6 +49,9 @@ final class ThunderService: WalletOps {
     /// Last rebuilt history per wallet. `WalletOps.transactions` is synchronous, so — like balance —
     /// a sync computes this and the read returns it.
     private var historyCache: [String: [WalletTx]] = [:]
+
+    /// Last synced value of the wallet's UNCONFIRMED outputs (see `ThunderScan.pendingSats`).
+    private var pendingCache: [String: UInt64] = [:]
 
     /// How far past the highest revealed index a sync still looks. Mirrors BIP44's gap limit: money
     /// paid to an address we handed out but never recorded still has to be found.
@@ -65,11 +69,13 @@ final class ThunderService: WalletOps {
          },
          indexStore: ThunderAddressIndexStoring = UserDefaultsThunderAddressIndexStore(),
          firstSeenStore: ThunderFirstSeenStoring = UserDefaultsThunderFirstSeenStore(),
+         accountKeyStore: ThunderAccountKeyStoring = UserDefaultsThunderAccountKeyStore(),
          now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
         self.loadMnemonic = loadMnemonic
         self.makeBackend = makeBackend
         self.indexStore = indexStore
         self.firstSeenStore = firstSeenStore
+        self.accountKeyStore = accountKeyStore
         self.now = now
     }
 
@@ -78,11 +84,10 @@ final class ThunderService: WalletOps {
     /// A receive address. `unused: true` → the current revealed index (what Receive shows on open);
     /// `false` ("New address") → advance and persist the counter.
     ///
-    /// The mnemonic is read on the main actor (a quick Keychain hit; reading it off-main trips the same
-    /// isolation assertion that bit the facade), but the heavy work — PBKDF2 + SLIP-0010 + ed25519 +
-    /// BLAKE3 — runs detached so the Receive sheet's present animation stays smooth.
+    /// Derived from the account public key — no mnemonic — off the main actor so the Receive sheet's
+    /// present animation stays smooth.
     func receiveAddress(walletId: String, unused: Bool) async throws -> AddressInfo {
-        let mnemonic = try requireMnemonic(walletId: walletId)
+        let account = try await accountPublicKey(walletId: walletId)
         let index: UInt32
         if unused {
             index = indexStore.revealedIndex(walletId: walletId)
@@ -91,8 +96,8 @@ final class ThunderService: WalletOps {
             indexStore.setRevealedIndex(index, walletId: walletId)
         }
         return try await Task.detached(priority: .userInitiated) {
-            let key = try ThunderKey.derive(mnemonic: mnemonic, index: index)
-            return AddressInfo(address: key.address.base58, index: Int32(index))
+            let address = try ThunderWallet.addresses(account: account, indices: index..<(index + 1))[0]
+            return AddressInfo(address: address.base58, index: Int32(index))
         }.value
     }
 
@@ -104,11 +109,13 @@ final class ThunderService: WalletOps {
         Amount(sats: Int64(clamping: (utxoCache[walletId] ?? []).reduce(UInt64(0)) { $0 &+ $1.valueSats }))
     }
 
-    /// Always zero: neither backend has a mempool to report. The node's `get_utxos` reads its *state*,
-    /// which only reflects connected blocks, and the index serves no mempool view either
-    /// (`/address/{a}/txs/mempool` is always empty — it says so). A tx we just submitted therefore
-    /// shows up at the next sync after it is mined, not before.
-    func pendingBalance(walletId: String) throws -> Amount { Amount(sats: 0) }
+    /// Coins the wallet has but can't spend yet: unconfirmed incoming payments and change from a send
+    /// that isn't in a block. The Esplora index reports them (since 2026-09-30); the node RPC reads only
+    /// confirmed state, so it always reports zero here. Spendable `balance` excludes them — the node
+    /// rejects spending an output that isn't in its utreexo accumulator yet.
+    func pendingBalance(walletId: String) throws -> Amount {
+        Amount(sats: Int64(clamping: pendingCache[walletId] ?? 0))
+    }
 
     /// Scan this wallet's addresses (0 ..< revealed + gap limit), refresh the cached UTXO set, and
     /// rebuild history from the unspent + spent reads.
@@ -128,6 +135,7 @@ final class ThunderService: WalletOps {
         let scan = try await backend.scan(addresses: discovered.addresses, knownUsed: discovered.used)
         utxoCache[walletId] = scan.utxos
         historyCache[walletId] = datedNewestFirst(scan.transactions, walletId: walletId)
+        pendingCache[walletId] = scan.pendingSats
         return try balance(walletId: walletId)
     }
 
@@ -218,7 +226,7 @@ final class ThunderService: WalletOps {
         // the coin it came from for anyone watching the chain.
         var outputs = [ThunderOutput(address: destination.bytes, content: .value(sats: UInt64(amount.sats)))]
         if selection.changeSats > 0 {
-            let change = try nextChangeAddress(walletId: walletId)
+            let change = try await nextChangeAddress(walletId: walletId)
             outputs.append(ThunderOutput(address: change.bytes, content: .value(sats: selection.changeSats)))
         }
         return try await build(walletId: walletId, selection: selection, outputs: outputs,
@@ -255,7 +263,7 @@ final class ThunderService: WalletOps {
         SplitSummary(spendableSats: 0, needsSplitSats: 0, needsSplitCount: 0)
     }
 
-    /// Same zeros regardless of what the Bitcoin check found — Thunder coins are ed25519/BLAKE3 and
+    /// Same zeros regardless of what the Bitcoin check found — Thunder coins are ristretto/BLAKE3 and
     /// share no outpoints with Bitcoin, so nothing here can be a split candidate.
     func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary {
         try splitSummary(walletId: walletId)
@@ -286,13 +294,25 @@ final class ThunderService: WalletOps {
         return try await derivedAddresses(walletId: walletId, indices: UInt32(0)..<count)
     }
 
-    /// Addresses at `indices`. The mnemonic is loaded per call and dropped when the task returns —
-    /// discovery derives in batches rather than holding the secret across the whole scan.
+    /// Addresses at `indices`, from the account public key — no mnemonic.
     private func derivedAddresses(walletId: String, indices: Range<UInt32>) async throws -> [String] {
-        let mnemonic = try requireMnemonic(walletId: walletId)
+        let account = try await accountPublicKey(walletId: walletId)
         return try await Task.detached(priority: .userInitiated) {
-            try ThunderWallet(mnemonic: mnemonic).addresses(indices: indices).map(\.base58)
+            try ThunderWallet.addresses(account: account, indices: indices).map(\.base58)
         }.value
+    }
+
+    /// The wallet's account public key: cached, or computed from the seed ONCE and stored. The one
+    /// non-signing moment that still reads the mnemonic — the first time a wallet needs an address
+    /// (after create/import, or on first launch after the 0.18 key port).
+    private func accountPublicKey(walletId: String) async throws -> RistrettoBip32.PublicKey {
+        if let cached = accountKeyStore.accountKey(walletId: walletId) { return cached }
+        let mnemonic = try requireMnemonic(walletId: walletId)
+        let account = try await Task.detached(priority: .userInitiated) {
+            try ThunderWallet(mnemonic: mnemonic).accountPublicKey()
+        }.value
+        accountKeyStore.setAccountKey(account, walletId: walletId)
+        return account
     }
 
     /// Sign `selection` + `outputs` and submit. Shared by send and sweep — the only difference between
@@ -306,7 +326,7 @@ final class ThunderService: WalletOps {
         let transaction = ThunderTransaction(inputs: selection.inputs.map { $0.asInput() }, outputs: outputs)
         let inputAddresses = selection.inputs.map(\.address)
 
-        // Derive + sign off the main actor: this is the only moment the ed25519 secret exists, and it
+        // Derive + sign off the main actor: this is the only moment the signing secret exists, and it
         // is dropped when the task returns (Golden Rule §2).
         let authorized = try await Task.detached(priority: .userInitiated) {
             try ThunderWallet(mnemonic: mnemonic).authorize(transaction,
@@ -328,10 +348,23 @@ final class ThunderService: WalletOps {
 
     /// A fresh change address: advance and persist the revealed counter, so change never lands on an
     /// address the Receive screen might hand out later (and so the next sync's window covers it).
-    private func nextChangeAddress(walletId: String) throws -> ThunderAddress {
-        let mnemonic = try requireMnemonic(walletId: walletId)
+    private func nextChangeAddress(walletId: String) async throws -> ThunderAddress {
+        let account = try await accountPublicKey(walletId: walletId)
         let index = indexStore.revealedIndex(walletId: walletId) + 1
         indexStore.setRevealedIndex(index, walletId: walletId)
-        return try ThunderKey.derive(mnemonic: mnemonic, index: index).address
+        return try ThunderWallet.addresses(account: account, indices: index..<(index + 1))[0]
+    }
+
+    // MARK: - Removal
+
+    /// Purge everything this engine keeps for `walletId` — revealed index, first-seen times, the account
+    /// public key, and the in-memory caches (Golden Rule §5). Called when the wallet is removed.
+    func forget(walletId: String) {
+        indexStore.forget(walletId: walletId)
+        firstSeenStore.forget(walletId: walletId)
+        accountKeyStore.forget(walletId: walletId)
+        utxoCache[walletId] = nil
+        historyCache[walletId] = nil
+        pendingCache[walletId] = nil
     }
 }

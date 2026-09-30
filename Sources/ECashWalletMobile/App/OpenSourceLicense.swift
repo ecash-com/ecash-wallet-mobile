@@ -57,6 +57,10 @@ extension OpenSourceLicense {
             license: "OFL-1.1",
             url: "https://github.com/JetBrains/JetBrainsMono"),
         OpenSourceLicense(
+            name: "libsodium (ristretto255 subset)",
+            license: "ISC",
+            url: "https://github.com/jedisct1/libsodium"),
+        OpenSourceLicense(
             name: "Satoshi",
             license: "ITF Free Font License",
             url: "https://www.fontshare.com/fonts/satoshi"),

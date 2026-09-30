@@ -14,7 +14,7 @@ import WalletService
 /// them still requires a judgement call (whose fee it is, and what a self-transfer means).
 @Suite struct ThunderEsploraHistoryTests {
 
-    private static let mine = "38VvRdmcQREr1UAcZma98WLFVpAp"
+    private static let mine = "NKqSr4bQejFbKpd5yLQgWEiMJFx"
     private static let mineChange = "3AnotherOfOurAddressesXXXXXXX"
     private static let theirs = "3SomeoneElsesAddressXXXXXXXXX"
     private static let ours: Set<String> = [mine, mineChange]

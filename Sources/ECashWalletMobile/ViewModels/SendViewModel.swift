@@ -307,6 +307,8 @@ final class SendViewModel {
             step = .sent
         } catch let error as WalletError {
             step = .failed(error.userMessage)
+        } catch let error as UserFacingError {
+            step = .failed(error.userMessage)
         } catch {
             step = .failed("Couldn't send. Please try again.")
         }

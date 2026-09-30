@@ -66,8 +66,8 @@ import Crypto
             #expect(auth.verifyingKey == key.publicKeyBytes)
             // BLAKE3(vk)[..20] == the key's address — the input↔key binding Thunder checks.
             #expect(ThunderAddress(publicKey: auth.verifyingKey) == key.address)
-            let vk = try Curve25519.Signing.PublicKey(rawRepresentation: auth.verifyingKey)
-            #expect(vk.isValidSignature(Data(auth.signature), for: message))   // signs borsh(transaction)
+            #expect(FrostSchnorr.verify(signature: auth.signature, publicKey: auth.verifyingKey,
+                                        message: Array(message)))   // signs borsh(transaction)
         }
     }
 

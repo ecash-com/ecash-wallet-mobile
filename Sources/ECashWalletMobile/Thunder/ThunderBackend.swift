@@ -15,10 +15,16 @@ struct ThunderScan {
     /// `ThunderService` fills those from its local first-seen record and re-sorts. Backends that know
     /// real block times leave nothing to fill.
     let transactions: [WalletTx]
+    /// Value of the wallet's UNCONFIRMED outputs — incoming payments and our own change from a send
+    /// that isn't in a block yet. Not in `utxos`: the node validates a spend against its utreexo
+    /// accumulator, which only holds CONFIRMED coins, so spending one of these is rejected until the
+    /// next Thunder block ("utreexo error (Could not find node)", seen live 2026-09-30).
+    let pendingSats: UInt64
 
-    init(utxos: [ThunderPointedOutput], transactions: [WalletTx]) {
+    init(utxos: [ThunderPointedOutput], transactions: [WalletTx], pendingSats: UInt64 = 0) {
         self.utxos = utxos
         self.transactions = transactions
+        self.pendingSats = pendingSats
     }
 
     static let empty = ThunderScan(utxos: [], transactions: [])

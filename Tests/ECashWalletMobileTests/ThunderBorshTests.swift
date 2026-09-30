@@ -88,7 +88,7 @@ import Crypto
         let addr = [UInt8](repeating: 0, count: 20)
         let spk: [UInt8] = [0xAA, 0xBB, 0xCC]           // stand-in mainchain scriptPubKey
         let tx = ThunderTransaction(inputs: [], outputs: [
-            ThunderOutput(address: addr, content: .withdrawal(sats: 1000, mainFeeSats: 300, mainScriptPubKey: spk))
+            ThunderOutput(address: addr, content: .withdrawal(sats: 1000, mainFeeSats: 300, mainAddress: "stand-in", mainScriptPubKey: spk))
         ])
         var expected: [UInt8] = []
         expected += [0, 0, 0, 0]                        // inputs count 0
@@ -129,8 +129,7 @@ import Crypto
         // Thunder authorizes an input by ed25519-signing borsh(transaction).
         let signature = try key.sign(tx.borshEncoded())
         #expect(signature.count == 64)
-        let verifying = try Curve25519.Signing.PublicKey(rawRepresentation: key.publicKeyBytes)
-        #expect(verifying.isValidSignature(Data(signature), for: Data(tx.borshEncoded())))
+        #expect(FrostSchnorr.verify(signature: signature, publicKey: key.publicKeyBytes, message: tx.borshEncoded()))
     }
 
     // MARK: - Golden vector from real thunder-rust
@@ -191,7 +190,8 @@ import Crypto
             outputs: [
                 ThunderOutput(address: [UInt8](repeating: 0xAB, count: 20), content: .value(sats: 1_000)),
                 ThunderOutput(address: [UInt8](repeating: 0xCD, count: 20),
-                              content: .withdrawal(sats: 2_000, mainFeeSats: 300, mainScriptPubKey: mainSpk)),
+                              content: .withdrawal(sats: 2_000, mainFeeSats: 300,
+                                                   mainAddress: "1BvBMSEYstWetqTFn5Au4m4GFg7xJaNVN2", mainScriptPubKey: mainSpk)),
             ])
 
         // Verbatim `borsh::to_vec()` output from thunder-rust (branch 2026-07-24-refactor).

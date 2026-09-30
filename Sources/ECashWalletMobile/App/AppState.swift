@@ -1016,6 +1016,7 @@ final class AppState {
         // so a later wallet can't inherit a stale "already synced" claim.
         syncStore.forget(walletId: id)
         splitCheckStore.forget(walletId: id)
+        walletOps.forget(walletId: id)   // Thunder's revealed index, first-seen times, account xpub
         if wasSelected { resetPerWalletState() }
         refresh()
         if wasSelected && selectedWalletId != nil {
@@ -1083,8 +1084,22 @@ final class AppState {
         } catch let error as WalletError {
             syncState = .failed(error.userMessage)
         } catch {
-            syncState = .failed(WalletError.syncFailed.userMessage)
+            logUnmappedSyncError(error)
+            syncState = .failed((error as? UserFacingError)?.userMessage ?? WalletError.syncFailed.userMessage)
         }
+    }
+
+    /// A sync error that isn't a `WalletError` — today, a Thunder engine error (the BDK side maps
+    /// everything to `WalletError`). Its `UserFacingError` message is what the user sees; log the full
+    /// error too, since the message is deliberately plain. Thunder errors are scrubbed by construction
+    /// (a status code, the index's reply, a field name — never key material).
+    private func logUnmappedSyncError(_ error: Error) {
+        let detail = String(describing: error)
+        #if os(Android)
+        logger.error("sync failed: \(detail)")
+        #else
+        logger.error("sync failed: \(detail, privacy: .public)")
+        #endif
     }
 
     /// Split status with any verdicts a previous Bitcoin check established already applied, so the
@@ -1218,7 +1233,8 @@ final class AppState {
                 syncState = .failed(error.userMessage)
             }
         } catch {
-            syncState = .failed(WalletError.syncFailed.userMessage)
+            logUnmappedSyncError(error)
+            syncState = .failed((error as? UserFacingError)?.userMessage ?? WalletError.syncFailed.userMessage)
         }
     }
 

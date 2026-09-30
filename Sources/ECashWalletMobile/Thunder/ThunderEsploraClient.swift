@@ -83,10 +83,11 @@ struct ThunderEsploraClient: Sendable {
         try await decode(path: "/address/\(escape(address))/deposits", route: "address deposits")
     }
 
-    /// `GET /address/{a}/txs/chain[/{last_seen}]` — one page of confirmed history, newest first.
+    /// `GET /address/{a}/txs/chain[/{last_seen}]` — one page of history, newest first.
     ///
-    /// A page holds 25 rows; a caller pages by passing the **last** txid it saw and stops on a short
-    /// page. There is no mempool page to fetch — these nodes serve no mempool view at all.
+    /// A page holds 25 rows; a caller pages by passing the last CONFIRMED txid it saw and stops on a
+    /// short page. Since 2026-09-30 the index also lists the address's unconfirmed transactions
+    /// (`status.confirmed == false`, no height) at the top of the first page; they can't be a cursor.
     func addressTxs(_ address: String, lastSeen: String? = nil) async throws -> [ThunderEsploraTx] {
         var path = "/address/\(escape(address))/txs/chain"
         if let lastSeen, !lastSeen.isEmpty { path += "/\(escape(lastSeen))" }

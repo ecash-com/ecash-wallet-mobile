@@ -39,7 +39,7 @@ import Crypto
 
     @Test func firstAddressIsTheGolden() throws {
         // ties ThunderWallet to the pinned key-layer golden
-        #expect(try Self.wallet.address(at: 0).base58 == "38VvRdmcQREr1UAcZma98WLFVpAp")
+        #expect(try Self.wallet.address(at: 0).base58 == "NKqSr4bQejFbKpd5yLQgWEiMJFx")   // thunder-rust 0.18
     }
 
     // MARK: - address → key resolution
@@ -77,8 +77,7 @@ import Crypto
         let message = Data(tx.borshEncoded())
         for (auth, addr) in zip(atx.authorizations, [addr0, addr1]) {
             #expect(ThunderAddress(publicKey: auth.verifyingKey) == addr)   // right key for the input
-            let vk = try Curve25519.Signing.PublicKey(rawRepresentation: auth.verifyingKey)
-            #expect(vk.isValidSignature(Data(auth.signature), for: message))
+            #expect(FrostSchnorr.verify(signature: auth.signature, publicKey: auth.verifyingKey, message: Array(message)))
         }
     }
 

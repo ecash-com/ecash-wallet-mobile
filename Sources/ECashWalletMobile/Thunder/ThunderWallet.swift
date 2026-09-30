@@ -4,15 +4,13 @@
 
 import Foundation
 
-/// A Thunder key set derived from one BIP39 mnemonic — the seed-holding component that derives
-/// addresses and signs.
+/// A Thunder key set derived from one BIP39 mnemonic — the seed-holding component that signs.
 ///
-/// **Why this isn't watch-only:** SLIP-0010 ed25519 derivation is ALL-HARDENED (`m/1'/0'/0'/i'`), so
-/// — unlike BDK's secp256k1 xpub — a child public key can't be derived without the parent private key.
-/// There is no Thunder "watch-only xpub": deriving the address set itself requires the seed. The
-/// engine's watch-only surface is therefore a *cache* of already-derived public addresses; this type
-/// is the thing that produces/extends that cache and signs, and like the BDK path it should be created
-/// transiently at those moments and dropped, never persisted (Golden Rule §2 / docs/key-storage.md).
+/// **Addresses don't need it.** Since thunder-rust 0.18, address keys are NON-hardened children of the
+/// account key (`m/43'/1899'/0'/9'/0'/i`), so the account *public* key lists every address
+/// (`addresses(account:indices:)`) — the watch-only model the BDK side already uses. This type is for
+/// the moments that need the secret: producing that account public key once, and signing. Create it
+/// transiently at those moments and drop it, never persist it (Golden Rule §2 / docs/key-storage.md).
 struct ThunderWallet {
     let mnemonic: String
     let passphrase: String
@@ -29,7 +27,7 @@ struct ThunderWallet {
     /// batch helpers rather than re-deriving per index.
     func seed() -> [UInt8] { Bip39Seed.seed(mnemonic: mnemonic, passphrase: passphrase) }
 
-    /// The key at derivation index `index` (`m/1'/0'/0'/index'`).
+    /// The key at derivation index `index` (`m/43'/1899'/0'/9'/0'/index`).
     func key(at index: UInt32) throws -> ThunderKey {
         try ThunderKey.derive(mnemonic: mnemonic, passphrase: passphrase, index: index)
     }
@@ -47,8 +45,18 @@ struct ThunderWallet {
     /// The addresses at `indices`, from a single seed computation. Gap-limit discovery walks *past*
     /// the known window in batches, so it needs an arbitrary range rather than a 0-based prefix.
     func addresses(indices: Range<UInt32>) throws -> [ThunderAddress] {
-        let seed = seed()
-        return try indices.map { try ThunderKey.derive(seed: seed, index: $0).address }
+        try Self.addresses(account: accountPublicKey(), indices: indices)
+    }
+
+    /// The account public key ("xpub") every address derives from. Public, but privacy-sensitive like
+    /// any xpub: it links all of the wallet's addresses.
+    func accountPublicKey() throws -> RistrettoBip32.PublicKey {
+        try ThunderKey.scheme.accountPublicKey(seed: seed())
+    }
+
+    /// The addresses at `indices`, from the account public key alone — no seed, no secret.
+    static func addresses(account: RistrettoBip32.PublicKey, indices: Range<UInt32>) throws -> [ThunderAddress] {
+        try indices.map { ThunderAddress(publicKey: try ThunderKey.scheme.publicKey(account: account, index: $0)) }
     }
 
     /// Resolve the key controlling `address` by scanning indices `0 ..< searchLimit`; nil if none
@@ -65,10 +73,10 @@ struct ThunderWallet {
               searchLimit: Int = defaultAddressSearchLimit) throws -> [ThunderAddress: ThunderKey] {
         var wanted = Set(addresses)
         guard !wanted.isEmpty else { return [:] }
-        let seed = seed()
+        let account = try ThunderKey.scheme.accountKey(seed: seed())
         var found: [ThunderAddress: ThunderKey] = [:]
         for index in 0..<searchLimit {
-            let candidate = try ThunderKey.derive(seed: seed, index: UInt32(index))
+            let candidate = try ThunderKey.derive(account: account, index: UInt32(index))
             if wanted.remove(candidate.address) != nil {
                 found[candidate.address] = candidate
                 if wanted.isEmpty { break }

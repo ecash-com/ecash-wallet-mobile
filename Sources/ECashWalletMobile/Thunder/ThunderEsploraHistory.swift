@@ -72,7 +72,7 @@ enum ThunderEsploraHistory {
                  vsize: nil,
                  coinNewsKind: nil,
                  receivedSats: deposit.value,
-                 sidechainDepositSlot: Int32(ThunderAddress.sidechainNumber),
+                 sidechainDepositSlot: Int32(RistrettoSidechainKeyScheme.thunder.sidechainNumber),
                  sidechainDepositAddress: address)
     }
 

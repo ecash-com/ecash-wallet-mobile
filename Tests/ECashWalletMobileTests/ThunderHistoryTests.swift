@@ -11,7 +11,7 @@ import WalletService
 /// the netting done here IS the history — if it's wrong, the Activity list is wrong.
 @Suite struct ThunderHistoryTests {
 
-    private static let addressA = "38VvRdmcQREr1UAcZma98WLFVpAp"
+    private static let addressA = "NKqSr4bQejFbKpd5yLQgWEiMJFx"
 
     private static func txid(_ byte: UInt8) -> String {
         String(repeating: String(format: "%02x", byte), count: 32)

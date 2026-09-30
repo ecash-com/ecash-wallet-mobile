@@ -28,16 +28,17 @@ enum ThunderOutPoint: Equatable {
 /// An output's payload (thunder-rust `types::Content`). `bitcoin::Amount` serializes as its u64 sats.
 enum ThunderOutputContent: Equatable {
     case value(sats: UInt64)                            // tag 0 — a plain payment
-    /// A withdrawal to the mainchain (BIP300/301). `mainScriptPubKey` is the destination mainchain
-    /// address's scriptPubKey bytes (what thunder-rust serializes for `main_address`). Future work —
-    /// the everyday send path only uses `.value`.
-    case withdrawal(sats: UInt64, mainFeeSats: UInt64, mainScriptPubKey: [UInt8])   // tag 1
+    /// A withdrawal to the mainchain (BIP300/301). The destination travels in BOTH forms because the
+    /// two wire formats disagree: Borsh (what's signed and hashed) writes `main_address` as its
+    /// scriptPubKey bytes, while the submit JSON writes it as the address string. Construct them together
+    /// from one parsed address so they can't drift apart.
+    case withdrawal(sats: UInt64, mainFeeSats: UInt64, mainAddress: String, mainScriptPubKey: [UInt8])   // tag 1
 
     func borshEncode(into w: inout BorshWriter) {
         switch self {
         case let .value(sats):
             w.writeU8(0); w.writeU64(sats)
-        case let .withdrawal(sats, mainFeeSats, mainScriptPubKey):
+        case let .withdrawal(sats, mainFeeSats, _, mainScriptPubKey):
             w.writeU8(1); w.writeU64(sats); w.writeU64(mainFeeSats); w.writeVarBytes(mainScriptPubKey)
         }
     }
@@ -47,7 +48,7 @@ enum ThunderOutputContent: Equatable {
     var valueSats: UInt64 {
         switch self {
         case let .value(sats): return sats
-        case let .withdrawal(sats, mainFeeSats, _): return sats &+ mainFeeSats
+        case let .withdrawal(sats, mainFeeSats, _, _): return sats &+ mainFeeSats
         }
     }
 }
@@ -107,7 +108,7 @@ struct ThunderTransaction: Equatable {
         let contentSize = outputs.reduce(0) { total, content in
             switch content {
             case .value: return total + 1 + 8
-            case let .withdrawal(_, _, spk): return total + 1 + 8 + 8 + 4 + spk.count
+            case let .withdrawal(_, _, _, spk): return total + 1 + 8 + 8 + 4 + spk.count
             }
         }
         return 4 + inputCount * (37 + 32) + 4 + outputs.count * 20 + contentSize

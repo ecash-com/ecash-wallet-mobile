@@ -28,7 +28,7 @@ enum SidechainWalletNetwork {
     static func walletNetwork(forSlot slot: Int, onMainchain mainchain: WalletNetwork) -> WalletNetwork? {
         switch mainchain {
         case .ecashBeta:
-            return slot == ThunderAddress.sidechainNumber ? .thunder : nil
+            return slot == RistrettoSidechainKeyScheme.thunder.sidechainNumber ? .thunder : nil
         case .ecash, .signet, .bitcoin, .thunder:
             // Alphanet and signet have no Thunder wallet type in this app; Bitcoin has no BIP300;
             // Thunder is itself a sidechain.

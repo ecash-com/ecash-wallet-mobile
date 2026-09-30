@@ -6,21 +6,23 @@ import Foundation
 import Crypto   // SHA256 for the deposit-address checksum
 import Blake3   // official BLAKE3 (the address hash)
 
-/// A Thunder address: the first 20 bytes of `BLAKE3(ed25519_public_key)` (`authorization.rs::
-/// get_address`), rendered as plain bitcoin-alphabet base58 with no checksum (`address.rs::as_base58`).
-struct ThunderAddress: Equatable, Hashable {
+/// A sidechain address, shared by L2L's Rust sidechains (Thunder, Truthcoin, Coinshift): the first 20
+/// bytes of `BLAKE3-XOF(compressed public key)` (thunder-rust `authorization.rs::get_address`), rendered
+/// as plain bitcoin-alphabet base58 with no checksum (`address.rs::as_base58`). The XOF's first 32 bytes
+/// ARE plain BLAKE3, so hashing and truncating is the same thing.
+struct SidechainAddress: Equatable, Hashable {
     /// The raw 20-byte address hash.
     let bytes: [UInt8]
 
-    /// Derive from a 32-byte ed25519 public key.
+    /// Derive from a 32-byte public key (a compressed ristretto255 point on every current sidechain).
     init(publicKey: [UInt8]) {
-        let digest = Array(Blake3.hash(data: publicKey))   // 32-byte BLAKE3; Thunder keeps the first 20
+        let digest = Array(Blake3.hash(data: publicKey))   // 32-byte BLAKE3; the address is the first 20
         self.bytes = Array(digest.prefix(20))
     }
 
     /// Wrap a raw 20-byte hash (e.g. a decoded address).
     init(bytes: [UInt8]) {
-        precondition(bytes.count == 20, "Thunder address is 20 bytes")
+        precondition(bytes.count == 20, "sidechain address is 20 bytes")
         self.bytes = bytes
     }
 
@@ -32,13 +34,6 @@ struct ThunderAddress: Equatable, Hashable {
 
     /// The everyday address string a user sees / pastes (plain base58, no checksum).
     var base58: String { Base58.encode(bytes) }
-
-    /// Thunder's sidechain number on the mainchain — `THIS_SIDECHAIN` in thunder-rust (`types/mod.rs`).
-    static let sidechainNumber = 9
-
-    /// The **mainchain** deposit form using Thunder's own sidechain number (`s9_…`). This is the
-    /// address the eCash BDK engine sends a deposit to (a future BIP300 workstream).
-    func depositString() -> String { depositString(sidechainNumber: Self.sidechainNumber) }
 
     /// The **mainchain** deposit form for sidechain `sidechainNumber`:
     /// `s{n}_{base58}_{hex(sha256("s{n}_{base58}_")[..3])}` (`address.rs::format_for_deposit`).
@@ -54,3 +49,6 @@ struct ThunderAddress: Equatable, Hashable {
         return prefix + String(decoding: check, as: UTF8.self)
     }
 }
+
+/// Thunder's addresses are plain sidechain addresses; the name stays for readability at Thunder call sites.
+typealias ThunderAddress = SidechainAddress

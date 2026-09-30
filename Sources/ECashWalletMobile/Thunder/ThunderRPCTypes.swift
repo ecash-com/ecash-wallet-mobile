@@ -11,11 +11,9 @@ import Foundation
 /// `#[schema(value_type = …)]` annotations disagree with the derived serde impls:
 ///   * `Transaction.inputs` is annotated `Vec<(OutPoint, String)>` but `Hash` is a bare `[u8; 32]` with
 ///     no hex wrapper, so serde emits an **array of 32 numbers**.
-///   * `Authorization.verifying_key` / `.signature` are annotated `String`, but ed25519-dalek 2.2
-///     serializes via `serializer.serialize_bytes` (no `serdect`/`serde_bytes` in the dependency
-///     graph), so those are **arrays of 32 / 64 numbers** too. Its `Deserialize` implements
-///     `visit_bytes` and `visit_seq` but *not* `visit_str`, so a hex string would be rejected outright
-///     — arrays aren't a preference here, they're the only thing that works.
+///   * (thunder-rust < 0.18 only) `Authorization.verifying_key` / `.signature` were ed25519-dalek arrays
+///     of numbers. Since 0.18 they are frost-ristretto255 types that serialize as **hex strings** —
+///     pinned by `ThunderTransaction018Tests`, generated from v0.18.1's own serde.
 /// Types that *do* carry a serde hex/string wrapper: `Txid`/`MerkleRoot`/`BlockHash`
 /// (`hexstr_human_readable`, raw byte order — NOT reversed) and `Address` (base58).
 enum ThunderHex {
@@ -126,9 +124,10 @@ struct ThunderRPCOutPoint: Codable, Equatable {
             try nested.encode(ThunderHex.encode(merkleRoot), forKey: .merkleRoot)
             try nested.encode(vout, forKey: .vout)
         case let .deposit(txid, vout):
-            var nested = container.nestedContainer(keyedBy: DepositKeys.self, forKey: .deposit)
-            try nested.encode(ThunderHex.encode(txid.reversed()), forKey: .txid)   // back to display order
-            try nested.encode(vout, forKey: .vout)
+            // `bitcoin::OutPoint`'s serde form is its Display string "txid:vout" (txid in display,
+            // i.e. byte-reversed, order) — what the node emits and, pinned against v0.18.1 by
+            // ThunderTransaction018Tests, what it requires on submit.
+            try container.encode("\(ThunderHex.encode(txid.reversed())):\(vout)", forKey: .deposit)
         }
     }
 }
@@ -136,20 +135,20 @@ struct ThunderRPCOutPoint: Codable, Equatable {
 // MARK: - Output / PointedOutput
 
 /// `types::Content` over JSON: `{"Value": <sats>}` or
-/// `{"Withdrawal":{"value_sats":…,"main_fee_sats":…,"main_address":"…"}}` (note the `_sats` renames).
+/// `{"Withdrawal":{"value":…,"main_fee":…,"main_address":"…"}}` (thunder-rust ≥ 0.18, pinned by
+/// ThunderTransaction018Tests; older nodes wrote `value_sats` / `main_fee_sats`, still accepted on decode).
 ///
-/// A withdrawal is kept as the node reports it — we never build one (v2) and, since commit f585f25,
-/// **spending a withdrawal output is rejected by consensus**, so these are unspendable and excluded
-/// from both balance and coin selection. We deliberately do not convert one into a domain
-/// `ThunderOutputContent`: that would need `main_address`'s scriptPubKey bytes to Borsh-encode, and we
-/// have no reason to reconstruct something we can never spend.
+/// **Spending a withdrawal output is rejected by consensus** (commit f585f25), so a decoded withdrawal
+/// is unspendable and excluded from both balance and coin selection — it never becomes a domain
+/// `ThunderOutputContent`. We only ever ENCODE one when submitting a withdrawal we built ourselves.
 enum ThunderRPCContent: Codable, Equatable {
     case value(sats: UInt64)
     case withdrawal(valueSats: UInt64, mainFeeSats: UInt64, mainAddress: String)
 
     private enum Tag: String, CodingKey { case value = "Value", withdrawal = "Withdrawal" }
     private enum WithdrawalKeys: String, CodingKey {
-        case valueSats = "value_sats", mainFeeSats = "main_fee_sats", mainAddress = "main_address"
+        case value, mainFee = "main_fee", mainAddress = "main_address"
+        case legacyValueSats = "value_sats", legacyMainFeeSats = "main_fee_sats"   // pre-0.18
     }
 
     init(from decoder: Decoder) throws {
@@ -157,8 +156,11 @@ enum ThunderRPCContent: Codable, Equatable {
         if let sats = try? container.decode(UInt64.self, forKey: .value) {
             self = .value(sats: sats)
         } else if let nested = try? container.nestedContainer(keyedBy: WithdrawalKeys.self, forKey: .withdrawal) {
-            self = .withdrawal(valueSats: try nested.decode(UInt64.self, forKey: .valueSats),
-                               mainFeeSats: try nested.decode(UInt64.self, forKey: .mainFeeSats),
+            let value = try nested.decodeIfPresent(UInt64.self, forKey: .value)
+                ?? nested.decode(UInt64.self, forKey: .legacyValueSats)
+            let mainFee = try nested.decodeIfPresent(UInt64.self, forKey: .mainFee)
+                ?? nested.decode(UInt64.self, forKey: .legacyMainFeeSats)
+            self = .withdrawal(valueSats: value, mainFeeSats: mainFee,
                                mainAddress: try nested.decode(String.self, forKey: .mainAddress))
         } else {
             throw ThunderRPCError.malformedResponse("unknown output content")
@@ -172,8 +174,8 @@ enum ThunderRPCContent: Codable, Equatable {
             try container.encode(sats, forKey: .value)
         case let .withdrawal(valueSats, mainFeeSats, mainAddress):
             var nested = container.nestedContainer(keyedBy: WithdrawalKeys.self, forKey: .withdrawal)
-            try nested.encode(valueSats, forKey: .valueSats)
-            try nested.encode(mainFeeSats, forKey: .mainFeeSats)
+            try nested.encode(valueSats, forKey: .value)
+            try nested.encode(mainFeeSats, forKey: .mainFee)
             try nested.encode(mainAddress, forKey: .mainAddress)
         }
     }
@@ -209,9 +211,8 @@ struct ThunderRPCOutput: Codable, Equatable {
         switch output.content {
         case let .value(sats):
             self.content = .value(sats: sats)
-        case let .withdrawal(sats, mainFeeSats, _):
-            // Never produced by us — the send path only builds `.value` outputs.
-            self.content = .withdrawal(valueSats: sats, mainFeeSats: mainFeeSats, mainAddress: "")
+        case let .withdrawal(sats, mainFeeSats, mainAddress, _):
+            self.content = .withdrawal(valueSats: sats, mainFeeSats: mainFeeSats, mainAddress: mainAddress)
         }
     }
 }
@@ -298,7 +299,7 @@ struct ThunderRPCPointedSpentOutput: Codable, Equatable {
 /// {"transaction":{"inputs":[[{"Regular":{…}},[32 numbers]]],
 ///                 "proof":{"targets":[],"hashes":[]},
 ///                 "outputs":[{"address":"…","content":{"Value":123}}]},
-///  "authorizations":[{"verifying_key":[32 numbers],"signature":[64 numbers]}]}
+///  "authorizations":[{"verifying_key":"<64 hex>","signature":"<128 hex>"}]}
 /// ```
 /// The **empty proof** is deliberate and required: `proof` has no `#[serde(default)]`, so the field
 /// must be present, and `submit_transaction` overwrites it via `State::regenerate_proof` before
@@ -332,8 +333,10 @@ struct ThunderRPCAuthorizedTransaction: Encodable {
         var authorizations = root.nestedUnkeyedContainer(forKey: .authorizations)
         for authorization in authorized.authorizations {
             var entry = authorizations.nestedContainer(keyedBy: AuthKeys.self)
-            try entry.encode(authorization.verifyingKey, forKey: .verifyingKey)   // 32 numbers
-            try entry.encode(authorization.signature, forKey: .signature)         // 64 numbers
+            // thunder-rust ≥ 0.18: frost-ristretto255's serde writes both as lowercase HEX strings
+            // (the ed25519-dalek arrays of numbers this used to send are rejected).
+            try entry.encode(ThunderHex.encode(authorization.verifyingKey), forKey: .verifyingKey)
+            try entry.encode(ThunderHex.encode(authorization.signature), forKey: .signature)
         }
     }
 }

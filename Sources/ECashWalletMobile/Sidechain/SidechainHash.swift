@@ -5,10 +5,10 @@
 import Foundation
 import Crypto   // Apple's swift-crypto — same HMAC-SHA512 on iOS (CryptoKit) and Android (Fuse)
 
-/// Low-level crypto primitives the Thunder key stack builds on, all on swift-crypto so iOS and
+/// Low-level hash primitives the sidechain key stack builds on, all on swift-crypto so iOS and
 /// Android share one implementation. Kept tiny and test-vector'd — this is consensus-adjacent code.
-enum ThunderCrypto {
-    /// HMAC-SHA512 → 64 bytes. The workhorse of both SLIP-0010 and PBKDF2 below.
+enum SidechainHash {
+    /// HMAC-SHA512 → 64 bytes. The workhorse of key derivation and PBKDF2 below.
     static func hmacSHA512(key: [UInt8], data: [UInt8]) -> [UInt8] {
         Array(HMAC<SHA512>.authenticationCode(for: Data(data), using: SymmetricKey(data: Data(key))))
     }

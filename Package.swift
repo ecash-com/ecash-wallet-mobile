@@ -35,6 +35,9 @@ let package = Package(
         // dispatcher calls `blake3_hash_many_neon` → undefined symbol → the Swift .so won't dlopen on
         // Android (app crashed at launch on the Saga). Our vendored copy forces the portable C path.
         .package(path: "Packages/SwiftBlake3"),
+        // ristretto255 (vendored libsodium subset) — thunder-rust >= 0.18 signs with FROST(ristretto255).
+        // PROOF OF CONCEPT: only ThunderFrostSpike uses it so far (see Packages/Ristretto255/README.md).
+        .package(path: "Packages/Ristretto255"),
         // In-app browser for the eCash.com news site on the News tab: SFSafariViewController on iOS,
         // Chrome Custom Tabs on Android. Used instead of a WKWebView so the page keeps the user's
         // cookies/autofill and gets a real address bar + share sheet — appropriate for content we
@@ -53,6 +56,7 @@ let package = Package(
             .product(name: "SkipFirebaseMessaging", package: "skip-firebase"),
             .product(name: "Crypto", package: "swift-crypto"),
             .product(name: "Blake3", package: "SwiftBlake3"),
+            .product(name: "Ristretto255", package: "Ristretto255"),
             .product(name: "SkipWeb", package: "skip-web"),
             .product(name: "WalletService", package: "WalletService")
         ], resources: [.process("Resources")], plugins: [.plugin(name: "skipstone", package: "skip")]),

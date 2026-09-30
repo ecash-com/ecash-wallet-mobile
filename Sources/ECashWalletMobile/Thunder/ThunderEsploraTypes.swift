@@ -291,21 +291,30 @@ struct ThunderEsploraTxoStats: Decodable, Equatable {
 ///
 /// This route is what makes a per-address index affordable on a phone. The window is 20+ addresses and
 /// most are empty; asking for stats first (a handful of integers) and only fetching utxos/history for
-/// the ones with `tx_count > 0` turns ~40 round trips into ~20 small ones plus a few real ones.
-/// `mempool_stats` is always zero here — these nodes serve no mempool view — so only chain stats are
-/// modelled.
+/// the ones with activity turns ~40 round trips into ~20 small ones plus a few real ones.
+///
+/// **Both chain AND mempool stats count.** The index used to serve no mempool view; since 2026-09-30 it
+/// does. Counting only `chain_stats` made a fresh change address — whose only activity is the
+/// unconfirmed send that created it — look unused, so sync never fetched its coin and a wallet showed a
+/// zero balance right after a successful send.
 struct ThunderEsploraAddressInfo: Decodable, Equatable {
     let chainStats: ThunderEsploraTxoStats
+    /// Absent (not just zero) on an index without a mempool view.
+    let mempoolStats: ThunderEsploraTxoStats?
 
-    private enum Keys: String, CodingKey { case chainStats = "chain_stats" }
+    private enum Keys: String, CodingKey { case chainStats = "chain_stats", mempoolStats = "mempool_stats" }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: Keys.self)
         chainStats = try c.decode(ThunderEsploraTxoStats.self, forKey: .chainStats)
+        mempoolStats = try c.decodeIfPresent(ThunderEsploraTxoStats.self, forKey: .mempoolStats)
     }
 
-    init(chainStats: ThunderEsploraTxoStats) { self.chainStats = chainStats }
+    init(chainStats: ThunderEsploraTxoStats, mempoolStats: ThunderEsploraTxoStats? = nil) {
+        self.chainStats = chainStats
+        self.mempoolStats = mempoolStats
+    }
 
-    /// Whether this address has ever appeared on-chain — the gap-limit signal.
-    var isUsed: Bool { chainStats.txCount > 0 || chainStats.fundedTxoCount > 0 }
+    /// Whether this address has ever appeared, confirmed or not — the gap-limit and "fetch me" signal.
+    var isUsed: Bool { [chainStats, mempoolStats].contains { $0.map { $0.txCount > 0 || $0.fundedTxoCount > 0 } ?? false } }
 }

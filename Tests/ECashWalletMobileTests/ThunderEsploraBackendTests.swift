@@ -14,7 +14,7 @@ import WalletService
 
     private static let mnemonic = "abandon abandon abandon abandon abandon abandon "
         + "abandon abandon abandon abandon abandon about"
-    private static let address0 = "38VvRdmcQREr1UAcZma98WLFVpAp"
+    private static let address0 = "NKqSr4bQejFbKpd5yLQgWEiMJFx"
 
     /// A stubbed index. Answers by route, and records every path it was asked for so a test can assert
     /// on *how many* requests a sync made, not just what it concluded.
@@ -34,6 +34,10 @@ import WalletService
         var txPagesByAddress: [String: [String]] = [:]
         /// A path suffix that should fail with a 500.
         var failingPathSuffix: String?
+        /// A `/txs/chain/<cursor>` page that 404s — how the index answers a cursor it can't resolve.
+        var notFoundCursor: String? = nil
+        /// Addresses whose only activity is unconfirmed (`mempool_stats`, zero `chain_stats`).
+        var mempoolOnlyAddresses: Set<String> = []
 
         var paths: [String] { lock.withLock { _paths } }
         func paths(containing needle: String) -> [String] { paths.filter { $0.contains(needle) } }
@@ -63,18 +67,22 @@ import WalletService
             if path.hasSuffix("/deposits") {
                 return (Data((depositsByAddress[address] ?? "[]").utf8), 200)
             }
+            if let cursor = notFoundCursor, path.hasSuffix("/txs/chain/\(cursor)") {
+                return (Data("not found".utf8), 404)
+            }
             if path.contains("/txs/chain") {
                 let pages = txPagesByAddress[address] ?? []
                 return (Data((pageIndex < pages.count ? pages[pageIndex] : "[]").utf8), 200)
             }
             if path.contains("/address/") {
                 let count = usedAddresses.contains(address) ? 3 : 0
+                let pending = mempoolOnlyAddresses.contains(address) ? 1 : 0
                 return (Data("""
                 {"address":"\(address)",
                  "chain_stats":{"funded_txo_count":\(count),"funded_txo_sum":0,
                                 "spent_txo_count":0,"spent_txo_sum":0,"tx_count":\(count)},
-                 "mempool_stats":{"funded_txo_count":0,"funded_txo_sum":0,
-                                  "spent_txo_count":0,"spent_txo_sum":0,"tx_count":0}}
+                 "mempool_stats":{"funded_txo_count":\(pending),"funded_txo_sum":0,
+                                  "spent_txo_count":0,"spent_txo_sum":0,"tx_count":\(pending)}}
                 """.utf8), 200)
             }
             return (Data("[]".utf8), 200)
@@ -100,6 +108,7 @@ import WalletService
                            makeBackend: { [self] in backend() },
                            indexStore: indexStore,
                            firstSeenStore: InMemoryThunderFirstSeenStore(),
+                           accountKeyStore: InMemoryThunderAccountKeyStore(),
                            now: { 1_800_000_000 })
         }
     }
@@ -110,17 +119,24 @@ import WalletService
     }
 
     private static func utxoJSON(value: Int, vout: Int = 0, height: Int = 90,
-                                 txid: String = String(repeating: "11", count: 32)) -> String {
-        """
+                                 txid: String = String(repeating: "11", count: 32),
+                                 confirmed: Bool = true) -> String {
+        let status = confirmed
+            ? #"{"confirmed":true,"block_height":\#(height),"block_hash":"\#(String(repeating: "ab", count: 32))","block_time":1750000000}"#
+            : #"{"confirmed":false,"block_height":null,"block_hash":null,"block_time":null}"#
+        return """
         [{"txid":"\(txid)","vout":\(vout),"value":\(value),
-          "status":{"confirmed":true,"block_height":\(height),
-                    "block_hash":"\(String(repeating: "ab", count: 32))","block_time":1750000000},
+          "status":\(status),
           "outpoint_kind":"regular","height_exact":true,"content_type":"value"}]
         """
     }
 
-    private static func txJSON(txid: String, toAddress: String, value: Int, height: Int = 90) -> String {
-        """
+    private static func txJSON(txid: String, toAddress: String, value: Int, height: Int = 90,
+                               confirmed: Bool = true) -> String {
+        let status = confirmed
+            ? #"{"confirmed":true,"block_height":\#(height),"block_hash":"\#(String(repeating: "ab", count: 32))","block_time":1750000000}"#
+            : #"{"confirmed":false,"block_height":null,"block_hash":null,"block_time":null}"#
+        return """
         [{"txid":"\(txid)","version":0,"locktime":0,"size":300,"weight":1200,"fee":200,
           "vin":[{"txid":"\(String(repeating: "99", count: 32))","vout":0,
                   "prevout":{"scriptpubkey":"","scriptpubkey_asm":"",
@@ -132,9 +148,20 @@ import WalletService
                    "scriptpubkey_type":"sidechain_address",
                    "scriptpubkey_address":"\(toAddress)","value":\(value),
                    "outpoint_kind":"regular","content_type":"value"}],
-          "status":{"confirmed":true,"block_height":\(height),
-                    "block_hash":"\(String(repeating: "ab", count: 32))","block_time":1750000000}}]
+          "status":\(status)}]
         """
+    }
+
+    /// One `/txs/chain` page from several single-row fixtures.
+    private static func page(_ rows: [String]) -> String {
+        "[" + rows.map { String($0.dropFirst().dropLast()) }.joined(separator: ",") + "]"
+    }
+
+    /// A FULL page (`historyPageSize` rows), txids "<prefix>0".."<prefix>24", heights descending.
+    private static func fullPage(prefix: String, fromHeight: Int) -> String {
+        page((0..<ThunderEsploraBackend.historyPageSize).map {
+            txJSON(txid: "\(prefix)\($0)", toAddress: address0, value: 1_000, height: fromHeight - $0)
+        })
     }
 
     // MARK: - Request shaping
@@ -271,32 +298,128 @@ import WalletService
         let index = Index()
         index.usedAddresses = [Self.address0]
         index.txPagesByAddress[Self.address0] = [
-            Self.txJSON(txid: "aa", toAddress: Self.address0, value: 1_000, height: 95),
-            Self.txJSON(txid: "bb", toAddress: Self.address0, value: 2_000, height: 90),
-            "[]",
+            Self.fullPage(prefix: "p", fromHeight: 200),
+            Self.txJSON(txid: "zz", toAddress: Self.address0, value: 2_000, height: 90),   // short → last
         ]
 
         let service = index.service()
         _ = try await service.sync(walletId: "w1")
 
         let history = try service.transactions(walletId: "w1")
-        #expect(history.map(\.txid) == ["aa", "bb"])       // newest first by height
-        #expect(index.paths(containing: "/txs/chain").count == 3)
+        #expect(history.count == ThunderEsploraBackend.historyPageSize + 1)
+        #expect(history.first?.txid == "p0")    // newest first by height
+        #expect(history.last?.txid == "zz")
+        let pages = index.paths(containing: "/txs/chain")
+        #expect(pages.count == 2)
+        #expect(pages.last?.hasSuffix("/txs/chain/p24") == true)   // cursor = last row of page one
     }
 
     @Test func aRepeatedPageStopsPagingInsteadOfLooping() async throws {
         let index = Index()
         index.usedAddresses = [Self.address0]
-        // The same page forever — a server that ignores the cursor.
-        let page = Self.txJSON(txid: "aa", toAddress: Self.address0, value: 1_000)
-        index.txPagesByAddress[Self.address0] = Array(repeating: page, count: 50)
+        // The same FULL page forever — a server that ignores the cursor.
+        index.txPagesByAddress[Self.address0] = Array(repeating: Self.fullPage(prefix: "p", fromHeight: 200), count: 50)
 
         let service = index.service()
         _ = try await service.sync(walletId: "w1")
 
-        #expect(try service.transactions(walletId: "w1").count == 1)
+        #expect(try service.transactions(walletId: "w1").count == ThunderEsploraBackend.historyPageSize)
         // Stopped as soon as a page added nothing new, well inside the page cap.
         #expect(index.paths(containing: "/txs/chain").count == 2)
+    }
+
+    /// Regression (2026-09-30, first live Thunder send on betanet): the index lists the just-sent,
+    /// UNCONFIRMED tx at the top of page one, and paging from it 404s. The sync must succeed and show
+    /// the tx as pending instead of failing with "Couldn't reach the network".
+    @Test func anUnconfirmedTxDoesNotBreakSync() async throws {
+        let index = Index()
+        index.usedAddresses = [Self.address0]
+        index.notFoundCursor = "new"
+        index.txPagesByAddress[Self.address0] = [Self.page([
+            Self.txJSON(txid: "new", toAddress: Self.address0, value: 3_000, confirmed: false),
+            Self.txJSON(txid: "old", toAddress: Self.address0, value: 1_000, height: 90),
+        ])]
+
+        let service = index.service()
+        _ = try await service.sync(walletId: "w1")
+
+        let history = try service.transactions(walletId: "w1")
+        #expect(Set(history.map(\.txid)) == ["new", "old"])
+        #expect(history.first { $0.txid == "new" }?.confirmations == 0)
+        #expect(index.paths(containing: "/txs/chain").count == 1)
+    }
+
+    /// A full page whose top rows are unconfirmed pages from its last CONFIRMED row, never from one
+    /// that has no height.
+    @Test func pagingNeverUsesAnUnconfirmedCursor() async throws {
+        let index = Index()
+        index.usedAddresses = [Self.address0]
+        index.notFoundCursor = "u"
+        var rows = [Self.txJSON(txid: "u", toAddress: Self.address0, value: 3_000, confirmed: false)]
+        rows += (0..<(ThunderEsploraBackend.historyPageSize - 1)).map {
+            Self.txJSON(txid: "c\($0)", toAddress: Self.address0, value: 1_000, height: 200 - $0)
+        }
+        // Make the unconfirmed row the LAST one too, to prove the cursor skips it.
+        rows.append(rows.removeFirst())
+        index.txPagesByAddress[Self.address0] = [Self.page(rows),
+                                                 Self.txJSON(txid: "tail", toAddress: Self.address0, value: 1_000, height: 10)]
+
+        let service = index.service()
+        _ = try await service.sync(walletId: "w1")
+
+        #expect(try service.transactions(walletId: "w1").contains { $0.txid == "tail" })
+        #expect(index.paths(containing: "/txs/chain").last?.hasSuffix("/txs/chain/c23") == true)
+    }
+
+    /// Regression (2026-09-30): right after a send, the change address's ONLY activity is the
+    /// unconfirmed send. It must still count as used, or its coin is never fetched and the wallet
+    /// reads zero.
+    @Test func anAddressWithOnlyUnconfirmedActivityIsScanned() async throws {
+        let index = Index()
+        index.mempoolOnlyAddresses = [Self.address0]
+        index.utxosByAddress[Self.address0] = Self.utxoJSON(value: 29_730, confirmed: false)
+
+        let service = index.service()
+        _ = try await service.sync(walletId: "w1")
+        #expect(try service.pendingBalance(walletId: "w1") == Amount(sats: 29_730))
+    }
+
+    /// The node can't spend an output that isn't in a block yet (its utreexo accumulator only holds
+    /// confirmed coins), so an unconfirmed coin is PENDING: in the pending balance, out of the spendable
+    /// balance and out of coin selection.
+    @Test func unconfirmedCoinsArePendingNotSpendable() async throws {
+        let index = Index()
+        index.usedAddresses = [Self.address0]
+        index.utxosByAddress[Self.address0] = Self.page([
+            Self.utxoJSON(value: 5_000, vout: 0),
+            Self.utxoJSON(value: 29_730, vout: 1, txid: String(repeating: "22", count: 32), confirmed: false),
+        ])
+
+        let service = index.service()
+        #expect(try await service.sync(walletId: "w1") == Amount(sats: 5_000))
+        #expect(try service.pendingBalance(walletId: "w1") == Amount(sats: 29_730))
+
+        // Sending more than the confirmed 5,000 fails up front — it never offers the pending coin.
+        do {
+            _ = try await service.send(walletId: "w1", to: Self.address0, amount: Amount(sats: 10_000),
+                                       feeRate: FeeRate(satPerVByte: 1))
+            Issue.record("expected insufficientFunds")
+        } catch let error as ThunderError {
+            guard case .insufficientFunds = error else { Issue.record("wrong error \(error)"); return }
+        }
+    }
+
+    /// A cursor the index can no longer resolve ends the history; it doesn't fail the sync.
+    @Test func aNotFoundFollowUpPageEndsHistory() async throws {
+        let index = Index()
+        index.usedAddresses = [Self.address0]
+        index.notFoundCursor = "p24"
+        index.txPagesByAddress[Self.address0] = [Self.fullPage(prefix: "p", fromHeight: 200)]
+
+        let service = index.service()
+        _ = try await service.sync(walletId: "w1")
+
+        #expect(try service.transactions(walletId: "w1").count == ThunderEsploraBackend.historyPageSize)
     }
 
     // MARK: - Failure
@@ -342,6 +465,7 @@ import WalletService
             },
             indexStore: InMemoryThunderAddressIndexStore(),
             firstSeenStore: InMemoryThunderFirstSeenStore(),
+            accountKeyStore: InMemoryThunderAccountKeyStore(),
             now: { 1_800_000_000 })
 
         let tx = try await service.send(walletId: "w1", to: Self.address0,

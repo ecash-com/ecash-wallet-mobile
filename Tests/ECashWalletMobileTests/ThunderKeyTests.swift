@@ -11,9 +11,8 @@ import Crypto
 /// depend on our own implementation:
 ///   • Base58  → Bitcoin Core's `base58_encode_decode.json`
 ///   • BIP39   → the canonical "abandon…about" / "TREZOR" seed vector
-///   • SLIP-0010 ed25519 → the spec's Test Vector 1 (satoshilabs/slips)
-/// The composed Thunder address (BLAKE3∘derive) is then trusted-by-construction; its golden value is
-/// pinned here and still wants a cross-check against a real thunder-rust wallet before we ship sends.
+/// Key derivation and signing themselves are pinned against thunder-rust 0.18's own code in
+/// `SidechainCryptoTests` / `ThunderTransaction018Tests`; this suite covers `ThunderKey`'s composition.
 /// Swift Testing so it runs on host + Android APK mode.
 @Suite struct ThunderKeyTests {
 
@@ -31,11 +30,6 @@ import Crypto
     }
     private static func hex(_ bytes: [UInt8]) -> String {
         bytes.map { String(format: "%02x", $0) }.joined()
-    }
-    /// The SLIP-0010 "public key" field for an ed25519 node: `0x00 || ed25519_pubkey(node.key)`.
-    private static func slip10Public(_ node: Slip10Ed25519.Node) -> [UInt8] {
-        let key = try! Curve25519.Signing.PrivateKey(rawRepresentation: node.key)
-        return [0x00] + Array(key.publicKey.rawRepresentation)
     }
 
     // MARK: - Base58 (Bitcoin Core vectors)
@@ -71,44 +65,14 @@ import Crypto
             + "1f09a6987599d18264c1e1c92f2cf141630c7a3c4ab7c81b2f001698e7463b04")
     }
 
-    // MARK: - SLIP-0010 ed25519 (spec Test Vector 1, seed 000102…0f)
-
-    private static let slip10Seed = bytes("000102030405060708090a0b0c0d0e0f")
-
-    @Test func slip10MasterMatchesVector() {
-        let m = Slip10Ed25519.master(seed: Self.slip10Seed)
-        #expect(Self.hex(m.key) == "2b4be7f19ee27bbf30c667b642d5f4aa69fd169872f8fc3059c08ebae2eb19e7")
-        #expect(Self.hex(m.chainCode) == "90046a93de5380a72b5e45010748567d5ea02bbf6522f979e05c0d8d8ca9fffb")
-        #expect(Self.hex(Self.slip10Public(m)) == "00a4b2856bfec510abab89753fac1ac0e1112364e7d250545963f135f2a33188ed")
-    }
-
-    @Test func slip10FirstHardenedChildMatchesVector() {
-        let node = Slip10Ed25519.derive(seed: Self.slip10Seed, hardenedPath: [0])   // m/0'
-        #expect(Self.hex(node.key) == "68e0fe46dfb67e368c75379acec591dad19df3cde26e63b93a8e704f1dade7a3")
-        #expect(Self.hex(node.chainCode) == "8b59aa11380b624e81507a27fedda59fea6d0b779a778918a2fd3590e16e9c69")
-        #expect(Self.hex(Self.slip10Public(node)) == "008c8a13df77a28f3445213a0f432fde644acaa215fc72dcdf300d5efaa85d350c")
-    }
-
-    @Test func slip10DeepPathMatchesVector() {
-        // m/0'/1'/2'/2'/1000000000'
-        let node = Slip10Ed25519.derive(seed: Self.slip10Seed, hardenedPath: [0, 1, 2, 2, 1000000000])
-        #expect(Self.hex(node.key) == "8f94d394a8e8fd6b1bc2f3f49f5c47e385281d5c17e65324b0f62483e37e8793")
-        #expect(Self.hex(node.chainCode) == "68789923a0cac2cd5a29172a475fe9e0fb14cd6adb5ad98a3fa70333e7afa230")
-        #expect(Self.hex(Self.slip10Public(node)) == "003c24da049451555d51a7014a37337aa4e12d41e485abccfa46b47dfb2af54b7a")
-    }
-
     // MARK: - ThunderKey (composed derivation)
 
     private static let testMnemonic = "abandon abandon abandon abandon abandon abandon "
         + "abandon abandon abandon abandon abandon about"
 
-    @Test func thunderAccountPathIsAllHardened100() {
-        #expect(ThunderKey.accountPath == [1, 0, 0])   // m/1'/0'/0' (then /index'), per wallet.rs
-    }
-
     @Test func thunderKeyShapeIsCorrect() throws {
         let key = try ThunderKey.derive(mnemonic: Self.testMnemonic, index: 0)
-        #expect(key.publicKeyBytes.count == 32)   // ed25519 verifying key
+        #expect(key.publicKeyBytes.count == 32)   // compressed ristretto255 point
         #expect(key.address.bytes.count == 20)    // BLAKE3(pubkey)[..20]
         #expect(!key.address.base58.isEmpty)
     }
@@ -137,30 +101,27 @@ import Crypto
         let key = try ThunderKey.derive(mnemonic: Self.testMnemonic, index: 0)
         let message = Array("thunder tx body".utf8)
         let signature = try key.sign(message)
-        #expect(signature.count == 64)   // ed25519
-        let verifying = try Curve25519.Signing.PublicKey(rawRepresentation: key.publicKeyBytes)
-        #expect(verifying.isValidSignature(Data(signature), for: Data(message)))
+        #expect(signature.count == 64)   // R ‖ z
+        #expect(FrostSchnorr.verify(signature: signature, publicKey: key.publicKeyBytes, message: message))
     }
 
-    /// GOLDEN — pins the full pipeline (BIP39 → SLIP-0010 m/1'/0'/0'/0' → ed25519 pub → BLAKE3[..20]
-    /// → base58) for the canonical "abandon…about" mnemonic. Primitives above are each vector-proven,
-    /// so this locks the *composition*. TODO: cross-check this exact string against a real thunder-rust
-    /// wallet (`docs/thunder-sidechain-support.md`) before enabling Thunder sends.
+    /// GOLDEN — the full pipeline (BIP39 → ristretto bip32ish m/43'/1899'/0'/9'/0'/0 → pubkey →
+    /// BLAKE3[..20] → base58), generated by thunder-rust v0.18.1's own derivation code.
     @Test func thunderAddressGolden() throws {
         let key = try ThunderKey.derive(mnemonic: Self.testMnemonic, index: 0)
-        #expect(key.address.base58 == "38VvRdmcQREr1UAcZma98WLFVpAp")
+        #expect(key.address.base58 == "NKqSr4bQejFbKpd5yLQgWEiMJFx")
     }
 
     /// The mainchain deposit form: `s9_{base58}_{sha256("s9_{base58}_")[..3] hex}`
     /// (`address.rs::format_for_deposit`, `THIS_SIDECHAIN == 9`). Checksum recomputed independently.
     @Test func depositStringHasSidechain9PrefixAndSha256Checksum() throws {
         let address = try ThunderKey.derive(mnemonic: Self.testMnemonic, index: 0).address
-        let deposit = address.depositString()
+        let deposit = address.depositString(sidechainNumber: RistrettoSidechainKeyScheme.thunder.sidechainNumber)
         let prefix = "s9_\(address.base58)_"
         #expect(deposit.hasPrefix(prefix))
         let digest = Array(SHA256.hash(data: Data(prefix.utf8)))
         let checksum = digest.prefix(3).map { String(format: "%02x", $0) }.joined()
         #expect(deposit == prefix + checksum)   // 6 hex chars of the first 3 sha256 bytes
-        #expect(ThunderAddress.sidechainNumber == 9)
+        #expect(RistrettoSidechainKeyScheme.thunder.sidechainNumber == 9)
     }
 }

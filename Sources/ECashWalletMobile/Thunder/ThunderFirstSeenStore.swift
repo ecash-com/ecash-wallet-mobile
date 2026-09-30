@@ -22,6 +22,8 @@ protocol ThunderFirstSeenStoring {
     /// Stamp any txid we haven't recorded yet. Existing entries are never overwritten — the first
     /// sighting is the whole point.
     func record(txids: Set<String>, walletId: String, now: Int64)
+    /// Drop everything recorded for `walletId` (wallet removal — Golden Rule §5).
+    func forget(walletId: String)
 }
 
 struct UserDefaultsThunderFirstSeenStore: ThunderFirstSeenStoring {
@@ -52,6 +54,8 @@ struct UserDefaultsThunderFirstSeenStore: ThunderFirstSeenStoring {
               let json = String(data: data, encoding: .utf8) else { return }
         defaults.set(json, forKey: key(walletId))
     }
+
+    func forget(walletId: String) { defaults.removeObject(forKey: key(walletId)) }
 }
 
 /// In-memory variant for tests.
@@ -67,4 +71,6 @@ final class InMemoryThunderFirstSeenStore: ThunderFirstSeenStoring, @unchecked S
         for txid in txids where current[txid] == nil { current[txid] = now }
         byWallet[walletId] = current
     }
+
+    func forget(walletId: String) { byWallet[walletId] = nil }
 }

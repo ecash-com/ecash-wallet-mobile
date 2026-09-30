@@ -22,14 +22,45 @@ import Foundation
         #expect(selection.totalInputSats == target + selection.changeSats + selection.feeSats)
     }
 
-    @Test func picksLargestFirstAndLeavesChange() throws {
+    /// The smallest coin that covers the payment on its own — NOT the largest. Spending the 50k for a
+    /// 10k payment would lock ~40k of change until the next Thunder block; the 12k locks ~2k.
+    @Test func picksTheSmallestSufficientCoin() throws {
         let selection = try ThunderCoinSelector.select(
-            utxos: [Self.utxo(1_000, vout: 0), Self.utxo(50_000, vout: 1), Self.utxo(5_000, vout: 2)],
+            utxos: [Self.utxo(1_000, vout: 0), Self.utxo(50_000, vout: 1), Self.utxo(12_000, vout: 2), Self.utxo(5_000, vout: 3)],
             targetSats: 10_000, satPerByte: 1)
-        #expect(selection.inputs.count == 1)              // the 50k alone covers it
-        #expect(selection.inputs[0].valueSats == 50_000)
+        #expect(selection.inputs.map(\.valueSats) == [12_000])
         #expect(selection.changeSats > 0)
         expectBalances(selection, target: 10_000)
+    }
+
+    /// A coin that covers the amount but not amount + fee isn't "sufficient" — take the next one up.
+    @Test func aCoinThatCantAlsoPayTheFeeIsSkipped() throws {
+        let selection = try ThunderCoinSelector.select(
+            utxos: [Self.utxo(10_000, vout: 0), Self.utxo(30_000, vout: 1)],
+            targetSats: 10_000, satPerByte: 1)
+        #expect(selection.inputs.map(\.valueSats) == [30_000])
+        expectBalances(selection, target: 10_000)
+    }
+
+    /// No single coin is enough: accumulate smallest-first (thunder-rust's own rule), leaving the big
+    /// coin untouched.
+    @Test func accumulatesSmallestFirstWhenNoSingleCoinSuffices() throws {
+        let selection = try ThunderCoinSelector.select(
+            utxos: [Self.utxo(9_000, vout: 0), Self.utxo(3_000, vout: 1), Self.utxo(4_000, vout: 2), Self.utxo(2_000, vout: 3)],
+            targetSats: 8_000, satPerByte: 1)
+        #expect(selection.inputs.map(\.valueSats) == [9_000])   // 9k alone covers 8k + fee
+        let bigger = try ThunderCoinSelector.select(
+            utxos: [Self.utxo(9_000, vout: 0), Self.utxo(3_000, vout: 1), Self.utxo(4_000, vout: 2), Self.utxo(2_000, vout: 3)],
+            targetSats: 12_000, satPerByte: 1)
+        #expect(bigger.inputs.map(\.valueSats) == [2_000, 3_000, 4_000, 9_000])
+        expectBalances(bigger, target: 12_000)
+    }
+
+    @Test func equalCoinsAreChosenDeterministically() throws {
+        let coins = [Self.utxo(20_000, vout: 0), Self.utxo(20_000, vout: 1), Self.utxo(20_000, vout: 2)]
+        let a = try ThunderCoinSelector.select(utxos: coins, targetSats: 1_000, satPerByte: 1)
+        let b = try ThunderCoinSelector.select(utxos: coins.reversed(), targetSats: 1_000, satPerByte: 1)
+        #expect(a.inputs == b.inputs)
     }
 
     @Test func accumulatesUntilTheTargetIsCovered() throws {

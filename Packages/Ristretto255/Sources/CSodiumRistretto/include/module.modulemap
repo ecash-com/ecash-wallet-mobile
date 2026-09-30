@@ -1,0 +1,4 @@
+module CSodiumRistretto {
+    header "csodium_ristretto.h"
+    export *
+}

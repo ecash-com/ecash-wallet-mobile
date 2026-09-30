@@ -3,23 +3,21 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Foundation
-import Crypto   // Curve25519.Signing = ed25519
 
-/// A derived Thunder key: the ed25519 signing key at `m/1'/0'/0'/index'` (all hardened, per
-/// thunder-rust's `wallet.rs`), plus its public key and address. Built from a BIP39 mnemonic — the
-/// SAME seed as the Bitcoin/eCash wallet, so one backup covers both curves.
+/// One Thunder address key (thunder-rust ≥ 0.18): a ristretto255 scalar at `m/43'/1899'/0'/9'/0'/index`,
+/// its public key, and the address it controls. Signs with FROST(ristretto255) Schnorr.
 ///
-/// This is the Thunder analog of a BDK-derived key. It is deliberately the ONLY place the ed25519
-/// secret exists; like the BDK path, callers should derive it transiently at sign time and drop it —
-/// never persist the signing key (Golden Rule §2 / docs/key-storage.md).
+/// Holds a SECRET. Derive it only at signing time and drop it straight after (Golden Rule §2) — listing
+/// addresses never needs one (`ThunderWallet.addresses(account:indices:)` derives from the public key).
 struct ThunderKey {
-    let index: UInt32
-    let signingKey: Curve25519.Signing.PrivateKey
-    let publicKeyBytes: [UInt8]       // 32-byte ed25519 verifying key
-    let address: ThunderAddress
+    static let scheme = RistrettoSidechainKeyScheme.thunder
 
-    /// Thunder's account path prefix `m/1'/0'/0'` (the key index is appended), all hardened.
-    static let accountPath: [UInt32] = [1, 0, 0]
+    let index: UInt32
+    /// 32-byte scalar, little-endian, reduced mod ℓ.
+    let secret: [UInt8]
+    /// 32-byte compressed ristretto255 public key (the `verifying_key` in each input's `Authorization`).
+    let publicKeyBytes: [UInt8]
+    let address: ThunderAddress
 
     /// Derive the key at `index` from a BIP39 mnemonic (optional passphrase).
     static func derive(mnemonic: String, passphrase: String = "", index: UInt32) throws -> ThunderKey {
@@ -27,22 +25,23 @@ struct ThunderKey {
     }
 
     /// Derive the key at `index` from an already-computed BIP39 seed.
-    ///
-    /// Deriving a *range* of indices — scanning the address set to sync, or resolving which key owns an
-    /// input — must go through this, not the mnemonic overload: the mnemonic → seed step is PBKDF2 with
-    /// 2048 iterations, so re-running it per index turns a 20-address scan into 20 PBKDF2 runs for no
-    /// reason. Compute the seed once, derive many.
     static func derive(seed: [UInt8], index: UInt32) throws -> ThunderKey {
-        let node = Slip10Ed25519.derive(seed: seed, hardenedPath: accountPath + [index])
-        let signingKey = try Curve25519.Signing.PrivateKey(rawRepresentation: node.key)
-        let publicKey = Array(signingKey.publicKey.rawRepresentation)
-        return ThunderKey(index: index, signingKey: signingKey,
-                          publicKeyBytes: publicKey, address: ThunderAddress(publicKey: publicKey))
+        try derive(account: scheme.accountKey(seed: seed), index: index)
     }
 
-    /// ed25519-sign a message. Thunder signs the borsh-encoded transaction body (§ Borsh, upcoming),
-    /// producing the 64-byte signature that goes into each input's `Authorization`.
+    /// Derive the key at `index` from the account key. For many indices — resolving which key owns each
+    /// input — compute `scheme.accountKey(seed:)` once and call this per index: the five hardened
+    /// account levels (and the 2048-round PBKDF2 before them) then run once, not per address.
+    static func derive(account: RistrettoBip32.PrivateKey, index: UInt32) throws -> ThunderKey {
+        let secret = try scheme.signingKey(account: account, index: index)
+        let publicKey = try RistrettoBip32.PrivateKey(scalar: secret, chainCode: []).publicKey.point
+        return ThunderKey(index: index, secret: secret, publicKeyBytes: publicKey,
+                          address: ThunderAddress(publicKey: publicKey))
+    }
+
+    /// Sign a message — for Thunder, the borsh-encoded transaction — producing the 64-byte `R ‖ z`
+    /// signature that goes into each input's `Authorization`. Always a fresh random nonce.
     func sign(_ message: [UInt8]) throws -> [UInt8] {
-        Array(try signingKey.signature(for: Data(message)))
+        try FrostSchnorr.sign(message: message, secret: secret)
     }
 }

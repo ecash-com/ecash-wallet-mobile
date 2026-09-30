@@ -10,8 +10,8 @@ import Foundation
 /// POSITION, and separately requires `BLAKE3(verifying_key)[..20] == the spent output's address`
 /// (`authorization::get_address`, which is exactly `ThunderAddress(publicKey:)`).
 struct ThunderAuthorization: Equatable {
-    let verifyingKey: [UInt8]   // 32-byte ed25519 public key
-    let signature: [UInt8]      // 64-byte ed25519 signature
+    let verifyingKey: [UInt8]   // 32-byte compressed ristretto255 public key
+    let signature: [UInt8]      // 64-byte FROST(ristretto255) signature, R ‖ z
 
     func borshEncode(into w: inout BorshWriter) {
         w.writeFixedBytes(verifyingKey)   // [u8; 32]
@@ -30,7 +30,7 @@ struct AuthorizedThunderTransaction: Equatable {
     /// controls `transaction.inputs[i]` (its address == `inputKeys[i].address`) — Thunder checks each
     /// authorization against the spent output's address by position. Every input signs the SAME
     /// message, `borsh(transaction)` (Thunder has no per-input sighash), each with its own key. This
-    /// is the only place the ed25519 secret is used; keys should be derived transiently here and
+    /// is the only place the signing secret is used; keys should be derived transiently here and
     /// dropped (Golden Rule §2).
     static func authorize(_ transaction: ThunderTransaction,
                           inputKeys: [ThunderKey]) throws -> AuthorizedThunderTransaction {

@@ -23,7 +23,7 @@ import WalletService
         // `ThunderAddress.depositString` implements thunder-rust's format_for_deposit independently;
         // the two must agree byte for byte.
         let address = ThunderAddress(bytes: [UInt8](repeating: 7, count: 20))
-        let wrapped = address.depositString()
+        let wrapped = address.depositString(sidechainNumber: RistrettoSidechainKeyScheme.thunder.sidechainNumber)
         #expect(SidechainDepositAddress.parse(wrapped, slot: 9) == .success(address.base58))
         #expect(SidechainDepositAddress.displayForm(address: address.base58, slot: 9) == wrapped)
     }
