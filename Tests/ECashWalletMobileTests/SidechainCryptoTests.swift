@@ -137,9 +137,6 @@ import Testing
         #expect(!FrostSchnorr.verify(signature: Array(sig[0..<32]) + z, publicKey: pk, message: msg))
     }
 
-    @Test func selfCheckPasses() {
-        #expect(SidechainCryptoSelfCheck.run().hasPrefix("SidechainCryptoSelfCheck OK"))
-    }
 }
 
 /// Test helper: `s·G`.

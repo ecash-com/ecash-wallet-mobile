@@ -1,7 +1,7 @@
 # Thunder key port (thunder-rust 0.18) — and a sidechain layer for the next ones
 
 Status (2026-09-30): **steps 1–4 BUILT, uncommitted; step 6 (live betanet check) pending.** 466 app tests
-green; `SidechainCryptoSelfCheck OK` on the iOS simulator and an Android emulator.
+green; a launch-time self-check (since removed) passed on the iOS simulator and an Android emulator.
 
 Progress:
 - **Step 1 ✅** `Sidechain/` core: `RistrettoBip32` (+`biasFix`, public derivation), `FrostSchnorr`,
@@ -21,8 +21,9 @@ Progress:
 - Also: wallet removal now purges Thunder's revealed index, first-seen times and account xpub
   (`WalletOps.forget`) — the first two were previously left behind (Golden Rule §5 gap).
 - Step 5: no storage migration needed; old-address coins are unrecoverable (decision pending, §6).
-- Step 7 partial: libsodium added to the licences screen + README. Still to do: remove
-  `SidechainCryptoSelfCheck` + its launch log, update `docs/thunder-sidechain-support.md` / CLAUDE.md §12.
+- Step 7 partial: libsodium added to the licences screen + README; the temporary launch self-check
+  (`SidechainCryptoSelfCheck`) removed. Still to do: update `docs/thunder-sidechain-support.md` /
+  CLAUDE.md §12.
 
 ## 1. Why
 

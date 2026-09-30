@@ -40,14 +40,6 @@ let logger: Logger = Logger(subsystem: "com.layertwolabs.mobile.ecashwallet", ca
     /* SKIP @bridge */public func onInit() {
         logger.debug("onInit")
         FontRegistration.registerBundledFonts()   // iOS: register bundled .ttf with CoreText
-        // TEMPORARY (Thunder key port): proves the vendored libsodium loads and computes correctly on
-        // this device. Remove with SidechainCryptoSelfCheck at the port's cleanup step.
-        let cryptoCheck = SidechainCryptoSelfCheck.run()
-        #if os(Android)
-        logger.info("\(cryptoCheck)")
-        #else
-        logger.info("\(cryptoCheck, privacy: .public)")
-        #endif
 
         // Firebase. On Android, FirebaseApp.configure() reads the google-services.json the Gradle
         // plugin compiled in. On iOS/macOS, GoogleService-Info.plist lives in the SwiftPM module
