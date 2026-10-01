@@ -34,6 +34,23 @@ final class SidechainWithdrawViewModel {
         case failed(String)
     }
 
+    /// The chain's withdrawal timing, from the mainchain enforcer: the best case, the batch expiry, and
+    /// the batch ALREADY being voted on for this sidechain, if any. A sidechain forms a new batch only
+    /// when none is pending, so a new withdrawal waits for that one to pass or expire before its own
+    /// vote can start — the "about 3 months" best case doesn't hold while one is in progress.
+    struct Timing: Equatable {
+        let minimumBlocks: Int
+        let expiryBlocks: Int
+        let batchInProgress: BatchInProgress?
+    }
+
+    struct BatchInProgress: Equatable {
+        let votes: Int
+        let votesNeeded: Int
+        /// Blocks until it expires unpassed; nil if the mainchain tip wasn't known.
+        let blocksUntilExpiry: Int?
+    }
+
     /// BitWindow's default mainchain fee (`estimateMainchainFee` → 0.0001). It is this withdrawal's
     /// share of the mainchain payout transaction's fee; it also orders withdrawals within a full batch.
     static let defaultMainFeeSats: Int64 = 10_000
@@ -52,6 +69,8 @@ final class SidechainWithdrawViewModel {
     /// Best-case blocks until the coins arrive, and blocks until a batch expires — from the enforcer.
     private(set) var minimumBlocks: Int? = nil
     private(set) var expiryBlocks: Int? = nil
+    /// A batch already being voted on for this sidechain (see `Timing`); nil if none, or unknown.
+    private(set) var batchInProgress: BatchInProgress? = nil
 
     var addressText = ""
     var amountText = ""
@@ -71,7 +90,7 @@ final class SidechainWithdrawViewModel {
     private let authorize: (String) async -> Bool
     private let onDone: @MainActor (WalletTx) -> Void
     private let addressForDestination: (String) async throws -> String
-    private let loadTiming: () async -> (minimumBlocks: Int, expiryBlocks: Int)?
+    private let loadTiming: () async -> Timing?
 
     init(sidechainTitle: String, sidechainNetwork: WalletNetwork,
          mainchain: WalletNetwork, mainchainDisplayName: String, unitLabel: String,
@@ -80,7 +99,7 @@ final class SidechainWithdrawViewModel {
          withdraw: @escaping Withdraw,
          authorize: @escaping (String) async -> Bool,
          onDone: @escaping @MainActor (WalletTx) -> Void,
-         loadTiming: @escaping () async -> (minimumBlocks: Int, expiryBlocks: Int)?,
+         loadTiming: @escaping () async -> Timing?,
          destinations: [SendViewModel.Destination] = [],
          addressForDestination: @escaping (String) async throws -> String = { _ in "" }) {
         self.sidechainTitle = sidechainTitle
@@ -105,6 +124,7 @@ final class SidechainWithdrawViewModel {
         guard minimumBlocks == nil, let timing = await loadTiming() else { return }
         minimumBlocks = timing.minimumBlocks
         expiryBlocks = timing.expiryBlocks
+        batchInProgress = timing.batchInProgress
     }
 
     // MARK: - Entering

@@ -296,6 +296,9 @@ struct SidechainWithdrawScreen: View {
                 .textStyle(.sm)
                 .foregroundStyle(Theme.Colors.text1)
             }
+            if let batch = vm.batchInProgress {
+                batchInProgressNote(batch)
+            }
             if let blocks = vm.expiryBlocks {
                 HStack(spacing: Theme.Space.x1) {
                     Text("If it isn't approved within", bundle: .module, comment: "withdrawal expiry label, before a duration")
@@ -315,6 +318,29 @@ struct SidechainWithdrawScreen: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Theme.Colors.warningTint, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
         .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md).stroke(Theme.Colors.warning.opacity(0.4), lineWidth: 1))
+    }
+
+    /// A batch is already being voted on, and a new one forms only after it passes or expires — so this
+    /// withdrawal's own vote can't start until then.
+    private func batchInProgressNote(_ batch: SidechainWithdrawViewModel.BatchInProgress) -> some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x1) {
+            Text("Another withdrawal batch is being voted on right now (\(String(batch.votes)) / \(String(batch.votesNeeded)) votes). Yours can't start its vote until that one passes or expires.",
+                 bundle: .module, comment: "withdrawal review: a batch is already in progress; %1$@ votes, %2$@ needed")
+                .textStyle(.sm)
+                .foregroundStyle(Theme.Colors.text0)
+            if let blocks = batch.blocksUntilExpiry {
+                HStack(spacing: Theme.Space.x1) {
+                    Text("That could add up to", bundle: .module, comment: "withdrawal review: extra wait, before a duration")
+                    ApproximateDurationText(duration: ApproximateDuration(blocks: blocks))
+                    Text("before your vote begins.", bundle: .module, comment: "withdrawal review: extra wait, after a duration")
+                }
+                .textStyle(.xs)
+                .foregroundStyle(Theme.Colors.text1)
+            }
+        }
+        .padding(Theme.Space.x3)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Theme.Colors.bg1, in: RoundedRectangle(cornerRadius: Theme.Radius.sm))
     }
 
     // MARK: - Outcomes

@@ -25,6 +25,14 @@ enum SidechainWalletNetwork {
         }
     }
 
+    /// The mainchain slot a sidechain wallet type lives in (Thunder → 9); nil for mainchain wallets.
+    static func slot(ofSidechainWallet network: WalletNetwork) -> Int? {
+        switch network {
+        case .thunder: return RistrettoSidechainKeyScheme.thunder.sidechainNumber
+        case .bitcoin, .signet, .ecash, .ecashBeta: return nil
+        }
+    }
+
     static func walletNetwork(forSlot slot: Int, onMainchain mainchain: WalletNetwork) -> WalletNetwork? {
         switch mainchain {
         case .ecashBeta:

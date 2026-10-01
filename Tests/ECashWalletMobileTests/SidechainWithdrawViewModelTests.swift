@@ -21,7 +21,8 @@ import WalletService
 
     private func makeVM(approve: Bool = true, calls: Calls = Calls(), spendable: Int64 = 1_000_000,
                         withdrawError: Error? = nil,
-                        timing: (minimumBlocks: Int, expiryBlocks: Int)? = (13_151, 26_300)) -> SidechainWithdrawViewModel {
+                        timing: SidechainWithdrawViewModel.Timing? = .init(minimumBlocks: 13_151, expiryBlocks: 26_300,
+                                                                            batchInProgress: nil)) -> SidechainWithdrawViewModel {
         SidechainWithdrawViewModel(
             sidechainTitle: "Thunder", sidechainNetwork: .thunder,
             mainchain: .ecashBeta, mainchainDisplayName: "Betanet", unitLabel: "ECX",
@@ -136,10 +137,19 @@ import WalletService
         let known = makeVM()
         await known.loadTimingIfNeeded()
         #expect(known.minimumBlocks == 13_151 && known.expiryBlocks == 26_300)
+        #expect(known.batchInProgress == nil)
 
         let unknown = makeVM(timing: nil)
         await unknown.loadTimingIfNeeded()
         #expect(unknown.minimumBlocks == nil && unknown.expiryBlocks == nil)   // never a guessed number
+    }
+
+    /// A sidechain forms a new batch only when none is pending — the review must say so when one is.
+    @Test func aBatchAlreadyBeingVotedOnIsSurfaced() async {
+        let batch = SidechainWithdrawViewModel.BatchInProgress(votes: 156, votesNeeded: 13_151, blocksUntilExpiry: 25_940)
+        let vm = makeVM(timing: .init(minimumBlocks: 13_151, expiryBlocks: 26_300, batchInProgress: batch))
+        await vm.loadTimingIfNeeded()
+        #expect(vm.batchInProgress == batch)
     }
 
     @Test func pickingAMainchainWalletFillsItsUnusedAddress() async {

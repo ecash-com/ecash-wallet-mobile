@@ -923,12 +923,25 @@ final class AppState {
                 Task { await self.sync() }
             },
             loadTiming: {
-                // The mainchain enforcer's live BIP300 constants — never hardcoded months.
-                guard let endpoint = enforcerEndpoint,
-                      let constants = try? await EnforcerClient(endpoint: endpoint).bip300Constants(),
+                // The mainchain enforcer's live BIP300 constants — never hardcoded months — and any
+                // batch already being voted on for this sidechain, which a new withdrawal must wait out.
+                guard let endpoint = enforcerEndpoint else { return nil }
+                let enforcer = EnforcerClient(endpoint: endpoint)
+                guard let constants = try? await enforcer.bip300Constants(),
                       constants.withdrawalBundleInclusionThreshold > 0 else { return nil }
                 // A batch passes only with MORE than `threshold` votes (see SidechainsViewModel).
-                return (constants.withdrawalBundleInclusionThreshold + 1, constants.withdrawalBundleMaxAge)
+                let needed = constants.withdrawalBundleInclusionThreshold + 1
+                var inProgress: SidechainWithdrawViewModel.BatchInProgress? = nil
+                if let slot = SidechainWalletNetwork.slot(ofSidechainWallet: wallet.network),
+                   let batch = (try? await enforcer.withdrawalBundleProposals(slot: slot))?.first {
+                    let tip = (try? await enforcer.chainTip())?.height
+                    inProgress = .init(votes: batch.voteCount, votesNeeded: needed,
+                                       blocksUntilExpiry: tip.map {
+                                           max(0, constants.withdrawalBundleMaxAge - ($0 - batch.proposalHeight))
+                                       })
+                }
+                return .init(minimumBlocks: needed, expiryBlocks: constants.withdrawalBundleMaxAge,
+                             batchInProgress: inProgress)
             },
             destinations: destinations,
             addressForDestination: { walletId in

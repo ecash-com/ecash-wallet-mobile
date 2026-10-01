@@ -197,6 +197,11 @@ import WalletService
 /// "Deposit to one of my wallets": which wallets are offered, and what picking one does.
 @MainActor
 @Suite struct SidechainDepositDestinationTests {
+    @Test func thunderWalletsLiveInSlotNine() {
+        #expect(SidechainWalletNetwork.slot(ofSidechainWallet: .thunder) == 9)
+        #expect(SidechainWalletNetwork.slot(ofSidechainWallet: .ecashBeta) == nil)
+    }
+
     @Test func onlyBetanetThunderWalletsForBetanetThunder() {
         #expect(SidechainWalletNetwork.walletNetwork(forSlot: 9, onMainchain: .ecashBeta) == .thunder)
         // Another sidechain on betanet: no wallet type for it in this app.
