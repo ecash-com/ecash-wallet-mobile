@@ -36,6 +36,8 @@ struct TxDetailSheet: View {
                         hero
                         if let slot = tx.sidechainDepositSlot {
                             depositCard(slot: slot)
+                        } else if tx.isSidechainWithdrawal {
+                            withdrawalCard
                         }
                         detailsCard
                     }
@@ -68,6 +70,11 @@ struct TxDetailSheet: View {
 
             if let slot = tx.sidechainDepositSlot {
                 SidechainDepositTitle(name: sidechainName, slot: slot, received: tx.isReceived)
+                    .font(.satoshi(20, .semibold))
+                    .foregroundStyle(Theme.Colors.text0)
+            } else if tx.isSidechainWithdrawal {
+                Text("Withdrawal to \(mainchainName)", bundle: .module,
+                     comment: "tx detail title: sidechain → mainchain withdrawal; %@ is the mainchain name")
                     .font(.satoshi(20, .semibold))
                     .foregroundStyle(Theme.Colors.text0)
             }
@@ -105,15 +112,15 @@ struct TxDetailSheet: View {
     }
 
     private var heroIcon: Icon {
-        if tx.isSidechainDeposit { return Icon.sidechains }
+        if tx.isSidechainDeposit || tx.isSidechainWithdrawal { return Icon.sidechains }
         return tx.isReceived ? Icon.receive : Icon.send
     }
     private var heroTint: Color {
-        if tx.isSidechainDeposit { return Theme.Colors.accentTint }
+        if tx.isSidechainDeposit || tx.isSidechainWithdrawal { return Theme.Colors.accentTint }
         return tx.isReceived ? Theme.Colors.positiveTint : Theme.Colors.bg2
     }
     private var heroGlyph: Color {
-        if tx.isSidechainDeposit { return Theme.Colors.accent }
+        if tx.isSidechainDeposit || tx.isSidechainWithdrawal { return Theme.Colors.accent }
         return tx.isReceived ? Theme.Colors.positive : Theme.Colors.text1
     }
 
@@ -140,6 +147,37 @@ struct TxDetailSheet: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             }
+        }
+        .cardStyle()
+    }
+
+    // MARK: - Sidechain withdrawal
+
+    /// The mainchain this sidechain wallet withdraws to ("Betanet" for betanet Thunder).
+    private var mainchainName: String {
+        SidechainWalletNetwork.mainchain(ofSidechainWallet: network).map { NetworkRegistry.params(for: $0).displayName } ?? ""
+    }
+
+    /// Where a withdrawal pays out, and what happens next — the wait is the thing to know.
+    private var withdrawalCard: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x3) {
+            if let address = tx.sidechainWithdrawalAddress, !address.isEmpty {
+                VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                    Text("Pays out to", bundle: .module, comment: "tx detail: mainchain address a withdrawal pays")
+                        .textStyle(.sm)
+                        .foregroundStyle(Theme.Colors.text2)
+                    Text(verbatim: address)
+                        .font(.jbMono(13, .regular))
+                        .foregroundStyle(Theme.Colors.text0)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                hairline
+            }
+            Text("The coins have left this wallet. They arrive on \(mainchainName) once miners approve the withdrawal, which takes months — about 3 at best. If a batch expires it goes back in line.",
+                 bundle: .module, comment: "tx detail: what happens after a withdrawal; %@ is the mainchain name")
+                .textStyle(.sm)
+                .foregroundStyle(Theme.Colors.text1)
+                .frame(maxWidth: .infinity, alignment: .leading)
         }
         .cardStyle()
     }

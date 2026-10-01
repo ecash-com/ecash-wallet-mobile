@@ -255,7 +255,7 @@ import WalletService
         let vm = makeVM(MockEnforcer())
         #expect(vm.minimumWithdrawalBlocks == nil)       // unknown until loaded, never a guess
         await vm.refresh()
-        #expect(vm.minimumWithdrawalBlocks == 13_150)
+        #expect(vm.minimumWithdrawalBlocks == 13_151)   // votes must EXCEED the 13,150 threshold
         #expect(ApproximateDuration(blocks: 13_150) == .months(3))
     }
 

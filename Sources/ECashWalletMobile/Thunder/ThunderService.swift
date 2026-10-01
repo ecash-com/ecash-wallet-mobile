@@ -245,6 +245,40 @@ final class ThunderService: WalletOps {
                                netSats: -Int64(clamping: selection.totalInputSats))
     }
 
+    /// The regular BIP300 withdrawal back to the mainchain: a `Withdrawal` output that the next
+    /// withdrawal bundle (M6) picks up and miners then vote on.
+    ///
+    /// Shaped like thunder-rust's own wallet (`Wallet::create_withdrawal`): the withdrawal output is
+    /// addressed to a FRESH address of ours (it's never spent by anyone — consensus forbids it — the
+    /// address just names an owner), and change goes to another fresh address. Coins cover the payout
+    /// plus its mainchain fee (both leave the sidechain) plus the sidechain fee.
+    func withdrawToMainchain(walletId: String, mainAddress: String, mainScriptPubKey: [UInt8],
+                             amount: Amount, mainFee: Amount, feeRate: FeeRate) async throws -> WalletTx {
+        guard !mainScriptPubKey.isEmpty, !mainAddress.isEmpty else { throw ThunderError.invalidAddress }
+        // Below dust the mainchain payout output would be non-standard; L2L hasn't specified a floor,
+        // so we hold the line at Bitcoin's.
+        guard amount.sats >= Self.minimumWithdrawalSats, mainFee.sats > 0 else {
+            throw ThunderError.withdrawalTooSmall(minimumSats: Self.minimumWithdrawalSats)
+        }
+        let payment = ThunderOutputContent.withdrawal(sats: UInt64(amount.sats), mainFeeSats: UInt64(mainFee.sats),
+                                                      mainAddress: mainAddress, mainScriptPubKey: mainScriptPubKey)
+        let utxos = try await fetchUtxos(walletId: walletId)
+        let selection = try ThunderCoinSelector.select(utxos: utxos, payment: payment,
+                                                       satPerByte: UInt64(max(0, feeRate.satPerVByte)))
+        let owner = try await nextChangeAddress(walletId: walletId)
+        var outputs = [ThunderOutput(address: owner.bytes, content: payment)]
+        if selection.changeSats > 0 {
+            let change = try await nextChangeAddress(walletId: walletId)
+            outputs.append(ThunderOutput(address: change.bytes, content: .value(sats: selection.changeSats)))
+        }
+        return try await build(walletId: walletId, selection: selection, outputs: outputs,
+                               netSats: -(amount.sats + mainFee.sats + Int64(clamping: selection.feeSats)),
+                               withdrawalAddress: mainAddress)
+    }
+
+    /// The smallest withdrawal payout we'll build (Bitcoin's P2PKH dust threshold).
+    static let minimumWithdrawalSats: Int64 = 546
+
     /// Splitting coins guards against the eCash fork's replay exposure — a concern that belongs to the
     /// Bitcoin/eCash chains, not to Thunder, which is its own chain with its own signature scheme.
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
@@ -320,7 +354,8 @@ final class ThunderService: WalletOps {
     private func build(walletId: String,
                        selection: ThunderCoinSelection,
                        outputs: [ThunderOutput],
-                       netSats: Int64) async throws -> WalletTx {
+                       netSats: Int64,
+                       withdrawalAddress: String? = nil) async throws -> WalletTx {
         let mnemonic = try requireMnemonic(walletId: walletId)
         let searchLimit = Int(indexStore.revealedIndex(walletId: walletId) + Self.gapLimit) + 1
         let transaction = ThunderTransaction(inputs: selection.inputs.map { $0.asInput() }, outputs: outputs)
@@ -343,7 +378,8 @@ final class ThunderService: WalletOps {
         utxoCache[walletId] = (utxoCache[walletId] ?? []).filter { !spent.contains($0.utxoHash()) }
 
         return WalletTx(txid: txid, netSats: netSats, feeSats: Int64(clamping: selection.feeSats),
-                        confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
+                        confirmations: 0, timestampEpochSeconds: nil, isRBF: false,
+                        sidechainWithdrawalAddress: withdrawalAddress)
     }
 
     /// A fresh change address: advance and persist the revealed counter, so change never lands on an

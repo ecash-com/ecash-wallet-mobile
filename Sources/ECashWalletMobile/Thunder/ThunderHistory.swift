@@ -50,15 +50,26 @@ enum ThunderHistory {
                       firstSeen: [String: Int64] = [:]) -> [WalletTx] {
         var received: [String: Int64] = [:]
         var spent: [String: Int64] = [:]
+        // Txids that created one of our withdrawal outputs → the mainchain address it pays.
+        var withdrawals: [String: String] = [:]
 
-        // Every output ever paid to us — still unspent, plus those since spent.
+        // Every output ever paid to us — still unspent, plus those since spent. A withdrawal output is
+        // addressed to one of ours but its value LEAVES the sidechain, so it isn't "received": it marks
+        // the creating tx as a withdrawal instead (otherwise that tx nets to ~zero).
+        func record(_ content: ThunderRPCContent, createdBy txid: String) {
+            if case let .withdrawal(_, _, mainAddress) = content {
+                withdrawals[txid] = mainAddress
+            } else {
+                received[txid, default: 0] += Int64(clamping: content.valueSats)
+            }
+        }
         for utxo in utxos {
             guard let txid = creatingTxid(utxo.outpoint.outPoint) else { continue }
-            received[txid, default: 0] += Int64(clamping: utxo.output.content.valueSats)
+            record(utxo.output.content, createdBy: txid)
         }
         for stxo in stxos {
             if let txid = creatingTxid(stxo.outpoint.outPoint) {
-                received[txid, default: 0] += Int64(clamping: stxo.output.output.content.valueSats)
+                record(stxo.output.output.content, createdBy: txid)
             }
             // …and the transaction that took it away.
             if case let .regular(txidBytes, _) = stxo.output.inpoint {
@@ -70,7 +81,7 @@ enum ThunderHistory {
             // worse than omitting it until withdrawals are actually supported (v2).
         }
 
-        let txids = Set(received.keys).union(spent.keys)
+        let txids = Set(received.keys).union(spent.keys).union(withdrawals.keys)
         let txs = txids.map { txid -> WalletTx in
             let inbound = received[txid] ?? 0
             let outbound = spent[txid] ?? 0
@@ -85,7 +96,8 @@ enum ThunderHistory {
                             blockHeight: nil,               // unknown — see the type note
                             vsize: nil,
                             coinNewsKind: nil,
-                            receivedSats: inbound)
+                            receivedSats: inbound,
+                            sidechainWithdrawalAddress: withdrawals[txid])
         }
         // Newest-first by whatever ordering key we have; unknown sorts last.
         return txs.sorted { ($0.timestampEpochSeconds ?? 0) > ($1.timestampEpochSeconds ?? 0) }

@@ -146,19 +146,46 @@ public final class WalletEngine: WalletEngineProtocol {
     /// are deliberately excluded: they're reported by `pendingBalance()` and can't be spent until
     /// they confirm (spend policy — see README "Spendable balance"). This is what coin selection in
     /// `send` honors too, via `untrustedUnconfirmedOutpoints()`.
+    /// Spendable balance: confirmed + unconfirmed outputs of transactions WE made (our change).
+    ///
+    /// BDK's own `trustedPending` only trusts unconfirmed outputs on the INTERNAL (change) keychain. A
+    /// single-key WIF wallet has no change keychain — its change returns to its one external address —
+    /// so after any send BDK filed the whole remaining balance under `untrustedPending` and the wallet
+    /// showed everything as "pending", although `send` (same rule as here, `untrustedUnconfirmedOutpoints`)
+    /// would happily spend it. Reported by a betanet tester, 2026-10-01. Display and spending now agree.
     public func balance() throws -> Amount {
         let balance = wallet.balance()
         // BDK vends UInt64 sats; our Amount is signed Int64 (bridge-safe, fits all real values).
-        let available = balance.confirmed.toSat() + balance.trustedPending.toSat()
+        let available = balance.confirmed.toSat() + balance.trustedPending.toSat() + ownChangeOnExternalSats()
         return Amount(sats: Int64(available))
     }
 
-    /// NOT-yet-spendable balance — incoming 0-conf (`untrustedPending`) + immature coinbase.
-    /// Surfaced separately so received-but-unconfirmed funds read as "pending", not missing.
+    /// NOT-yet-spendable balance — incoming 0-conf from someone else + immature coinbase. Surfaced
+    /// separately so received-but-unconfirmed funds read as "pending", not missing.
     public func pendingBalance() throws -> Amount {
         let balance = wallet.balance()
-        let pending = balance.untrustedPending.toSat() + balance.immature.toSat()
+        let untrusted = balance.untrustedPending.toSat()
+        let own = ownChangeOnExternalSats()
+        let pending = (untrusted > own ? untrusted - own : UInt64(0)) + balance.immature.toSat()
         return Amount(sats: Int64(pending))
+    }
+
+    /// Unconfirmed outputs on the EXTERNAL keychain that belong to a transaction we made — the change of
+    /// a single-key wallet, or a send to one of our own receive addresses. BDK counts these as
+    /// `untrustedPending`; our spend policy counts them as spendable.
+    private func ownChangeOnExternalSats() -> UInt64 {
+        let txids = unconfirmedTxids()
+        if txids.trusted.isEmpty { return UInt64(0) }
+        let external = BDKSeam.externalKeychain()
+        var sats = UInt64(0)
+        for output in wallet.listUnspent() {
+            if output.keychain != external { continue }
+            let txid = "\(output.outpoint.txid)"
+            if txids.unconfirmed.contains(txid) && txids.trusted.contains(txid) {
+                sats += output.txout.value.toSat()
+            }
+        }
+        return sats
     }
 
     public func nextReceiveAddress() throws -> AddressInfo {
@@ -324,6 +351,21 @@ public final class WalletEngine: WalletEngineProtocol {
     /// double-spent or RBF-replaced before confirming. Mirrors Bitcoin Core's trusted/untrusted
     /// rule. (Spend policy — README "Spendable balance".)
     private func untrustedUnconfirmedOutpoints() -> [OutPoint] {
+        let txids = unconfirmedTxids()
+        var excluded: [OutPoint] = []
+        for output in wallet.listUnspent() {
+            let txid = "\(output.outpoint.txid)"
+            if txids.unconfirmed.contains(txid) && !txids.trusted.contains(txid) {
+                excluded.append(output.outpoint)
+            }
+        }
+        return excluded
+    }
+
+    /// Txids of the wallet's unconfirmed transactions, and the subset WE funded (`sent > 0`) — whose
+    /// outputs to us are our own change and so are spendable before they confirm. The one trust rule
+    /// shared by the spend policy and the balance display.
+    private func unconfirmedTxids() -> UnconfirmedTxids {
         var unconfirmedTxids = Set<String>()
         var trustedTxids = Set<String>()
         for canonical in wallet.transactions() {
@@ -344,14 +386,7 @@ public final class WalletEngine: WalletEngineProtocol {
                 trustedTxids.insert(txid)   // our own unconfirmed change → spendable
             }
         }
-        var excluded: [OutPoint] = []
-        for output in wallet.listUnspent() {
-            let txid = "\(output.outpoint.txid)"
-            if unconfirmedTxids.contains(txid) && !trustedTxids.contains(txid) {
-                excluded.append(output.outpoint)
-            }
-        }
-        return excluded
+        return UnconfirmedTxids(unconfirmed: unconfirmedTxids, trusted: trustedTxids)
     }
 
     public func listUtxos() throws -> [Utxo] {
@@ -1076,3 +1111,10 @@ public final class WalletEngine: WalletEngineProtocol {
     }
 }
 #endif // !SKIP_BRIDGE
+
+/// The wallet's unconfirmed txids and the subset it funded itself (see `unconfirmedTxids()`). A struct,
+/// not a tuple: it transpiles to plain Kotlin.
+struct UnconfirmedTxids {
+    let unconfirmed: Set<String>
+    let trusted: Set<String>
+}

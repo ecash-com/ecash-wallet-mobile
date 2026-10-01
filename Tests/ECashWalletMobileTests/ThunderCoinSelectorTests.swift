@@ -136,4 +136,16 @@ import Foundation
             try ThunderCoinSelector.selectAll(utxos: [], satPerByte: 1)
         }
     }
+
+    /// A withdrawal output is bigger than a value output (mainchain fee + destination script), and the
+    /// coins must cover the payout AND its mainchain fee — both leave the sidechain.
+    @Test func withdrawalIsPricedOnItsRealSizeAndCoversTheMainchainFee() throws {
+        let script = [UInt8](repeating: 0x00, count: 22)
+        let payment = ThunderOutputContent.withdrawal(sats: 40_000, mainFeeSats: 10_000,
+                                                      mainAddress: "x", mainScriptPubKey: script)
+        let selection = try ThunderCoinSelector.select(utxos: [Self.utxo(100_000)], payment: payment, satPerByte: 1)
+        #expect(selection.totalInputSats == 50_000 + selection.changeSats + selection.feeSats)
+        let valueOnlyFee = ThunderCoinSelector.fee(inputCount: 1, outputCount: 2, satPerByte: 1)
+        #expect(selection.feeSats == valueOnlyFee + UInt64(8 + 4 + script.count))   // main_fee u64 + len + script
+    }
 }

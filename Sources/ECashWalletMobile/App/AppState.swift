@@ -882,6 +882,61 @@ final class AppState {
             })
     }
 
+    /// Vend the regular (BIP300) withdrawal flow from the selected SIDECHAIN wallet back to its
+    /// mainchain, or nil when the selected wallet isn't a sidechain wallet. The wallet id and both
+    /// networks are captured now (switching wallets mid-flow can't redirect the withdrawal).
+    func makeSidechainWithdrawViewModel() -> SidechainWithdrawViewModel? {
+        guard let id = selectedWalletId, let wallet = selectedWallet,
+              let mainchain = SidechainWalletNetwork.mainchain(ofSidechainWallet: wallet.network) else { return nil }
+        let sidechainParams = NetworkRegistry.params(for: wallet.network)
+        let mainParams = NetworkRegistry.params(for: mainchain)
+        let ops = walletOps
+        let manager = self.manager
+        // The user's wallets ON THE MAINCHAIN — the safe default destination (same-network filter as
+        // Send: an address from any other network would look valid and lose the coins).
+        let destinations = manager.wallets
+            .filter { $0.network == mainchain }
+            .map { SendViewModel.Destination(id: $0.id, label: $0.label, balance: balanceSummary(walletId: $0.id)) }
+        let enforcerEndpoint = EnforcerEndpointRegistry.endpoint(for: mainchain)
+        return SidechainWithdrawViewModel(
+            sidechainTitle: sidechainParams.displayName,
+            sidechainNetwork: wallet.network,
+            mainchain: mainchain,
+            mainchainDisplayName: mainParams.displayName,
+            unitLabel: sidechainParams.unitLabel,
+            spendable: balance,
+            scriptPubKey: { address in
+                // BDK's parse: checksum AND the mainchain's network. Anything else → nil.
+                (try? manager.scriptPubKeyHex(for: address, network: mainchain)).flatMap(ThunderHex.decode)
+            },
+            withdraw: { mainAddress, script, amount, mainFee, feeRate in
+                try await ops.withdrawToMainchain(walletId: id, mainAddress: mainAddress, mainScriptPubKey: script,
+                                                  amount: amount, mainFee: mainFee, feeRate: feeRate)
+            },
+            authorize: { reason in
+                // Device auth before moving money when app-lock is on (§7), exactly like Send.
+                guard self.appLock.enabled else { return true }
+                return await DeviceAuth.authenticate(reason: reason)
+            },
+            onDone: { tx in
+                self.insertPending(tx)
+                Task { await self.sync() }
+            },
+            loadTiming: {
+                // The mainchain enforcer's live BIP300 constants — never hardcoded months.
+                guard let endpoint = enforcerEndpoint,
+                      let constants = try? await EnforcerClient(endpoint: endpoint).bip300Constants(),
+                      constants.withdrawalBundleInclusionThreshold > 0 else { return nil }
+                // A batch passes only with MORE than `threshold` votes (see SidechainsViewModel).
+                return (constants.withdrawalBundleInclusionThreshold + 1, constants.withdrawalBundleMaxAge)
+            },
+            destinations: destinations,
+            addressForDestination: { walletId in
+                // `unused: true`: browsing the picker must not burn the destination wallet's index.
+                try await ops.receiveAddress(walletId: walletId, unused: true).address
+            })
+    }
+
     /// The name of the sidechain a deposit went to, on the selected wallet's network, or nil if
     /// it isn't a deposit or the name isn't known (yet). Callers fall back to "slot N".
     func sidechainName(for tx: WalletTx) -> String? {

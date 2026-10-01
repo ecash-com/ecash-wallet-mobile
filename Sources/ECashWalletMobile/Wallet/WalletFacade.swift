@@ -57,6 +57,12 @@ final class WalletFacade: WalletOps {
                                                      feeRate: feeRate, treasuryTxid: treasuryTxid,
                                                      treasuryVout: treasuryVout, treasuryValueSats: treasuryValueSats)
     }
+    func withdrawToMainchain(walletId: String, mainAddress: String, mainScriptPubKey: [UInt8],
+                             amount: Amount, mainFee: Amount, feeRate: FeeRate) async throws -> WalletTx {
+        try await route(walletId).withdrawToMainchain(walletId: walletId, mainAddress: mainAddress,
+                                                      mainScriptPubKey: mainScriptPubKey, amount: amount,
+                                                      mainFee: mainFee, feeRate: feeRate)
+    }
     func splitSummary(walletId: String) throws -> SplitSummary {
         try route(walletId).splitSummary(walletId: walletId)
     }

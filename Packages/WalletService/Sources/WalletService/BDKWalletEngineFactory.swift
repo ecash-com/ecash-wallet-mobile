@@ -228,6 +228,22 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         }
     }
 
+    public func scriptPubKeyHex(_ address: String, network: WalletNetwork) throws -> String {
+        let bdkAddress: Address
+        do {
+            bdkAddress = try Address(address: address, network: BDKSeam.network(network))
+        } catch {
+            throw WalletError.invalidAddress
+        }
+        // `Script.toBytes()` → `Data` (bdk-swift) / `ByteArray` (bdk-android) — see outputScripts.
+        #if SKIP
+        let bytes = Data(platformValue: bdkAddress.scriptPubkey().toBytes())
+        #else
+        let bytes = bdkAddress.scriptPubkey().toBytes()
+        #endif
+        return EntropyDerivation.hex(bytes)
+    }
+
     /// Validate a backend by building the client and fetching the chain tip. Throws `.syncFailed`
     /// on unreachable/invalid (scrubbed). Network I/O — callers run it off the main actor.
     public func testBackend(kind: String, url: String, socks5: String?) throws {

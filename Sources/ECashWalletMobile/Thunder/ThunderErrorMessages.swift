@@ -23,6 +23,8 @@ extension ThunderError: UserFacingError {
             return "Couldn't unlock this wallet's keys."
         case .backendUnavailable:
             return "Couldn't reach the Thunder network. Check your connection and try again."
+        case let .withdrawalTooSmall(minimumSats):
+            return "A withdrawal must be at least \(minimumSats) sats, with a mainchain fee."
         case .unsupportedOperation:
             return "That isn't available on Thunder."
         case .historyUnavailable:

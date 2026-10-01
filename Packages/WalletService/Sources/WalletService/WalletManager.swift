@@ -520,6 +520,13 @@ public final class WalletManager: @unchecked Sendable {
         factory.isValidAddress(address, network: network)
     }
 
+    /// The scriptPubKey `address` pays to on `network`, as lowercase hex. Throws
+    /// `WalletError.invalidAddress` for a bad checksum or another network's address. Used to build a
+    /// Thunder withdrawal output, whose mainchain destination is signed as raw script bytes.
+    public func scriptPubKeyHex(for address: String, network: WalletNetwork) throws -> String {
+        try factory.scriptPubKeyHex(address, network: network)
+    }
+
     /// Get-or-build the cached live engine for a walletId (see `engines`).
     private func liveEngine(walletId: String) throws -> WalletEngineProtocol {
         if let cached = engines[walletId] { return cached }

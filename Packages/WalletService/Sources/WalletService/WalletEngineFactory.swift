@@ -76,6 +76,10 @@ public protocol WalletEngineFactory: AnyObject {
     /// (BDK's `Address(address:network:)` parse). Synchronous, no network: safe to call on the main
     /// actor as the user types, to validate the Send recipient early (typos + wrong-network paste).
     func isValidAddress(_ address: String, network: WalletNetwork) -> Bool
+    /// The scriptPubKey `address` pays to on `network`, as lowercase hex — what a sidechain withdrawal
+    /// output carries as its mainchain destination. Same parse (checksum + network) as
+    /// `isValidAddress`; throws `WalletError.invalidAddress` for anything it rejects.
+    func scriptPubKeyHex(_ address: String, network: WalletNetwork) throws -> String
     /// Probe a backend (build the client + fetch the chain tip) so Settings can validate a custom
     /// endpoint before saving. Throws on unreachable/invalid; does network I/O (call off main).
     func testBackend(kind: String, url: String, socks5: String?) throws
@@ -184,6 +188,13 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
     public func isValidAddress(_ address: String, network: WalletNetwork) -> Bool {
         let trimmed = address.trimmingCharacters(in: .whitespacesAndNewlines)
         return !trimmed.isEmpty && !trimmed.contains(" ")
+    }
+
+    /// Deterministic stub: rejects what `isValidAddress` rejects, otherwise a fixed P2WPKH-shaped
+    /// script (`0014` + 20 bytes) so callers can exercise the happy path without BDK.
+    public func scriptPubKeyHex(_ address: String, network: WalletNetwork) throws -> String {
+        guard isValidAddress(address, network: network) else { throw WalletError.invalidAddress }
+        return "0014" + String(repeating: "ab", count: 20)
     }
 
     public func purgeChainData(for walletId: String) {

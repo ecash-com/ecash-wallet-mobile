@@ -185,10 +185,17 @@ final class SidechainsViewModel {
     }
 
     /// The best-case wait before a withdrawal from this network's sidechains can pay out: a new
-    /// batch needs the full inclusion threshold of consecutive upvotes. Drives the "coming back takes
-    /// about…" copy on the detail screen (and later the deposit review).
+    /// batch passes only with MORE than the inclusion threshold of upvotes (`votes > threshold` in the
+    /// enforcer, validator/task/mod.rs), so at least threshold + 1 consecutive blocks. Drives the
+    /// "coming back takes about…" copy on the detail screen, the deposit review and the withdrawal flow.
     var minimumWithdrawalBlocks: Int? {
         guard let t = constants?.withdrawalBundleInclusionThreshold, t > 0 else { return nil }
-        return t
+        return t + 1
+    }
+
+    /// How long a withdrawal batch has to pass before it expires and goes back in line.
+    var withdrawalExpiryBlocks: Int? {
+        guard let age = constants?.withdrawalBundleMaxAge, age > 0 else { return nil }
+        return age
     }
 }

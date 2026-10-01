@@ -28,6 +28,7 @@ struct WalletHomeScreen: View {
     @State var showSplit = false           // "Split coins" sheet
     @State var splitDismissed = false      // per-session: dismiss the split nudge without splitting
     @State var showSidechains = false      // Sidechains sheet (networks with a BIP300 enforcer only)
+    @State var showWithdraw = false        // Withdraw options sheet (sidechain wallets only)
     @State var detailTx: WalletTx? = nil
 
     var body: some View {
@@ -123,6 +124,8 @@ struct WalletHomeScreen: View {
                               sidechainName: app.sidechainName(for: tx))
             }
         }
+        // Withdraw: a sidechain wallet's way back to its mainchain (regular / fast chooser first).
+        .sheet(isPresented: $showWithdraw) { WithdrawOptionsSheet() }
         // Sidechains: read-only browse of this network's BIP300 sidechains.
         .sheet(isPresented: $showSidechains) {
             if let vm = app.makeSidechainsViewModel() {
@@ -284,6 +287,7 @@ struct WalletHomeScreen: View {
                     } label: {
                         TxRow(tx: tx, unitLabel: app.unitLabel,
                               fiatText: app.fiatString(forSats: abs(tx.netSats)),
+                              amountHidden: app.balanceHidden,
                               sidechainName: app.sidechainName(for: tx))
                             .padding(.vertical, Theme.Space.x2)
                     }
@@ -296,10 +300,17 @@ struct WalletHomeScreen: View {
     }
 
     /// The four-circle action row (mock): Send prominent, Receive live, Swap/Buy disabled
-    /// ghosts until those features exist (out of v1 scope, §1).
+    /// ghosts until those features exist (out of v1 scope, §1). On a SIDECHAIN wallet the first slot
+    /// is Withdraw instead — the only way its coins get back to the mainchain.
     private var actionCircles: some View {
         HStack(spacing: Theme.Space.x6) {
-            actionCircle(icon: Icon.swap, title: "Swap", prominent: false, enabled: false) {}
+            if isSidechainWallet {
+                actionCircle(icon: Icon.sidechains, title: "Withdraw", prominent: false, enabled: true) {
+                    showWithdraw = true
+                }
+            } else {
+                actionCircle(icon: Icon.swap, title: "Swap", prominent: false, enabled: false) {}
+            }
             actionCircle(icon: Icon.buy, title: "Buy", prominent: false, enabled: false) {}
             actionCircle(icon: Icon.receive, title: "Receive", prominent: false, enabled: true) {
                 showReceive = true
@@ -310,6 +321,11 @@ struct WalletHomeScreen: View {
                 showSend = true
             }
         }
+    }
+
+    private var isSidechainWallet: Bool {
+        guard let network = app.selectedWallet?.network else { return false }
+        return SidechainWalletNetwork.mainchain(ofSidechainWallet: network) != nil
     }
 
     private func actionCircle(icon: Icon, title: LocalizedStringKey, prominent: Bool, enabled: Bool,

@@ -274,6 +274,72 @@ import WalletService
         #expect((transaction["proof"] as? [String: Any])?["targets"] as? [Int] == [])
     }
 
+    // MARK: - Withdrawal to the mainchain
+
+    private static let mainAddress = "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"
+    private static let mainScript: [UInt8] = ThunderHex.decode("0014751e76e8199196d454941c45d1b3a323f1433bd6")!
+
+    /// Shaped like thunder-rust's `create_withdrawal`: the withdrawal output goes to a FRESH address of
+    /// ours, change to another, and the coins cover payout + mainchain fee + sidechain fee.
+    @Test func withdrawalBuildsAWithdrawalOutputToAFreshAddressOfOurs() async throws {
+        let log = RequestLog()
+        let store = InMemoryThunderAddressIndexStore()
+        let service = Self.service(utxosJSON: "[\(Self.utxoJSON(address: Self.address0, sats: 100_000, vout: 0))]",
+                                   submitTxid: "wd", requests: log, indexStore: store)
+        let tx = try await service.withdrawToMainchain(walletId: "w1", mainAddress: Self.mainAddress,
+                                                       mainScriptPubKey: Self.mainScript,
+                                                       amount: Amount(sats: 40_000), mainFee: Amount(sats: 10_000),
+                                                       feeRate: FeeRate(satPerVByte: 1))
+        #expect(tx.txid == "wd")
+        #expect(tx.netSats == -(40_000 + 10_000 + (tx.feeSats ?? 0)))
+        #expect(tx.sidechainWithdrawalAddress == Self.mainAddress)
+
+        let submitted = try #require(log.lastParams(method: "submit_transaction") as? [[String: Any]])
+        let transaction = try #require(submitted[0]["transaction"] as? [String: Any])
+        let outputs = try #require(transaction["outputs"] as? [[String: Any]])
+        #expect(outputs.count == 2)                                       // withdrawal + change
+        let withdrawal = try #require((outputs[0]["content"] as? [String: Any])?["Withdrawal"] as? [String: Any])
+        #expect(withdrawal["value"] as? Int == 40_000)                    // 0.18 field names
+        #expect(withdrawal["main_fee"] as? Int == 10_000)
+        #expect(withdrawal["main_address"] as? String == Self.mainAddress)
+        // Owner and change are two NEW addresses, neither the one we spent from.
+        let owner = outputs[0]["address"] as? String, change = outputs[1]["address"] as? String
+        #expect(owner != Self.address0 && change != Self.address0 && owner != change)
+        #expect(store.revealedIndex(walletId: "w1") == 2)
+    }
+
+    @Test func withdrawalBelowDustOrWithoutAMainchainFeeIsRefusedBeforeSigning() async throws {
+        let log = RequestLog()
+        let service = Self.service(utxosJSON: "[\(Self.utxoJSON(address: Self.address0, sats: 100_000, vout: 0))]",
+                                   requests: log)
+        for (amount, mainFee) in [(Int64(545), Int64(10_000)), (Int64(40_000), Int64(0))] {
+            do {
+                _ = try await service.withdrawToMainchain(walletId: "w1", mainAddress: Self.mainAddress,
+                                                          mainScriptPubKey: Self.mainScript,
+                                                          amount: Amount(sats: amount), mainFee: Amount(sats: mainFee),
+                                                          feeRate: FeeRate(satPerVByte: 1))
+                Issue.record("expected withdrawalTooSmall")
+            } catch let error as ThunderError {
+                #expect(error == .withdrawalTooSmall(minimumSats: 546))
+            }
+        }
+        #expect(log.lastParams(method: "submit_transaction") == nil)
+    }
+
+    @Test func withdrawalNeedsCoinsForThePayoutAndItsMainchainFee() async throws {
+        // 45,000 covers the 40,000 payout but not payout + 10,000 mainchain fee.
+        let service = Self.service(utxosJSON: "[\(Self.utxoJSON(address: Self.address0, sats: 45_000, vout: 0))]")
+        do {
+            _ = try await service.withdrawToMainchain(walletId: "w1", mainAddress: Self.mainAddress,
+                                                      mainScriptPubKey: Self.mainScript,
+                                                      amount: Amount(sats: 40_000), mainFee: Amount(sats: 10_000),
+                                                      feeRate: FeeRate(satPerVByte: 1))
+            Issue.record("expected insufficientFunds")
+        } catch let error as ThunderError {
+            guard case .insufficientFunds = error else { Issue.record("wrong error \(error)"); return }
+        }
+    }
+
     @Test func changeGoesToAFreshAddressNotAnInputAddress() async throws {
         let log = RequestLog()
         let store = InMemoryThunderAddressIndexStore()

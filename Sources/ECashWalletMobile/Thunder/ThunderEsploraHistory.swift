@@ -77,13 +77,16 @@ enum ThunderEsploraHistory {
     }
 
     private static func row(tx: ThunderEsploraTx, ours: Set<String>, tipHeight: Int64) -> WalletTx {
-        // Everything this transaction paid to an address of ours. Withdrawal outputs are counted at
-        // their reported value (payout + mainchain fee): unlike the spending path, history is
-        // describing what left the sidechain, and both halves did.
+        // Everything this transaction paid to an address of ours — EXCEPT withdrawal outputs. Ours
+        // are addressed to one of our own fresh addresses (as thunder-rust's wallet does), but the
+        // value leaves the sidechain for the mainchain; counting it as received made a withdrawal
+        // look like a ~zero self-transfer.
         var received: Int64 = 0
-        for vout in tx.vout where ours.contains(vout.scriptPubKeyAddress) {
+        for vout in tx.vout where ours.contains(vout.scriptPubKeyAddress) && !vout.isWithdrawal {
             received += vout.value
         }
+        // A withdrawal WE made: one of our addresses owns its withdrawal output.
+        let withdrawal = tx.vout.first { $0.isWithdrawal && ours.contains($0.scriptPubKeyAddress) }
         // …and everything it spent from us. A coinbase input has no prevout to attribute.
         var spent: Int64 = 0
         for vin in tx.vin where !vin.isCoinbase {
@@ -107,6 +110,7 @@ enum ThunderEsploraHistory {
                         coinNewsKind: nil,                  // CoinNews is Bitcoin/eCash only
                         // Carries a self-transfer, where `netSats` is only the fee and the amount that
                         // actually moved would otherwise appear nowhere (see `WalletTx.receivedSats`).
-                        receivedSats: received)
+                        receivedSats: received,
+                        sidechainWithdrawalAddress: withdrawal.map { $0.withdrawalMainAddress ?? "" })
     }
 }

@@ -28,6 +28,7 @@ struct ActivityScreen: View {
                         } label: {
                             TxRow(tx: tx, unitLabel: app.unitLabel,
                                   fiatText: app.fiatString(forSats: abs(tx.netSats)),
+                              amountHidden: app.balanceHidden,
                               sidechainName: app.sidechainName(for: tx))
                         }
                         .buttonStyle(.plain)

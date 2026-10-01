@@ -31,6 +31,8 @@ enum ThunderError: Error, Equatable {
     /// predating that RPC still answers everything else, and we may want to surface the difference
     /// rather than silently showing an empty Activity list.
     case historyUnavailable
+    /// A withdrawal payout below the mainchain dust floor, or with no mainchain fee.
+    case withdrawalTooSmall(minimumSats: Int64)
     /// An operation that has no meaning on Thunder (e.g. splitting coins, which guards against an
     /// eCash-fork replay concern that this chain simply doesn't have).
     case unsupportedOperation

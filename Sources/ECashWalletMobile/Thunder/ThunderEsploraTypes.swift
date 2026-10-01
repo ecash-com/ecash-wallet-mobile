@@ -176,11 +176,15 @@ struct ThunderEsploraVout: Decodable, Equatable {
     let scriptPubKeyAddress: String
     let value: Int64
     let contentType: String
+    /// For a withdrawal output, the mainchain address it pays (from the node-shaped `content` payload);
+    /// nil for anything else, or if the index omitted the payload.
+    let withdrawalMainAddress: String?
 
     private enum Keys: String, CodingKey {
         case scriptPubKeyAddress = "scriptpubkey_address"
         case value
         case contentType = "content_type"
+        case content
     }
 
     init(from decoder: Decoder) throws {
@@ -188,13 +192,24 @@ struct ThunderEsploraVout: Decodable, Equatable {
         scriptPubKeyAddress = try c.decodeIfPresent(String.self, forKey: .scriptPubKeyAddress) ?? ""
         value = try c.decodeIfPresent(Int64.self, forKey: .value) ?? 0
         contentType = try c.decodeIfPresent(String.self, forKey: .contentType) ?? ThunderEsploraContentType.value
+        // Same serde shape as the node RPC (`{"Withdrawal":{"value","main_fee","main_address"}}`), so the
+        // RPC decoder reads it. Optional and lenient: history must never fail over a payload detail.
+        if case let .withdrawal(_, _, mainAddress)? = try? c.decodeIfPresent(ThunderRPCContent.self, forKey: .content) {
+            withdrawalMainAddress = mainAddress
+        } else {
+            withdrawalMainAddress = nil
+        }
     }
 
-    init(scriptPubKeyAddress: String, value: Int64, contentType: String = ThunderEsploraContentType.value) {
+    init(scriptPubKeyAddress: String, value: Int64, contentType: String = ThunderEsploraContentType.value,
+         withdrawalMainAddress: String? = nil) {
         self.scriptPubKeyAddress = scriptPubKeyAddress
         self.value = value
         self.contentType = contentType
+        self.withdrawalMainAddress = withdrawalMainAddress
     }
+
+    var isWithdrawal: Bool { contentType == ThunderEsploraContentType.withdrawal }
 }
 
 /// One input of a transaction (`Vin`). The index always populates `prevout` — it says so explicitly,

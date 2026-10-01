@@ -37,6 +37,24 @@ import WalletService
         return try JSONDecoder().decode(ThunderRPCPointedSpentOutput.self, from: Data(json.utf8))
     }
 
+    /// Node-RPC history: our withdrawal output is addressed to one of our addresses, but it is an
+    /// outflow to the mainchain, not a receive. Tx 0x33 spends a 100,000 coin into a 50,000 withdrawal
+    /// (payout 40,000 + main fee 10,000) and 49,700 change.
+    @Test func aWithdrawalIsAnOutflowNotAReceive() throws {
+        let withdrawalJSON = """
+        {"outpoint":{"Regular":{"txid":"\(Self.txid(0x33))","vout":0}},
+         "output":{"address":"\(Self.addressA)","content":{"Withdrawal":{"value":40000,"main_fee":10000,
+                    "main_address":"bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"}}}}
+        """
+        let withdrawalOut = try JSONDecoder().decode(ThunderRPCPointedOutput.self, from: Data(withdrawalJSON.utf8))
+        let rows = ThunderHistory.build(
+            utxos: [withdrawalOut, try Self.utxo(from: 0x33, vout: 1, sats: 49_700)],
+            stxos: [try Self.stxo(from: 0x11, sats: 100_000, spentBy: 0x33)])
+        let row = try #require(rows.first { $0.txid == Self.txid(0x33) })
+        #expect(row.netSats == 49_700 - 100_000)
+        #expect(row.sidechainWithdrawalAddress == "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+    }
+
     // MARK: - Decoding the new shapes
 
     /// `Pointed<SpentOutput>` nests: Pointed's field is named `output` whatever it holds, so a spent

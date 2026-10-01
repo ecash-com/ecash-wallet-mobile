@@ -36,6 +36,11 @@ final class WalletManagerOps: WalletOps {
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
         try await manager.splitToSelf(walletId: walletId, feeRate: feeRate)
     }
+    /// BDK wallets are mainchain wallets — there is nothing to withdraw back to.
+    func withdrawToMainchain(walletId: String, mainAddress: String, mainScriptPubKey: [UInt8],
+                             amount: Amount, mainFee: Amount, feeRate: FeeRate) async throws -> WalletTx {
+        throw WalletError.sidechainNotSupported
+    }
     func depositToSidechain(walletId: String, slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
                             treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) async throws -> WalletTx {
         try await manager.depositToSidechain(walletId: walletId, slot: slot, address: address, amount: amount,

@@ -18,6 +18,10 @@ struct TxRow: View {
     let tx: WalletTx
     let unitLabel: String
     var fiatText: String? = nil
+    /// The Home eye toggle ("hide balance"): mask the amount and drop the fiat line, so the list doesn't
+    /// give away what the hidden balance is made of. The detail sheet stays unmasked — opening a
+    /// transaction is a deliberate look.
+    var amountHidden: Bool = false
     /// For a sidechain deposit: the sidechain's name, if known (`AppState.sidechainName(for:)`).
     var sidechainName: String? = nil
 
@@ -52,15 +56,16 @@ struct TxRow: View {
 
             VStack(alignment: .trailing, spacing: Theme.Space.x2) {
                 HStack(spacing: Theme.Space.x1) {
-                    Text(verbatim: amountText)
+                    Text(verbatim: amountHidden ? "••••••" : amountText)
                         .font(.jbMono(14, .medium))
-                        .foregroundStyle(tx.isReceived ? Theme.Colors.positive : Theme.Colors.text0)
+                        .foregroundStyle(amountHidden ? Theme.Colors.text1
+                                         : (tx.isReceived ? Theme.Colors.positive : Theme.Colors.text0))
                     Text(verbatim: unitLabel)
                         .font(.jbMono(11, .regular))
                         .foregroundStyle(Theme.Colors.text2)
                 }
                 // Fiat value for priced networks (mainnet); absent on testnets / before a quote.
-                if let fiatText {
+                if !amountHidden, let fiatText {
                     Text(verbatim: "≈ \(fiatText)")
                         .font(.jbMono(12, .regular))
                         .foregroundStyle(Theme.Colors.text2)
@@ -80,6 +85,12 @@ struct TxRow: View {
             // The amount column already shows the deposit (net minus fee), so the title just names
             // where it went.
             SidechainDepositTitle(name: sidechainName, slot: slot, received: tx.isReceived)
+                .font(.satoshi(16, .semibold))
+                .foregroundStyle(Theme.Colors.text0)
+        } else if tx.isSidechainWithdrawal {
+            // Without this a withdrawal reads "Sent" — true, but it hides that the coins are on their
+            // way to the mainchain over months, not paid to someone.
+            Text("Withdrawal", bundle: .module, comment: "tx row: sidechain → mainchain withdrawal")
                 .font(.satoshi(16, .semibold))
                 .foregroundStyle(Theme.Colors.text0)
         } else if let kind = tx.coinNewsKind {
@@ -125,19 +136,19 @@ struct TxRow: View {
     }
 
     private var chipIcon: Icon {
-        if tx.isSidechainDeposit { return Icon.sidechains }
+        if tx.isSidechainDeposit || tx.isSidechainWithdrawal { return Icon.sidechains }
         if tx.isCoinNews { return Icon.news }
         return tx.isReceived ? Icon.receive : Icon.send
     }
 
     private var chipTint: Color {
-        if tx.isSidechainDeposit || tx.isCoinNews { return Theme.Colors.accentTint }
+        if tx.isSidechainDeposit || tx.isSidechainWithdrawal || tx.isCoinNews { return Theme.Colors.accentTint }
         if isPending { return Theme.Colors.warningTint }
         return tx.isReceived ? Theme.Colors.positiveTint : Theme.Colors.bg2
     }
 
     private var chipGlyph: Color {
-        if tx.isSidechainDeposit || tx.isCoinNews { return Theme.Colors.accent }
+        if tx.isSidechainDeposit || tx.isSidechainWithdrawal || tx.isCoinNews { return Theme.Colors.accent }
         if isPending { return Theme.Colors.warning }
         return tx.isReceived ? Theme.Colors.positive : Theme.Colors.text1
     }

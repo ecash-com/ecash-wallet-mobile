@@ -497,6 +497,10 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
     /// The sidechain address a deposit credits, as carried in its OP_RETURN (the bare address, not
     /// the `s9_…_checksum` display form). Non-nil exactly when `sidechainDepositSlot` is.
     public let sidechainDepositAddress: String?
+    /// If this tx is a sidechain → mainchain **withdrawal** (a sidechain wallet's `Withdrawal` output),
+    /// the mainchain address it pays; nil otherwise. Empty string when the backend reports a withdrawal
+    /// without its destination.
+    public let sidechainWithdrawalAddress: String?
 
     /// True when this tx was confirmed BELOW the network's fork height: it's part of the history the
     /// eCash chain inherited from Bitcoin, so it exists on both chains. Real, and shown, but labelled
@@ -511,8 +515,10 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
                 blockHeight: Int64? = nil, vsize: Int64? = nil, coinNewsKind: String? = nil,
                 receivedSats: Int64? = nil,
                 sidechainDepositSlot: Int32? = nil, sidechainDepositAddress: String? = nil,
+                sidechainWithdrawalAddress: String? = nil,
                 isBeforeFork: Bool = false) {
         self.isBeforeFork = isBeforeFork
+        self.sidechainWithdrawalAddress = sidechainWithdrawalAddress
         self.receivedSats = receivedSats
         self.sidechainDepositSlot = sidechainDepositSlot
         self.sidechainDepositAddress = sidechainDepositAddress
@@ -546,11 +552,15 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
                  timestampEpochSeconds: epochSeconds, isRBF: isRBF, blockHeight: blockHeight, vsize: vsize,
                  coinNewsKind: coinNewsKind, receivedSats: receivedSats,
                  sidechainDepositSlot: sidechainDepositSlot, sidechainDepositAddress: sidechainDepositAddress,
+                 sidechainWithdrawalAddress: sidechainWithdrawalAddress,
                  isBeforeFork: isBeforeFork)
     }
 
     /// True if this transaction deposited coins into a sidechain.
     public var isSidechainDeposit: Bool { sidechainDepositSlot != nil }
+
+    /// True if this transaction withdraws coins from a sidechain back to its mainchain.
+    public var isSidechainWithdrawal: Bool { sidechainWithdrawalAddress != nil }
 
     public var isReceived: Bool { netSats >= 0 }
     public var isConfirmed: Bool { confirmations > 0 }

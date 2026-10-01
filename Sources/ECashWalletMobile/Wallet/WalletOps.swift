@@ -41,6 +41,13 @@ protocol WalletOps {
     /// fields come from the enforcer and are re-verified by the engine (`docs/sidechain-deposits.md`).
     func depositToSidechain(walletId: String, slot: Int32, address: String, amount: Amount, feeRate: FeeRate,
                             treasuryTxid: String?, treasuryVout: Int32, treasuryValueSats: Int64) async throws -> WalletTx
+    /// Withdraw from a SIDECHAIN wallet back to its mainchain — the regular BIP300 withdrawal, which
+    /// miners must vote through (months). `mainAddress` is the mainchain destination; `mainScriptPubKey`
+    /// is that address's script, already validated for the mainchain network by BDK
+    /// (`WalletManager.scriptPubKeyHex`). `mainFee` is the withdrawal's share of the mainchain payout
+    /// transaction's fee; `feeRate` prices the sidechain transaction.
+    func withdrawToMainchain(walletId: String, mainAddress: String, mainScriptPubKey: [UInt8],
+                             amount: Amount, mainFee: Amount, feeRate: FeeRate) async throws -> WalletTx
     /// Read-only split status (total spendable vs pre-fork amount that needs splitting).
     func splitSummary(walletId: String) throws -> SplitSummary
     func splitSummary(walletId: String, knownShared: [String], knownSafe: [String]) throws -> SplitSummary

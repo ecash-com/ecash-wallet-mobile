@@ -41,6 +41,32 @@ import WalletService
 
     // MARK: - Direction and amounts
 
+    /// Our withdrawal: its output is addressed to one of OUR fresh addresses (as thunder-rust's wallet
+    /// does), but the value leaves for the mainchain. It must net to −(payout + mainchain fee + fee),
+    /// not to ~zero as a self-transfer, and carry the mainchain destination.
+    @Test func aWithdrawalIsAnOutflowLabelledWithItsMainchainAddress() {
+        let withdrawal = ThunderEsploraVout(scriptPubKeyAddress: Self.mineChange, value: 50_000,   // payout + main fee
+                                            contentType: ThunderEsploraContentType.withdrawal,
+                                            withdrawalMainAddress: "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+        let txs = [Self.tx("wd", fee: 300,
+                           vin: [Self.spend(Self.mine, 100_000)],
+                           vout: [withdrawal, Self.out(Self.mine, 49_700)])]
+        let row = ThunderEsploraHistory.build(txs: txs, ours: Self.ours, tipHeight: 104)[0]
+        #expect(row.netSats == -50_300)
+        #expect(row.isSidechainWithdrawal)
+        #expect(row.sidechainWithdrawalAddress == "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+    }
+
+    @Test func theIndexWithdrawalPayloadDecodes() throws {
+        let json = #"{"scriptpubkey_address":"x","value":50000,"content_type":"withdrawal","content":{"Withdrawal":{"value":40000,"main_fee":10000,"main_address":"bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4"}}}"#
+        let vout = try JSONDecoder().decode(ThunderEsploraVout.self, from: Data(json.utf8))
+        #expect(vout.isWithdrawal)
+        #expect(vout.withdrawalMainAddress == "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
+        let plain = #"{"scriptpubkey_address":"x","value":1,"content_type":"value","content":{"Value":1}}"#
+        #expect(try JSONDecoder().decode(ThunderEsploraVout.self, from: Data(plain.utf8)).withdrawalMainAddress == nil)
+    }
+
+
     @Test func aReceiveIsPositiveAndCarriesRealBlockData() {
         let txs = [Self.tx("aa", fee: 200, size: 300, height: 100, time: 1_750_000_000,
                            vin: [Self.spend(Self.theirs, 50_000)],

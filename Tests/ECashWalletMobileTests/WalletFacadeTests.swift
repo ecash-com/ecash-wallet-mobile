@@ -34,6 +34,11 @@ import WalletService
             return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
         }
         func forget(walletId: String) { calls.append("forget:\(walletId)") }
+        func withdrawToMainchain(walletId: String, mainAddress: String, mainScriptPubKey: [UInt8],
+                                 amount: Amount, mainFee: Amount, feeRate: FeeRate) async throws -> WalletTx {
+            calls.append("withdraw:\(walletId)")
+            return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)
+        }
         func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
             calls.append("split:\(walletId)")
             return WalletTx(txid: tag, netSats: 0, feeSats: nil, confirmations: 0, timestampEpochSeconds: nil, isRBF: false)

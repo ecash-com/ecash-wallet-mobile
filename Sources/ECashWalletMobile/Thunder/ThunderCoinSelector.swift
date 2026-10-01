@@ -29,8 +29,15 @@ enum ThunderCoinSelector {
 
     /// Fee for a transaction of `inputCount` inputs and `outputCount` plain value outputs.
     static func fee(inputCount: Int, outputCount: Int, satPerByte: UInt64) -> UInt64 {
-        let contents = [ThunderOutputContent](repeating: .value(sats: 0), count: outputCount)
-        let size = UInt64(ThunderTransaction.borshSize(inputCount: inputCount, outputs: contents))
+        fee(inputCount: inputCount,
+            outputs: [ThunderOutputContent](repeating: .value(sats: 0), count: outputCount),
+            satPerByte: satPerByte)
+    }
+
+    /// Fee for a transaction of `inputCount` inputs and exactly these `outputs` — a withdrawal output
+    /// is larger than a value output (mainchain fee + destination script), so it must be priced as one.
+    static func fee(inputCount: Int, outputs: [ThunderOutputContent], satPerByte: UInt64) -> UInt64 {
+        let size = UInt64(ThunderTransaction.borshSize(inputCount: inputCount, outputs: outputs))
         return max(minimumFeeSats, size &* satPerByte)
     }
 
@@ -55,6 +62,16 @@ enum ThunderCoinSelector {
     static func select(utxos: [ThunderPointedOutput],
                        targetSats: UInt64,
                        satPerByte: UInt64) throws -> ThunderCoinSelection {
+        try select(utxos: utxos, payment: .value(sats: targetSats), satPerByte: satPerByte)
+    }
+
+    /// As above, paying `payment` — a plain value output or a withdrawal. The coins must cover
+    /// `payment.valueSats` (for a withdrawal: the payout AND its mainchain fee, both of which leave the
+    /// sidechain) plus a fee priced on the real output sizes.
+    static func select(utxos: [ThunderPointedOutput],
+                       payment: ThunderOutputContent,
+                       satPerByte: UInt64) throws -> ThunderCoinSelection {
+        let targetSats = payment.valueSats
         let available = utxos.reduce(UInt64(0)) { $0 &+ $1.valueSats }
         // Smallest first; ties broken by the coin's hash so the choice is deterministic.
         let ascending = utxos.map { ($0, $0.utxoHash()) }.sorted { lhs, rhs in
@@ -65,13 +82,13 @@ enum ThunderCoinSelector {
 
         // 1. The smallest coin that pays for everything by itself.
         for utxo in ascending {
-            if let selection = settle([utxo], targetSats: targetSats, satPerByte: satPerByte) { return selection }
+            if let selection = settle([utxo], payment: payment, satPerByte: satPerByte) { return selection }
         }
         // 2. No single coin is enough: add them smallest-first.
         var selected: [ThunderPointedOutput] = []
         for utxo in ascending {
             selected.append(utxo)
-            if let selection = settle(selected, targetSats: targetSats, satPerByte: satPerByte) { return selection }
+            if let selection = settle(selected, payment: payment, satPerByte: satPerByte) { return selection }
         }
 
         throw ThunderError.insufficientFunds(neededSats: Int64(clamping: targetSats),
@@ -81,14 +98,15 @@ enum ThunderCoinSelector {
     /// `selected` as a finished selection, or nil if it can't cover the payment plus fee. Priced as
     /// payment + change; if the change isn't worth its own output it's folded into the fee.
     private static func settle(_ selected: [ThunderPointedOutput],
-                               targetSats: UInt64,
+                               payment: ThunderOutputContent,
                                satPerByte: UInt64) -> ThunderCoinSelection? {
+        let targetSats = payment.valueSats
         let total = selected.reduce(UInt64(0)) { $0 &+ $1.valueSats }
-        let feeWithChange = fee(inputCount: selected.count, outputCount: 2, satPerByte: satPerByte)
+        let feeWithChange = fee(inputCount: selected.count, outputs: [payment, .value(sats: 0)], satPerByte: satPerByte)
         guard total >= targetSats, total - targetSats >= feeWithChange else { return nil }
 
         let change = total - targetSats - feeWithChange
-        let feeWithoutChange = fee(inputCount: selected.count, outputCount: 1, satPerByte: satPerByte)
+        let feeWithoutChange = fee(inputCount: selected.count, outputs: [payment], satPerByte: satPerByte)
         if change <= feeWithChange - feeWithoutChange {
             // Cheaper to hand the dust to the fee than to create the output.
             return ThunderCoinSelection(inputs: selected, changeSats: 0, feeSats: total - targetSats)
