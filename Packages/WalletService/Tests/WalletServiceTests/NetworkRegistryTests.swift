@@ -202,4 +202,10 @@ final class NetworkRegistryTests: XCTestCase {
         XCTAssertLessThan(NetworkRegistry.replayProtectionSequence, UInt32(0xFFFF_FFFF))
         XCTAssertEqual(NetworkRegistry.replayProtectionSequence, UInt32(0xFFFF_FFFD))   // BDK's RBF value
     }
+
+    /// The `.thunder` case is BETANET Thunder; the name says so, because a Thunder address is the same
+    /// string on betanet and on the real fork's Thunder (docs/real-ecash-fork-transition.md §1).
+    func testThunderIsLabelledAsBetanet() {
+        XCTAssertEqual(NetworkRegistry.params(for: .thunder).displayName, "Thunder Betanet")
+    }
 }

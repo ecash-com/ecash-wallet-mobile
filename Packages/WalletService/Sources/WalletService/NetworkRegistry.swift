@@ -155,7 +155,11 @@ public enum NetworkRegistry {
                 // No human-facing Thunder explorer exists yet; the index's own /tx route serves JSON,
                 // which is still better than a link to a host that 404s. Swap this the moment one ships.
                 explorerTxTemplate: "https://seed.beta.ecash.eu.com/thunder/tx/{txid}",
-                displayName: "Thunder")
+                // "Betanet" in the name: this case is wired to BETANET Thunder (index + mainchain). The
+                // real fork's Thunder will be its own network case, and a Thunder address is the same
+                // string on both chains (no network in the derivation), so the label is what keeps
+                // users from mixing them up (docs/real-ecash-fork-transition.md §1).
+                displayName: "Thunder Betanet")
         }
     }
 
