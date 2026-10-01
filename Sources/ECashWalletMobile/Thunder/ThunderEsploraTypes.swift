@@ -333,3 +333,42 @@ struct ThunderEsploraAddressInfo: Decodable, Equatable {
     /// Whether this address has ever appeared, confirmed or not — the gap-limit and "fetch me" signal.
     var isUsed: Bool { [chainStats, mempoolStats].contains { $0.map { $0.txCount > 0 || $0.fundedTxoCount > 0 } ?? false } }
 }
+
+// MARK: - Outspend
+
+/// `/tx/{txid}/outspend/{vout}`: whether an output is spent, and by what.
+///
+/// Live shape (betanet, 2026-10-01), for a withdrawal output that joined a batch:
+/// `{"spent":true,"txid":"d4ce…76aa","vin":null,"status":{…},"spent_by":"withdrawal_bundle"}`, where
+/// `txid` is the batch's M6 id byte-reversed relative to the enforcer's `m6id.hex`. Unspent:
+/// `{"spent":false,"txid":null,"vin":null,"status":null}`.
+struct ThunderEsploraOutspend: Decodable, Equatable {
+    let spent: Bool
+    /// The spender: a Thunder txid, or — for a batched withdrawal — the M6 id (internal byte order).
+    let txid: String?
+    let spentBy: String?
+
+    private enum Keys: String, CodingKey { case spent, txid, spentBy = "spent_by" }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: Keys.self)
+        spent = try c.decodeIfPresent(Bool.self, forKey: .spent) ?? false
+        txid = try c.decodeIfPresent(String.self, forKey: .txid)
+        spentBy = try c.decodeIfPresent(String.self, forKey: .spentBy)
+    }
+
+    init(spent: Bool, txid: String?, spentBy: String?) {
+        self.spent = spent
+        self.txid = txid
+        self.spentBy = spentBy
+    }
+
+    static let withdrawalBundle = "withdrawal_bundle"
+
+    /// The batch this output joined, as the enforcer writes M6 ids (display order); nil otherwise.
+    var withdrawalBundleM6id: String? {
+        guard spent, spentBy == Self.withdrawalBundle, let txid, let bytes = ThunderHex.decode(txid),
+              bytes.count == 32 else { return nil }
+        return ThunderHex.encode(bytes.reversed())
+    }
+}

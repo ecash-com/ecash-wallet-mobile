@@ -937,6 +937,23 @@ final class AppState {
             })
     }
 
+    /// Where a withdrawal from the selected sidechain wallet stands (waiting for a batch / miners voting /
+    /// paid), or nil when it can't be told: not a sidechain wallet, no enforcer for its mainchain, the
+    /// wallet is on the node-RPC backend (only the Esplora index can say what spent an output), or a
+    /// lookup failed. Network I/O; the detail sheet calls it on appear.
+    func withdrawalStatus(for tx: WalletTx) async -> WithdrawalStatus? {
+        guard tx.isSidechainWithdrawal, let wallet = selectedWallet,
+              let mainchain = SidechainWalletNetwork.mainchain(ofSidechainWallet: wallet.network),
+              let enforcerEndpoint = EnforcerEndpointRegistry.endpoint(for: mainchain),
+              manager.backendKind(for: wallet.network) == "thunder-esplora"   // the index, not the node RPC
+        else { return nil }
+        let tracker = ThunderWithdrawalTracker(
+            index: ThunderEsploraClient(endpoint: manager.backendURL(for: wallet.network)),
+            enforcer: EnforcerClient(endpoint: enforcerEndpoint),
+            slot: RistrettoSidechainKeyScheme.thunder.sidechainNumber)
+        return try? await tracker.status(txid: tx.txid)
+    }
+
     /// The name of the sidechain a deposit went to, on the selected wallet's network, or nil if
     /// it isn't a deposit or the name isn't known (yet). Callers fall back to "slot N".
     func sidechainName(for tx: WalletTx) -> String? {

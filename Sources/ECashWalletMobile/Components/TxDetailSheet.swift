@@ -18,6 +18,10 @@ struct TxDetailSheet: View {
     let network: WalletNetwork
     /// For a sidechain deposit: the sidechain's name, if known (`AppState.sidechainName(for:)`).
     var sidechainName: String? = nil
+    /// For a withdrawal: looks up where it stands (`AppState.withdrawalStatus(for:)`). Called on appear.
+    var loadWithdrawalStatus: (() async -> WithdrawalStatus?)? = nil
+    @State var withdrawalStatus: WithdrawalStatus? = nil
+    @State var withdrawalStatusLoaded = false
     @State var copied = false   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
     @State var detailsExpanded = false   // CoinNews txs: raw tx rows fold into a DisclosureGroup
 
@@ -173,14 +177,83 @@ struct TxDetailSheet: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 hairline
             }
+            withdrawalStatusView
+            hairline
             Text("The coins have left this wallet. They arrive on \(mainchainName) once miners approve the withdrawal, which takes months — about 3 at best. If a batch expires it goes back in line.",
                  bundle: .module, comment: "tx detail: what happens after a withdrawal; %@ is the mainchain name")
-                .textStyle(.sm)
-                .foregroundStyle(Theme.Colors.text1)
+                .textStyle(.xs)
+                .foregroundStyle(Theme.Colors.text2)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .cardStyle()
+        .task {
+            guard !withdrawalStatusLoaded, let load = loadWithdrawalStatus else { return }
+            withdrawalStatus = await load()
+            withdrawalStatusLoaded = true
+        }
     }
+
+    /// The live stage, with the vote's progress while miners are voting.
+    @ViewBuilder private var withdrawalStatusView: some View {
+        VStack(alignment: .leading, spacing: Theme.Space.x2) {
+            Text("Status", bundle: .module, comment: "tx detail: withdrawal status label")
+                .textStyle(.sm)
+                .foregroundStyle(Theme.Colors.text2)
+            switch withdrawalStatus {
+            case .none:
+                if withdrawalStatusLoaded {
+                    Text("Couldn't check right now.", bundle: .module, comment: "withdrawal status unavailable")
+                        .textStyle(.sm).foregroundStyle(Theme.Colors.text1)
+                } else {
+                    ProgressView().frame(maxWidth: .infinity, alignment: .leading)
+                }
+            case .confirming:
+                statusLine(Text("Waiting for the \(sidechainDisplayName) transaction to confirm", bundle: .module,
+                                comment: "withdrawal status: sidechain tx unconfirmed; %@ is the sidechain name"))
+            case .waitingForBatch:
+                statusLine(Text("Waiting to join a withdrawal batch", bundle: .module,
+                                comment: "withdrawal status: not yet in an M6 batch"))
+                Text("\(sidechainDisplayName) puts withdrawals into a batch when none is being voted on. Then the vote starts.",
+                     bundle: .module, comment: "withdrawal status explanation; %@ is the sidechain name")
+                    .textStyle(.xs).foregroundStyle(Theme.Colors.text2)
+            case let .voting(_, votes, needed, expiry):
+                statusLine(Text("Miners voting", bundle: .module, comment: "withdrawal status: batch being voted on"))
+                ProgressView(value: withdrawalStatus?.voteFraction ?? 0)
+                    .tint(Theme.Colors.accent)
+                Text("\(String(votes)) / \(String(needed)) votes", bundle: .module,
+                     comment: "vote progress; %1$@ votes so far, %2$@ needed")
+                    .textStyle(.xs).foregroundStyle(Theme.Colors.text1)
+                if let expiry {
+                    HStack(spacing: Theme.Space.x1) {
+                        Text("Batch expires in", bundle: .module, comment: "withdrawal batch expiry label, before a duration")
+                        ApproximateDurationText(duration: ApproximateDuration(blocks: expiry))
+                    }
+                    .textStyle(.xs).foregroundStyle(Theme.Colors.text2)
+                }
+                if withdrawalStatus?.canStillPass == false {
+                    Text("This batch can no longer get enough votes in time. When it expires, the withdrawal goes back in line for the next one.",
+                         bundle: .module, comment: "withdrawal batch will fail; it will be re-batched")
+                        .textStyle(.xs).foregroundStyle(Theme.Colors.warning)
+                }
+            case .paid:
+                statusLine(Text("Paid out on \(mainchainName)", bundle: .module,
+                                comment: "withdrawal status: batch passed and paid; %@ is the mainchain name"),
+                           done: true)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func statusLine(_ text: Text, done: Bool = false) -> some View {
+        HStack(spacing: Theme.Space.x2) {
+            Image(icon: done ? Icon.check : Icon.pending)
+                .resizable().scaledToFit().frame(width: 14, height: 14)
+                .foregroundStyle(done ? Theme.Colors.positive : Theme.Colors.accent)
+            text.textStyle(.sm).foregroundStyle(Theme.Colors.text0)
+        }
+    }
+
+    private var sidechainDisplayName: String { NetworkRegistry.params(for: network).displayName }
 
     // MARK: - CoinNews hero
 

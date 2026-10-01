@@ -83,6 +83,18 @@ struct ThunderEsploraClient: Sendable {
         try await decode(path: "/address/\(escape(address))/deposits", route: "address deposits")
     }
 
+    /// `GET /tx/{txid}` — one transaction, with its outputs' content (a withdrawal's payload).
+    func transaction(_ txid: String) async throws -> ThunderEsploraTx {
+        try await decode(path: "/tx/\(escape(txid))", route: "tx")
+    }
+
+    /// `GET /tx/{txid}/outspend/{vout}` — whether an output is spent, and by what. A withdrawal output is
+    /// "spent" when it joins a withdrawal batch: `spent_by == "withdrawal_bundle"`, and `txid` is the
+    /// batch's M6 id (mainchain txid) in internal byte order — the REVERSE of the hex the enforcer shows.
+    func outspend(txid: String, vout: Int) async throws -> ThunderEsploraOutspend {
+        try await decode(path: "/tx/\(escape(txid))/outspend/\(vout)", route: "outspend")
+    }
+
     /// `GET /address/{a}/txs/chain[/{last_seen}]` — one page of history, newest first.
     ///
     /// A page holds 25 rows; a caller pages by passing the last CONFIRMED txid it saw and stops on a
