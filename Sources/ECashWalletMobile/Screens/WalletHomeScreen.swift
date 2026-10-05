@@ -236,7 +236,7 @@ struct WalletHomeScreen: View {
             }
             .padding(.vertical, Theme.Space.x5)
 
-            actionCircles
+            actionButtons
 
             if !wallet.isBackedUp {
                 backupNudge
@@ -302,22 +302,23 @@ struct WalletHomeScreen: View {
     }
 
     /// The action row: Receive, and Send prominent. On a SIDECHAIN wallet Withdraw leads — the only
-    /// way its coins get back to the mainchain.
+    /// way its coins get back to the mainchain. Equal-width buttons that fill the row, so two or three
+    /// read as deliberate (spaced circles left a gappy row once there were only two).
     ///
     /// No "Buy"/"Swap" placeholders, even disabled: App Review read them as cryptocurrency exchange
     /// services (Guideline 3.1.5(iii)) and asked for exchange licences. Add them only with a
     /// licensed partner behind them.
-    private var actionCircles: some View {
-        HStack(spacing: Theme.Space.x6) {
+    private var actionButtons: some View {
+        HStack(spacing: Theme.Space.x3) {
             if isSidechainWallet {
-                actionCircle(icon: Icon.sidechains, title: "Withdraw", prominent: false, enabled: true) {
+                actionButton(icon: Icon.sidechains, title: "Withdraw", prominent: false) {
                     showWithdraw = true
                 }
             }
-            actionCircle(icon: Icon.receive, title: "Receive", prominent: false, enabled: true) {
+            actionButton(icon: Icon.receive, title: "Receive", prominent: false) {
                 showReceive = true
             }
-            actionCircle(icon: Icon.send, title: "Send", prominent: true, enabled: true) {
+            actionButton(icon: Icon.send, title: "Send", prominent: true) {
                 app.beginSendFlow()   // drop any cached (finished) Send VM → fresh flow
                 sendToken += 1        // force a fresh SendScreen (new nav path) (see sendToken)
                 showSend = true
@@ -330,26 +331,26 @@ struct WalletHomeScreen: View {
         return SidechainWalletNetwork.mainchain(ofSidechainWallet: network) != nil
     }
 
-    private func actionCircle(icon: Icon, title: LocalizedStringKey, prominent: Bool, enabled: Bool,
+    /// One action: icon + label in a full-width rounded button. Send (prominent) is accent-filled;
+    /// the rest are the bordered secondary look shared with Receive's Copy/Share. Each wrapper takes
+    /// `maxWidth: .infinity` so the row splits evenly (same reason as Receive's action row).
+    private func actionButton(icon: Icon, title: LocalizedStringKey, prominent: Bool,
                               action: @escaping () -> Void) -> some View {
         Button(action: action) {
-            VStack(spacing: Theme.Space.x2) {
-                ZStack {
-                    Circle().fill(prominent ? Theme.Colors.accent : Theme.Colors.bg2)
-                    Image(icon: icon)
-                        .resizable().scaledToFit()
-                        .frame(width: 20, height: 20)
-                        .foregroundStyle(prominent ? Theme.Colors.accentText : Theme.Colors.text0)
-                }
-                .frame(width: 56, height: 56)
-                Text(title, bundle: .module)
-                    .textStyle(.xs)
-                    .foregroundStyle(prominent ? Theme.Colors.text0 : Theme.Colors.text1)
+            HStack(spacing: Theme.Space.x2) {
+                Image(icon: icon).resizable().scaledToFit().frame(width: 16, height: 16)
+                Text(title, bundle: .module).textStyle(.button).lineLimit(1)
             }
+            .foregroundStyle(prominent ? Theme.Colors.accentText : Theme.Colors.text0)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, Theme.Space.x3)
+            .background(RoundedRectangle(cornerRadius: Theme.Radius.md)
+                .fill(prominent ? Theme.Colors.accent : Theme.Colors.bg2))
+            .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md)
+                .stroke(prominent ? Color.clear : Theme.Colors.border, lineWidth: 1))
         }
         .buttonStyle(.plain)
-        .disabled(!enabled)
-        .opacity(enabled ? 1 : 0.4)
+        .frame(maxWidth: .infinity)
     }
 
     /// Sync state under the balance: a spinner while syncing, a tappable error on failure, nothing
