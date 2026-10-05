@@ -301,19 +301,19 @@ struct WalletHomeScreen: View {
         }
     }
 
-    /// The four-circle action row (mock): Send prominent, Receive live, Swap/Buy disabled
-    /// ghosts until those features exist (out of v1 scope, §1). On a SIDECHAIN wallet the first slot
-    /// is Withdraw instead — the only way its coins get back to the mainchain.
+    /// The action row: Receive, and Send prominent. On a SIDECHAIN wallet Withdraw leads — the only
+    /// way its coins get back to the mainchain.
+    ///
+    /// No "Buy"/"Swap" placeholders, even disabled: App Review read them as cryptocurrency exchange
+    /// services (Guideline 3.1.5(iii)) and asked for exchange licences. Add them only with a
+    /// licensed partner behind them.
     private var actionCircles: some View {
         HStack(spacing: Theme.Space.x6) {
             if isSidechainWallet {
                 actionCircle(icon: Icon.sidechains, title: "Withdraw", prominent: false, enabled: true) {
                     showWithdraw = true
                 }
-            } else {
-                actionCircle(icon: Icon.swap, title: "Swap", prominent: false, enabled: false) {}
             }
-            actionCircle(icon: Icon.buy, title: "Buy", prominent: false, enabled: false) {}
             actionCircle(icon: Icon.receive, title: "Receive", prominent: false, enabled: true) {
                 showReceive = true
             }

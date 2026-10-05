@@ -39,8 +39,6 @@ struct Icon {
     // Money actions
     static let send = Icon("north_east")
     static let receive = Icon("south_west")
-    static let swap = Icon("swap_horiz")
-    static let buy = Icon("credit_card")
     static let scan = Icon("qr_code_scanner")
     static let qr = Icon("qr_code")
     static let backspace = Icon("backspace")
