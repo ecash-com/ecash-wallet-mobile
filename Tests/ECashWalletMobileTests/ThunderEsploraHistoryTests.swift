@@ -170,4 +170,29 @@ import WalletService
         #expect(!rows[0].isRBF)
         #expect(rows[0].coinNewsKind == nil)
     }
+
+    // MARK: - Derivation (ownKeys)
+
+    /// A send from index 0 with change back to index 3: the input is "spent from" 0 and the output to
+    /// us is change, so tx detail can show both derivation paths.
+    @Test func rowsRecordWhichOfOurKeysTheyTouched() {
+        let index: [String: Int32] = [Self.mine: 0, Self.mineChange: 3]
+        let txs = [Self.tx("send", vin: [Self.spend(Self.mine, 100_000)],
+                           vout: [Self.out(Self.theirs, 60_000), Self.out(Self.mineChange, 39_800)]),
+                   Self.tx("recv", height: 99, vout: [Self.out(Self.mine, 5_000)])]
+        let rows = ThunderEsploraHistory.build(txs: txs, ours: Self.ours, tipHeight: 104, addressIndex: index)
+        let send = rows.first { $0.txid == "send" }
+        let recv = rows.first { $0.txid == "recv" }
+        #expect(send?.ownKeys == [TxKeyUse(isInput: true, isChange: false, index: 0),
+                                  TxKeyUse(isInput: false, isChange: true, index: 3)])
+        #expect(recv?.ownKeys == [TxKeyUse(isInput: false, isChange: false, index: 0)])
+    }
+
+    @Test func addressIndicesArePositionsInTheWindow() {
+        #expect(ThunderHistory.addressIndices(["a", "b", "c"]) == ["a": 0, "b": 1, "c": 2])
+    }
+
+    @Test func thunderPathIsTheSchemePath() {
+        #expect(ThunderKey.scheme.derivationPath(index: 7) == "m/43'/1899'/0'/9'/0'/7")
+    }
 }

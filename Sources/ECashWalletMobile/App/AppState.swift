@@ -543,10 +543,10 @@ final class AppState {
     /// switching wallets is never throttled by the previous one's timestamp.
     @ObservationIgnored private var lastSyncedAt: [String: Date] = [:]
 
-    /// Guards against overlapping `sync()` runs. `@ObservationIgnored` on purpose — it's internal
-    /// bookkeeping, and the UI already has `syncState` to render from; observing this too would
-    /// invalidate views for a value they don't display.
-    @ObservationIgnored private var isSyncing = false
+    /// Single-flight sync across wallets, queueing a switch made mid-sync (see `SyncScheduler`).
+    /// `@ObservationIgnored` on purpose — internal bookkeeping; the UI renders `syncState`.
+    @ObservationIgnored private let syncScheduler = SyncScheduler()
+    private var isSyncing: Bool { syncScheduler.isBusy }
 
     /// The last-known balance for any wallet, selected or not. A cached read of BDK's persisted
     /// chain data (no network, safe on the main actor), or `.unknown` when the wallet has never
@@ -1138,9 +1138,15 @@ final class AppState {
         // exactly the cold-start path, i.e. the moment the user unlocks. The async variants are
         // non-isolated, so they run on the cooperative pool (CLAUDE.md §10) and only the
         // assignments come back to main.
-        if let cached = try? await walletOps.balanceAsync(walletId: id) { balance = cached }
-        if let pending = try? await walletOps.pendingBalanceAsync(walletId: id) { pendingBalance = pending }
-        if let cachedTxs = try? await walletOps.transactionsAsync(walletId: id) { transactions = sorted(cachedTxs) }
+        let cached = try? await walletOps.balanceAsync(walletId: id)
+        let pending = try? await walletOps.pendingBalanceAsync(walletId: id)
+        let cachedTxs = try? await walletOps.transactionsAsync(walletId: id)
+        // The user may have switched wallets during those reads — never paint one wallet's numbers
+        // on another's screen (Golden Rule §5).
+        guard selectedWalletId == id else { return }
+        if let cached { balance = cached }
+        if let pending { pendingBalance = pending }
+        if let cachedTxs { transactions = sorted(cachedTxs) }
         if selectedWallet?.network.supportsCoinSplit == true {
             splitSummary = try? splitSummaryUsingCachedChecks(walletId: id)
         }
@@ -1159,8 +1165,10 @@ final class AppState {
         syncState = .syncing
         defer { isRescanning = false }
         do {
-            balance = try await walletOps.rescan(walletId: id)
+            let rescanned = try await walletOps.rescan(walletId: id)
             syncStore.markSynced(walletId: id, at: Int64(Date().timeIntervalSince1970))
+            guard selectedWalletId == id else { return }   // switched away mid-rescan
+            balance = rescanned
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             splitSummary = (selectedWallet?.network.supportsCoinSplit == true) ? (try? splitSummaryUsingCachedChecks(walletId: id)) : nil
@@ -1273,33 +1281,47 @@ final class AppState {
     ///   broadcast, or a backend change).
     func sync(force: Bool = false) async {
         guard let id = selectedWalletId else { return }
+        // Coalesce concurrent syncs. Triggers cluster in time — a foreground resume can fire the
+        // scene-phase sync, an app-lock unlock, and a Send tap within the same second — and two
+        // concurrent syncs means two writers through `WalletManager` (unlocked engine cache, one
+        // SQLite store per wallet), a persistence race rather than merely wasted work.
+        switch syncScheduler.admit(walletId: id) {
+        case .alreadyRunning:
+            return
+        case .queued:
+            // Switched mid-sync: this wallet runs as soon as the current one finishes.
+            syncState = .syncing
+            return
+        case .run:
+            await runSync(walletId: id, force: force)
+            if syncScheduler.finish() { await sync() }   // whatever is selected NOW
+        }
+    }
+
+    /// One sync of `id`. Only touches the on-screen state while `id` is still selected — a sync that
+    /// finishes after the user switched away records its result and leaves the screen alone.
+    private func runSync(walletId id: String, force: Bool) async {
+        // Show what's on disk first. Runs even when the throttle below skips the network: a switch
+        // zeroes the screen (`resetPerWalletState`), so returning early without this left a recently
+        // synced wallet showing 0 and an empty history until a manual refresh.
+        await loadCachedStateIfNeeded(walletId: id)
         // Ambient triggers cluster: a foreground resume can fire the scene-phase sync, an app-lock
         // unlock, and a Send tap within seconds, each doing a full-window query for a chain that
-        // hasn't meaningfully changed. The re-entrancy guard below only collapses CONCURRENT runs;
-        // this collapses back-to-back ones. Explicit user actions always pass `force`.
+        // hasn't meaningfully changed. Explicit user actions always pass `force`.
         if !force, let last = lastSyncedAt[id], Date().timeIntervalSince(last) < Self.syncFreshnessWindow {
+            if selectedWalletId == id { syncState = .idle }
             return
         }
-        // Coalesce concurrent syncs. Triggers now cluster in time — a foreground resume can fire the
-        // scene-phase sync, an app-lock unlock, and a Send tap within the same second — and two
-        // concurrent syncs on one BDK wallet means two writers against the same SQLite store, which
-        // is a persistence race, not merely wasted work. Later callers return immediately rather
-        // than queueing: the in-flight sync is already fetching current chain state, so a second
-        // pass right behind it would ask the same question again.
-        guard !isSyncing else { return }
-        isSyncing = true
-        defer { isSyncing = false }
-
-        await loadCachedStateIfNeeded(walletId: id)
-        syncState = .syncing
+        if selectedWalletId == id { syncState = .syncing }
         do {
-            // `manager.sync` is a non-isolated async method, so the BDK network work runs off the
+            // `walletOps.sync` is a non-isolated async method, so the BDK network work runs off the
             // main actor; execution resumes here on the main actor for the observable updates.
             let updated = try await walletOps.sync(walletId: id)
-            balance = updated
             // Record that this wallet's balance is now a fact rather than an unsynced default.
             syncStore.markSynced(walletId: id, at: Int64(Date().timeIntervalSince1970))
             lastSyncedAt[id] = Date()
+            guard selectedWalletId == id else { return }
+            balance = updated
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             // Coin-split status (local, no I/O) — drives the Home nudge. eCash only; nil elsewhere.
@@ -1308,6 +1330,7 @@ final class AppState {
             // Refresh fiat alongside the balance (no-op for networks without a price provider).
             Task { await refreshPrice() }
         } catch let error as WalletError {
+            guard selectedWalletId == id else { return }
             // We're in a sync: surface a sync/connection-framed message. Specific, actionable
             // errors (e.g. a network mismatch) keep their own text; the generic catch-all
             // (`.engine`) is far more useful framed as a sync failure than "something went wrong".
@@ -1319,6 +1342,7 @@ final class AppState {
             }
         } catch {
             logUnmappedSyncError(error)
+            guard selectedWalletId == id else { return }
             syncState = .failed((error as? UserFacingError)?.userMessage ?? WalletError.syncFailed.userMessage)
         }
     }

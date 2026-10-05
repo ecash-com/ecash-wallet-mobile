@@ -36,8 +36,16 @@ struct RistrettoSidechainKeyScheme: WatchOnlySidechainKeyScheme {
     /// thunder-rust ≥ 0.18 (6b4a25f) clears the top 3 bits before reducing; coinshift-rs doesn't.
     let biasFix: Bool
 
+    /// The account levels, unhardened (each is hardened when derived).
+    private var accountLevels: [UInt32] { [43, 1899, 0, UInt32(sidechainNumber), 0] }
+
     private var accountPath: [UInt32] {
-        [43, 1899, 0, UInt32(sidechainNumber), 0].map { $0 | RistrettoBip32.hardenedOffset }
+        accountLevels.map { $0 | RistrettoBip32.hardenedOffset }
+    }
+
+    /// The printable path of address `index`, e.g. `m/43'/1899'/0'/9'/0'/5` — for display only.
+    func derivationPath(index: Int32) -> String {
+        "m/" + accountLevels.map { "\($0)'" }.joined(separator: "/") + "/\(index)"
     }
 
     func accountKey(seed: [UInt8]) throws -> RistrettoBip32.PrivateKey {

@@ -55,6 +55,19 @@ import WalletService
         #expect(row.sidechainWithdrawalAddress == "bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4")
     }
 
+    /// Node-RPC history records our key index on both sides: tx 0x22 spent our coin from 0x11 and
+    /// paid change back to the same address (index 4 in this window).
+    @Test func rowsRecordWhichOfOurKeysTheyTouched() throws {
+        let rows = ThunderHistory.build(utxos: [try Self.utxo(from: 0x22, sats: 40_000)],
+                                        stxos: [try Self.stxo(from: 0x11, sats: 50_000, spentBy: 0x22)],
+                                        addressIndex: [Self.addressA: 4])
+        let send = try #require(rows.first { $0.txid == Self.txid(0x22) })
+        let recv = try #require(rows.first { $0.txid == Self.txid(0x11) })
+        #expect(send.ownKeys == [TxKeyUse(isInput: true, isChange: false, index: 4),
+                                 TxKeyUse(isInput: false, isChange: true, index: 4)])
+        #expect(recv.ownKeys == [TxKeyUse(isInput: false, isChange: false, index: 4)])
+    }
+
     // MARK: - Decoding the new shapes
 
     /// `Pointed<SpentOutput>` nests: Pointed's field is named `output` whatever it holds, so a spent

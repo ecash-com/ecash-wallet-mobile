@@ -312,6 +312,47 @@ public struct ManagedWallet: Identifiable, Equatable, Hashable, Sendable {
         self.isBackedUp = isBackedUp
         self.sortIndex = sortIndex
     }
+
+    /// The full BIP32 path of one of this wallet's keys, e.g. `m/84'/1'/0'/0/5` — read from the key
+    /// origin in its (public) descriptor, so it's the path the wallet really derives at (script type,
+    /// coin type and account included), not a reconstruction. `nil` for a single-key `.wif` wallet,
+    /// which has no derivation, or a descriptor without a key origin.
+    public func derivationPath(isChange: Bool, index: Int32) -> String? {
+        if keyType == .wif { return nil }
+        guard let origin = ManagedWallet.keyOriginPath(isChange ? internalDescriptor : externalDescriptor) else {
+            return nil
+        }
+        return "\(origin)/\(isChange ? 1 : 0)/\(index)"
+    }
+
+    /// `wpkh([d34db33f/84'/1'/0']tpub…/0/*)#…` → `m/84'/1'/0'`. Hardened markers are normalised to
+    /// `'` (BDK may write `h`). `nil` when there's no `[fingerprint/path]` origin.
+    static func keyOriginPath(_ descriptor: String) -> String? {
+        let opened = descriptor.components(separatedBy: "[")
+        guard opened.count > 1 else { return nil }
+        let origin = opened[1].components(separatedBy: "]")
+        guard origin.count > 1 else { return nil }
+        var steps = origin[0].components(separatedBy: "/")
+        guard steps.count > 1 else { return nil }
+        steps.removeFirst()   // the master fingerprint
+        return "m/" + steps.joined(separator: "/").replacingOccurrences(of: "h", with: "'")
+    }
+}
+
+/// One of this wallet's keys that a transaction touched: an output paying one of our addresses, or an
+/// input spending from one. Lets tx detail show which derivation path(s) were involved — turn it into
+/// a path with `ManagedWallet.derivationPath(isChange:index:)`. Signed `Int32` index (bridge rule).
+public struct TxKeyUse: Equatable, Hashable, Sendable {
+    /// True when the tx SPENT this key's coin (an input); false when it paid to it (an output).
+    public let isInput: Bool
+    /// The internal (change) keychain, `…/1/i`, vs the external (receive) one, `…/0/i`.
+    public let isChange: Bool
+    public let index: Int32
+    public init(isInput: Bool, isChange: Bool, index: Int32) {
+        self.isInput = isInput
+        self.isChange = isChange
+        self.index = index
+    }
 }
 
 /// A receive address plus its derivation index, derived from BDK.
@@ -508,6 +549,10 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
     /// false on networks that never forked and for unconfirmed txs.
     public let isBeforeFork: Bool
 
+    /// This wallet's keys the tx touched (inputs spent + outputs received), in tx order. Empty when
+    /// unknown — e.g. the optimistic copy returned straight from a send, before the next history load.
+    public let ownKeys: [TxKeyUse]
+
     public var id: String { txid }
 
     public init(txid: String, netSats: Int64, feeSats: Int64?,
@@ -516,7 +561,9 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
                 receivedSats: Int64? = nil,
                 sidechainDepositSlot: Int32? = nil, sidechainDepositAddress: String? = nil,
                 sidechainWithdrawalAddress: String? = nil,
-                isBeforeFork: Bool = false) {
+                isBeforeFork: Bool = false,
+                ownKeys: [TxKeyUse] = []) {
+        self.ownKeys = ownKeys
         self.isBeforeFork = isBeforeFork
         self.sidechainWithdrawalAddress = sidechainWithdrawalAddress
         self.receivedSats = receivedSats
@@ -553,7 +600,7 @@ public struct WalletTx: Identifiable, Equatable, Hashable, Sendable {
                  coinNewsKind: coinNewsKind, receivedSats: receivedSats,
                  sidechainDepositSlot: sidechainDepositSlot, sidechainDepositAddress: sidechainDepositAddress,
                  sidechainWithdrawalAddress: sidechainWithdrawalAddress,
-                 isBeforeFork: isBeforeFork)
+                 isBeforeFork: isBeforeFork, ownKeys: ownKeys)
     }
 
     /// True if this transaction deposited coins into a sidechain.

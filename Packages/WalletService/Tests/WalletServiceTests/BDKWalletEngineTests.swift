@@ -129,6 +129,25 @@ final class BDKWalletEngineTests: XCTestCase {
         #endif
     }
 
+    /// The path shown on Receive / tx detail, read from REAL BDK descriptors (origin format included).
+    func testDerivationPathFromRealDescriptors() throws {
+        #if SKIP
+        throw XCTSkip("real BDK — host only")
+        #else
+        let (factory, dir) = makeFactory()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        for (network, scriptType, account) in [(WalletNetwork.signet, ScriptType.bip84, "m/84'/1'/0'"),
+                                               (WalletNetwork.bitcoin, ScriptType.bip86, "m/86'/0'/0'")] {
+            let keys = try factory.restore(network: network, mnemonic: Self.mnemonic, scriptType: scriptType)
+            let wallet = ManagedWallet(id: "p", label: "t", network: network,
+                                       externalDescriptor: keys.externalDescriptor,
+                                       internalDescriptor: keys.internalDescriptor, scriptType: scriptType)
+            XCTAssertEqual(wallet.derivationPath(isChange: false, index: 4), "\(account)/0/4")
+            XCTAssertEqual(wallet.derivationPath(isChange: true, index: 9), "\(account)/1/9")
+        }
+        #endif
+    }
+
     // MARK: - Mnemonic handling
 
     /// Restore returns the exact phrase it was given (it's what KeyStore persists, §7).

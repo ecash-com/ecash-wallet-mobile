@@ -53,6 +53,8 @@ protocol ThunderBackend: Sendable {
     func usedAddresses(_ addresses: [String]) async throws -> [String]?
 
     /// Everything a sync needs: spendable UTXOs plus history, for the given address window.
+    /// `addresses[i]` is the address at derivation index `i` (the window is always `0 ..< n`) — history
+    /// relies on that to say which key each row touched (`ThunderHistory.addressIndices`).
     ///
     /// `knownUsed` is the discovery probe's result for exactly these addresses, so a backend that
     /// would otherwise probe them itself can skip straight to fetching. Passing nil means "find out

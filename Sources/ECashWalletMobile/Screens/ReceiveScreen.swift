@@ -43,6 +43,13 @@ struct ReceiveScreen: View {
                         .font(.jbMono(14, .regular))
                         .foregroundStyle(Theme.Colors.text0)
                         .multilineTextAlignment(.center)
+                    // Where this address sits in the wallet's key tree. Hidden for a single-key (WIF)
+                    // wallet — it has one address and no derivation.
+                    if let path = WalletDerivationPath.path(for: wallet, isChange: false, index: info.index) {
+                        Text(verbatim: path)
+                            .font(.jbMono(12, .regular))
+                            .foregroundStyle(Theme.Colors.text1)
+                    }
                     Text("Only send \(params.unitLabel) on \(params.displayName) to this address.",
                          bundle: .module, comment: "receive warning; %1$@ is the unit, %2$@ the network")
                         .textStyle(.xs)

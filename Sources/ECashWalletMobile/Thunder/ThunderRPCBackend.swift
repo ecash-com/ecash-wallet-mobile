@@ -29,7 +29,8 @@ struct ThunderRPCBackend: ThunderBackend {
         // balance, so a failure here must not break syncing.
         let stxos = (try? await client.getStxos(addresses: addresses)) ?? []
         return ThunderScan(utxos: utxos.compactMap(\.spendable),
-                           transactions: ThunderHistory.build(utxos: utxos, stxos: stxos))
+                           transactions: ThunderHistory.build(utxos: utxos, stxos: stxos,
+                                                              addressIndex: ThunderHistory.addressIndices(addresses)))
     }
 
     func spendableUTXOs(addresses: [String]) async throws -> [ThunderPointedOutput] {

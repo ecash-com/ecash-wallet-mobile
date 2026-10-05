@@ -16,6 +16,9 @@ struct TxDetailSheet: View {
     let tx: WalletTx
     let unitLabel: String
     let network: WalletNetwork
+    /// The owning wallet — turns `tx.ownKeys` into derivation paths. Optional so previews/sidechain
+    /// callers can omit it; the derivation rows simply don't render.
+    var wallet: ManagedWallet? = nil
     /// For a sidechain deposit: the sidechain's name, if known (`AppState.sidechainName(for:)`).
     var sidechainName: String? = nil
     /// For a withdrawal: looks up where it stands (`AppState.withdrawalStatus(for:)`). Called on appear.
@@ -381,7 +384,34 @@ struct TxDetailSheet: View {
                         ? Text("Yes (RBF)", bundle: .module, comment: "tx is replaceable")
                         : Text("No", bundle: .module, comment: "tx is not replaceable"))
             }
+            ForEach(Array(keyPaths.prefix(Self.maxKeyRows).enumerated()), id: \.offset) { _, entry in
+                hairline
+                rowText(entry.label, Text(verbatim: entry.path))
+            }
+            if keyPaths.count > Self.maxKeyRows {
+                Text("and \(String(keyPaths.count - Self.maxKeyRows)) more", bundle: .module,
+                     comment: "tx detail: more derivation paths than shown; %@ is the count")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text2)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
+    }
+
+    /// A sweep can spend dozens of our coins; past this the list stops earning its space.
+    private static let maxKeyRows = 8
+
+    /// This wallet's keys the tx touched, as labelled derivation paths (`m/84'/1'/0'/0/5`). Empty for
+    /// a single-key (WIF) wallet — it has no derivation.
+    private var keyPaths: [(label: LocalizedStringKey, path: String)] {
+        guard let wallet else { return [] }
+        var result: [(label: LocalizedStringKey, path: String)] = []
+        for key in tx.ownKeys {
+            guard let path = WalletDerivationPath.path(for: wallet, isChange: key.isChange, index: key.index) else { continue }
+            let label: LocalizedStringKey = key.isInput ? "Spent from" : (key.isChange ? "Change to" : "Received at")
+            result.append((label: label, path: path))
+        }
+        return result
     }
 
     private var hairline: some View {

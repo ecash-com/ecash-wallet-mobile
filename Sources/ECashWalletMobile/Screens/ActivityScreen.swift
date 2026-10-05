@@ -43,6 +43,7 @@ struct ActivityScreen: View {
         .sheet(item: $detailTx) { tx in
             if let wallet = app.selectedWallet {
                 TxDetailSheet(tx: tx, unitLabel: app.unitLabel, network: wallet.network,
+                              wallet: wallet,
                               sidechainName: app.sidechainName(for: tx),
                               loadWithdrawalStatus: { await app.withdrawalStatus(for: tx) })
             }

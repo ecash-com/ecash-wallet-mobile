@@ -105,7 +105,8 @@ struct ThunderEsploraBackend: ThunderBackend {
         let transactions = ThunderEsploraHistory.build(txs: txPages.flatMap { $0 },
                                                        deposits: depositPages,
                                                        ours: Set(addresses),
-                                                       tipHeight: tipHeight)
+                                                       tipHeight: tipHeight,
+                                                       addressIndex: ThunderHistory.addressIndices(addresses))
         return ThunderScan(utxos: utxos, transactions: transactions, pendingSats: pendingSats)
     }
 

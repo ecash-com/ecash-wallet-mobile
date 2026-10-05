@@ -34,19 +34,23 @@ enum ThunderEsploraHistory {
     ///   - deposits: per address, the BIP300 deposits that credited it (`/address/{a}/deposits`).
     ///     A deposit isn't a Thunder transaction, so it never appears in `txs`; each becomes its own
     ///     received row, keyed by its MAINCHAIN txid.
+    ///   - addressIndex: our address → derivation index (`ThunderHistory.addressIndices`), so each row
+    ///     records which of our keys it touched (`WalletTx.ownKeys`). Empty → rows carry no keys.
     static func build(txs: [ThunderEsploraTx], deposits: [(String, [ThunderEsploraUTXO])] = [],
-                      ours: Set<String>, tipHeight: Int64) -> [WalletTx] {
+                      ours: Set<String>, tipHeight: Int64,
+                      addressIndex: [String: Int32] = [:]) -> [WalletTx] {
         var seen = Set<String>()
         var out: [WalletTx] = []
         for tx in txs where !seen.contains(tx.txid) {
             seen.insert(tx.txid)
-            out.append(row(tx: tx, ours: ours, tipHeight: tipHeight))
+            out.append(row(tx: tx, ours: ours, tipHeight: tipHeight, addressIndex: addressIndex))
         }
         var seenDeposits = Set<String>()
         for (address, rows) in deposits {
             for deposit in rows where deposit.outpointKind == "deposit" {
                 guard seenDeposits.insert("\(deposit.txid):\(deposit.vout)").inserted else { continue }
-                out.append(depositRow(deposit, address: address, tipHeight: tipHeight))
+                out.append(depositRow(deposit, address: address, tipHeight: tipHeight,
+                                      index: addressIndex[address]))
             }
         }
         // Newest first: by height, then by time for two in the same block. A row the index somehow
@@ -61,7 +65,8 @@ enum ThunderEsploraHistory {
     /// A deposit, seen from the Thunder side: coins arriving from the mainchain. `txid` is the
     /// mainchain deposit transaction (the detail sheet links it to the mainchain explorer). The
     /// sidechain fields mark it as a deposit, so it gets the sidechain icon and label.
-    private static func depositRow(_ deposit: ThunderEsploraUTXO, address: String, tipHeight: Int64) -> WalletTx {
+    private static func depositRow(_ deposit: ThunderEsploraUTXO, address: String, tipHeight: Int64,
+                                   index: Int32?) -> WalletTx {
         WalletTx(txid: deposit.txid,
                  netSats: deposit.value,
                  feeSats: nil,                         // paid on the mainchain, by the depositor
@@ -73,25 +78,31 @@ enum ThunderEsploraHistory {
                  coinNewsKind: nil,
                  receivedSats: deposit.value,
                  sidechainDepositSlot: Int32(RistrettoSidechainKeyScheme.thunder.sidechainNumber),
-                 sidechainDepositAddress: address)
+                 sidechainDepositAddress: address,
+                 ownKeys: index.map { ThunderHistory.ownKeys(spentFrom: [], paidTo: [$0]) } ?? [])
     }
 
-    private static func row(tx: ThunderEsploraTx, ours: Set<String>, tipHeight: Int64) -> WalletTx {
+    private static func row(tx: ThunderEsploraTx, ours: Set<String>, tipHeight: Int64,
+                            addressIndex: [String: Int32]) -> WalletTx {
         // Everything this transaction paid to an address of ours — EXCEPT withdrawal outputs. Ours
         // are addressed to one of our own fresh addresses (as thunder-rust's wallet does), but the
         // value leaves the sidechain for the mainchain; counting it as received made a withdrawal
         // look like a ~zero self-transfer.
         var received: Int64 = 0
+        var paidTo: [Int32] = []
         for vout in tx.vout where ours.contains(vout.scriptPubKeyAddress) && !vout.isWithdrawal {
             received += vout.value
+            if let index = addressIndex[vout.scriptPubKeyAddress] { paidTo.append(index) }
         }
         // A withdrawal WE made: one of our addresses owns its withdrawal output.
         let withdrawal = tx.vout.first { $0.isWithdrawal && ours.contains($0.scriptPubKeyAddress) }
         // …and everything it spent from us. A coinbase input has no prevout to attribute.
         var spent: Int64 = 0
+        var spentFrom: [Int32] = []
         for vin in tx.vin where !vin.isCoinbase {
             guard let prevout = vin.prevout, ours.contains(prevout.scriptPubKeyAddress) else { continue }
             spent += prevout.value
+            if let index = addressIndex[prevout.scriptPubKeyAddress] { spentFrom.append(index) }
         }
 
         return WalletTx(txid: tx.txid,
@@ -111,6 +122,7 @@ enum ThunderEsploraHistory {
                         // Carries a self-transfer, where `netSats` is only the fee and the amount that
                         // actually moved would otherwise appear nowhere (see `WalletTx.receivedSats`).
                         receivedSats: received,
-                        sidechainWithdrawalAddress: withdrawal.map { $0.withdrawalMainAddress ?? "" })
+                        sidechainWithdrawalAddress: withdrawal.map { $0.withdrawalMainAddress ?? "" },
+                        ownKeys: ThunderHistory.ownKeys(spentFrom: spentFrom, paidTo: paidTo))
     }
 }

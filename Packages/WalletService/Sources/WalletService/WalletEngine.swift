@@ -210,6 +210,7 @@ public final class WalletEngine: WalletEngineProtocol {
         var result: [WalletTx] = []
         // Same boundary split-coins classifies against (remote config first, bundled fallback).
         let forkHeight = WalletManager.effectiveForkHeight(for: network)
+        let ownOutputs = ownOutputKeys()
         for canonical in wallet.transactions() {
             let tx = canonical.transaction
             let flow = wallet.sentAndReceived(tx: tx)
@@ -269,9 +270,42 @@ public final class WalletEngine: WalletEngineProtocol {
                                    sidechainDepositSlot: deposit?.slot,
                                    sidechainDepositAddress: deposit?.address,
                                    isBeforeFork: WalletTx.isBeforeFork(blockHeight: blockHeight,
-                                                                       forkHeight: forkHeight)))
+                                                                       forkHeight: forkHeight),
+                                   ownKeys: ownKeys(of: tx, ownOutputs: ownOutputs)))
         }
         return result
+    }
+
+    /// Every output this wallet has ever owned (spent or not), keyed `"txid:vout"`, with the keychain
+    /// and index of the key that owns it. `listOutput()` (not `listUnspent()`) so spent coins resolve
+    /// too — that's how a tx's INPUTS map back to our keys.
+    private func ownOutputKeys() -> [String: TxKeyUse] {
+        let internalKeychain = BDKSeam.internalKeychain()
+        var keys: [String: TxKeyUse] = [:]
+        for out in wallet.listOutput() {
+            keys["\(out.outpoint.txid):\(out.outpoint.vout)"] =
+                TxKeyUse(isInput: false, isChange: out.keychain == internalKeychain,
+                         index: Int32(out.derivationIndex))
+        }
+        return keys
+    }
+
+    /// Our keys a tx touched: inputs spending our coins, then outputs paying us, each in tx order.
+    private func ownKeys(of tx: Transaction, ownOutputs: [String: TxKeyUse]) -> [TxKeyUse] {
+        var keys: [TxKeyUse] = []
+        for input in tx.input() {
+            let prev = input.previousOutput
+            if let key = ownOutputs["\(prev.txid):\(prev.vout)"] {
+                keys.append(TxKeyUse(isInput: true, isChange: key.isChange, index: key.index))
+            }
+        }
+        let txid = "\(tx.computeTxid())"
+        var vout = 0
+        for _ in tx.output() {
+            if let key = ownOutputs["\(txid):\(vout)"] { keys.append(key) }
+            vout += 1
+        }
+        return keys
     }
 
     // MARK: - CoinNews OP_RETURN detection

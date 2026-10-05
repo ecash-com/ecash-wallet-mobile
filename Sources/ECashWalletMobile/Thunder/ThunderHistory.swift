@@ -45,36 +45,47 @@ enum ThunderHistory {
     /// oldest. It defaults to empty because `ThunderService` now applies that stamping uniformly to
     /// any row *any* backend couldn't date, so this builder no longer has to know about it — the
     /// parameter stays for the tests that assert the ordering rule directly.
+    ///
+    /// `addressIndex` maps each of our addresses to its derivation index (`addressIndices(_:)`), so each
+    /// row can say which of our keys it touched (`WalletTx.ownKeys`). Empty → rows carry no keys.
     static func build(utxos: [ThunderRPCPointedOutput],
                       stxos: [ThunderRPCPointedSpentOutput],
-                      firstSeen: [String: Int64] = [:]) -> [WalletTx] {
+                      firstSeen: [String: Int64] = [:],
+                      addressIndex: [String: Int32] = [:]) -> [WalletTx] {
         var received: [String: Int64] = [:]
         var spent: [String: Int64] = [:]
+        // Our key indices each tx paid to / spent from.
+        var paidTo: [String: [Int32]] = [:]
+        var spentFrom: [String: [Int32]] = [:]
         // Txids that created one of our withdrawal outputs → the mainchain address it pays.
         var withdrawals: [String: String] = [:]
 
         // Every output ever paid to us — still unspent, plus those since spent. A withdrawal output is
         // addressed to one of ours but its value LEAVES the sidechain, so it isn't "received": it marks
         // the creating tx as a withdrawal instead (otherwise that tx nets to ~zero).
-        func record(_ content: ThunderRPCContent, createdBy txid: String) {
-            if case let .withdrawal(_, _, mainAddress) = content {
+        func record(_ output: ThunderRPCOutput, createdBy txid: String) {
+            if case let .withdrawal(_, _, mainAddress) = output.content {
                 withdrawals[txid] = mainAddress
             } else {
-                received[txid, default: 0] += Int64(clamping: content.valueSats)
+                received[txid, default: 0] += Int64(clamping: output.content.valueSats)
+                if let index = addressIndex[output.address] { paidTo[txid, default: []].append(index) }
             }
         }
         for utxo in utxos {
             guard let txid = creatingTxid(utxo.outpoint.outPoint) else { continue }
-            record(utxo.output.content, createdBy: txid)
+            record(utxo.output, createdBy: txid)
         }
         for stxo in stxos {
             if let txid = creatingTxid(stxo.outpoint.outPoint) {
-                record(stxo.output.output.content, createdBy: txid)
+                record(stxo.output.output, createdBy: txid)
             }
             // …and the transaction that took it away.
             if case let .regular(txidBytes, _) = stxo.output.inpoint {
                 let txid = ThunderHex.encode(txidBytes)
                 spent[txid, default: 0] += Int64(clamping: stxo.output.output.content.valueSats)
+                if let index = addressIndex[stxo.output.output.address] {
+                    spentFrom[txid, default: []].append(index)
+                }
             }
             // `.withdrawal` inpoints left out on purpose: a withdrawal bundle is not a Thunder tx and
             // has no txid to attribute the spend to. Showing it as an unexplained outflow would be
@@ -97,10 +108,29 @@ enum ThunderHistory {
                             vsize: nil,
                             coinNewsKind: nil,
                             receivedSats: inbound,
-                            sidechainWithdrawalAddress: withdrawals[txid])
+                            sidechainWithdrawalAddress: withdrawals[txid],
+                            ownKeys: ownKeys(spentFrom: (spentFrom[txid] ?? []).sorted(),
+                                             paidTo: (paidTo[txid] ?? []).sorted()))
         }
         // Newest-first by whatever ordering key we have; unknown sorts last.
         return txs.sorted { ($0.timestampEpochSeconds ?? 0) > ($1.timestampEpochSeconds ?? 0) }
+    }
+
+    /// Our keys a tx touched: inputs first, then outputs. Thunder has ONE address chain (no internal
+    /// keychain), so `isChange` here means what the user cares about — an output back to us in a tx we
+    /// funded — rather than a keychain; the path itself never depends on it (`derivationPath(index:)`).
+    static func ownKeys(spentFrom: [Int32], paidTo: [Int32]) -> [TxKeyUse] {
+        let funded = !spentFrom.isEmpty
+        return spentFrom.map { TxKeyUse(isInput: true, isChange: false, index: $0) }
+            + paidTo.map { TxKeyUse(isInput: false, isChange: funded, index: $0) }
+    }
+
+    /// Address → derivation index for a scan window. The window is always `0 ..< n` in order
+    /// (`ThunderService.addressWindow`, extended contiguously by discovery), so position IS the index.
+    static func addressIndices(_ addresses: [String]) -> [String: Int32] {
+        var map: [String: Int32] = [:]
+        for (position, address) in addresses.enumerated() { map[address] = Int32(position) }
+        return map
     }
 
     /// The Thunder txid that created this output, or nil when it wasn't a Thunder transaction —
