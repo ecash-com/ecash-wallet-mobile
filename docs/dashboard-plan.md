@@ -162,7 +162,7 @@ every 5 min while the tab is visible (the site's cadence).
 |---|---|---|---|
 | BTC, BCH, BSV, XEC | **Gate.io** spot tickers | `GET https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT` (one call per pair, or one call with no pair and filter) | `last`, `change_percentage`, `quote_volume` |
 | BTCB2 | **NonKYC** | `GET https://api.nonkyc.io/api/v2/market/getbysymbol/BTCB2_USDT` | `lastPrice`, `yesterdayPrice` (→ 24h %), `volume` |
-| wbECX → ECX | **DexScreener** (Orca pool) | `GET https://api.dexscreener.com/latest/dex/pairs/solana/nNKg814Wq3uTkoG4fM8LzvBQv4Fu2iCgKFmK2YmPQzM` | `priceUsd`, `priceChange.h24`, `volume.h24`, `liquidity.usd` |
+| wbECX → ECX | **Jupiter** price API (+ **Orca** pool for volume / fallback price) — *DexScreener dropped the pool 2026-10-07, see §10* | `GET https://lite-api.jup.ag/price/v3?ids=EVHqNdzjCupKi4rQkbuYw52sa1m8A7jeUAMP23S9AVVq`; `GET https://api.orca.so/v2/solana/pools/nNKg814Wq3uTkoG4fM8LzvBQv4Fu2iCgKFmK2YmPQzM` | Jupiter `usdPrice`, `priceChange24h`; Orca `stats.24h.volume`, `price` (wbECX per USDC — inverted) |
 
 All verified live 2026-10-07. Notes:
 
@@ -300,3 +300,8 @@ Ecosystem / Development tabs, and any buy/swap/trade entry point (§3.6).
   ignores `.firstTextBaseline` in `HStack`s (news rows use `.top`).
 - **Open still:** O2 (the ×50 ratio — shown as a labelled secondary line), O3 (mainnet explorer URL for
   the config flip), O5 (attribution — sources are credited inline).
+- **wbECX moved off DexScreener (2026-10-07, same day as release):** DexScreener stopped returning the
+  Orca pool (`"pairs": null` for the pool, the token and a search), so the ECX price card read
+  "Unavailable" everywhere. Now Jupiter's price API (aggregated price + 24h change) with Orca's own pool
+  API for volume, and Orca's pool price as the fallback when Jupiter is down (inverted only after
+  checking the pool's two mints — it's quoted wbECX per USDC).

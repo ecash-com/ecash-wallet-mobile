@@ -7,7 +7,7 @@ import Foundation
 /// One asset's price from one public ticker. Display data only — never wallet money, so `Double` is
 /// fine here (wallet amounts stay `Int64` sats, CLAUDE.md §6).
 ///
-/// Quotes are in the venue's dollar: USDT on Gate.io and NonKYC, USD(C) on DexScreener. The UI shows
+/// Quotes are in the venue's dollar: USDT on Gate.io and NonKYC, USDC for wbECX. The UI shows
 /// "$" and the Markets footnote says which is which, rather than converting between stablecoins.
 struct MarketQuote: Equatable, Codable, Sendable, Identifiable {
     let id: String          // stable asset id ("btc")
@@ -26,7 +26,7 @@ struct MarketQuote: Equatable, Codable, Sendable, Identifiable {
 struct MarketBoard: Equatable, Codable, Sendable {
     /// BTC, BCH, BSV, XEC, BTCB2 — whichever loaded, in that order.
     let quotes: [MarketQuote]
-    /// Wrapped betanet ECX on Solana (Orca pool), via DexScreener. Nil if that source failed.
+    /// Wrapped betanet ECX on Solana (Orca pool), via Jupiter + Orca. Nil if both failed.
     let wbECX: MarketQuote?
 
     /// The ECX price implied by the wrapped token: `wbECX × ecxPerWbECX`.

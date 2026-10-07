@@ -10,11 +10,14 @@ import Testing
 @Suite struct MarketClientTests {
     static func gateURL(_ pair: String) -> String { "https://api.gateio.ws/api/v4/spot/tickers?currency_pair=\(pair)" }
     static let nonKYCURL = "https://api.nonkyc.io/api/v2/market/getbysymbol/BTCB2_USDT"
-    static let dexURL = "https://api.dexscreener.com/latest/dex/pairs/solana/\(MarketClient.orcaPool)"
+    static let jupiterURL = "https://lite-api.jup.ag/price/v3?ids=\(MarketClient.wbECXMint)"
+    static let orcaURL = "https://api.orca.so/v2/solana/pools/\(MarketClient.orcaPool)"
 
     static let btcGate = #"[{"currency_pair":"BTC_USDT","last":"83237.6","change_percentage":"-3.73","quote_volume":"881200598.5151595"}]"#
     static let nonKYC = #"{"symbol":"BTCB2/USDT","lastPrice":"674.64","yesterdayPrice":"678.37","volume":"333.1556"}"#
-    static let dex = #"{"schemaVersion":"1.0.0","pairs":[{"chainId":"solana","dexId":"orca","priceUsd":"2.56","priceChange":{"h24":-18.8},"volume":{"h24":4521.23},"liquidity":{"usd":62241.99}}]}"#
+    static let jupiter = #"{"EVHqNdzjCupKi4rQkbuYw52sa1m8A7jeUAMP23S9AVVq":{"createdAt":"2026-09-25T05:56:05Z","liquidity":32923.34,"usdPrice":2.8972424474144893,"blockId":454274207,"decimals":8,"priceChange24h":10.02810851993635}}"#
+    /// Token A = USDC, B = wbECX, so `price` is wbECX per USDC.
+    static let orca = #"{"data":{"address":"nNKg814Wq3uTkoG4fM8LzvBQv4Fu2iCgKFmK2YmPQzM","price":"0.35018320907438717400","tokenA":{"address":"EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v","symbol":"USDC"},"tokenB":{"address":"EVHqNdzjCupKi4rQkbuYw52sa1m8A7jeUAMP23S9AVVq","symbol":"wbECX"},"stats":{"24h":{"volume":"1761.505040033780","fees":"103.16"}}}}"#
 
     @Test func gateTickersDecode() throws {
         let rows = try JSONDecoder().decode([GateTicker].self, from: Data(Self.btcGate.utf8))
@@ -35,14 +38,33 @@ import Testing
         #expect(abs((quote.volume24h ?? 0) - 333.1556 * 674.64) < 0.001)
     }
 
-    @Test func dexScreenerGivesWbECX() throws {
-        let response = try JSONDecoder().decode(DexScreenerResponse.self, from: Data(Self.dex.utf8))
-        let quote = try MarketClient.quote(dexScreener: response)
+    @Test func wbECXTakesJupitersPriceAndOrcasVolume() async throws {
+        let web = FakeDashboardWeb()
+        web.on(Self.jupiterURL, Self.jupiter)
+        web.on(Self.orcaURL, Self.orca)
+        let quote = try await MarketClient(fetch: web.fetch).wbECX()
         #expect(quote.ticker == "wbECX")
-        #expect(quote.price == 2.56)
-        #expect(quote.change24h == -18.8)
+        #expect(quote.price == 2.8972424474144893)
+        #expect(quote.change24h == 10.02810851993635)
+        #expect(quote.volume24h == 1_761.50504003378)
         let board = MarketBoard(quotes: [], wbECX: quote)
-        #expect(board.impliedECXPrice == 2.56 * 50)
+        #expect(board.impliedECXPrice == 2.8972424474144893 * 50)
+    }
+
+    @Test func orcaAloneStillPricesWbECX() async throws {
+        let web = FakeDashboardWeb()
+        web.on(Self.orcaURL, Self.orca)   // Jupiter down
+        let quote = try await MarketClient(fetch: web.fetch).wbECX()
+        #expect(abs(quote.price - 1 / 0.350183209074387174) < 1e-9)   // inverted: USDC per wbECX
+        #expect(quote.change24h == nil)
+        #expect(quote.source == "Orca")
+    }
+
+    @Test func anOrcaPoolOfOtherTokensIsNotInverted() throws {
+        let json = #"{"data":{"price":"0.35","tokenA":{"address":"X"},"tokenB":{"address":"Y"}}}"#
+        let pool = try JSONDecoder().decode(OrcaPool.self, from: Data(json.utf8)).data
+        #expect(pool.usdPriceOfWbECX == nil)
+        #expect(throws: DashboardError.self) { try MarketClient.quote(jupiter: nil, orca: pool) }
     }
 
     @Test func oneVenueDownOnlyDropsItsRows() async throws {
@@ -52,7 +74,7 @@ import Testing
         web.on(Self.gateURL("BSV_USDT"), "upstream error", status: 502)
         web.on(Self.gateURL("XEC_USDT"), #"[{"currency_pair":"XEC_USDT","last":"0.000007569","change_percentage":"-5.62","quote_volume":"20894.05"}]"#)
         web.on(Self.nonKYCURL, Self.nonKYC)
-        // DexScreener unanswered → 404.
+        // Jupiter and Orca unanswered → 404.
         let board = try await MarketClient(fetch: web.fetch).board()
         #expect(board.quotes.map(\.ticker) == ["BTC", "BCH", "XEC", "BTCB2"])
         #expect(board.wbECX == nil)

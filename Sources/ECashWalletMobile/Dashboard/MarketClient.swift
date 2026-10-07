@@ -8,7 +8,9 @@ import Foundation
 ///
 ///   * **Gate.io** — BTC, BCH, BSV, XEC (`/api/v4/spot/tickers?currency_pair=…_USDT`)
 ///   * **NonKYC** — BTCB2 (`/api/v2/market/getbysymbol/BTCB2_USDT`)
-///   * **DexScreener** — wbECX, the Orca pool on Solana
+///   * **Jupiter** (price + 24h change) and **Orca** (24h volume; fallback price) — wbECX, the Orca
+///     pool on Solana. DexScreener was the first choice but dropped the pool on 2026-10-07 (it answers
+///     `"pairs": null`); these two read the pool and the token directly.
 ///
 /// Not CoinGecko (product decision). Each asset is fetched on its own and a failure only drops that
 /// row, so one venue being down never blanks the table; `board()` throws only when nothing loaded.
@@ -23,6 +25,9 @@ struct MarketClient: Sendable {
         ("xec", "XEC", "XEC_USDT", "XEC"),
     ]
     static let orcaPool = "nNKg814Wq3uTkoG4fM8LzvBQv4Fu2iCgKFmK2YmPQzM"
+    /// The wbECX SPL token mint, and USDC's — the pool's two sides.
+    static let wbECXMint = "EVHqNdzjCupKi4rQkbuYw52sa1m8A7jeUAMP23S9AVVq"
+    static let usdcMint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
 
     func board() async throws -> MarketBoard {
         // All six in flight at once; each `try?` so one venue failing only drops its row.
@@ -32,7 +37,7 @@ struct MarketClient: Sendable {
         async let bsv = try? gate(assets[2])
         async let xec = try? gate(assets[3])
         async let btcb2 = try? nonKYCBTCB2()
-        async let wbecx = try? dexScreenerWbECX()
+        async let wbecx = try? wbECX()
         let quotes: [MarketQuote?] = [await btc, await bch, await bsv, await xec, await btcb2]
         let wbECX = await wbecx
         let loaded = quotes.compactMap { $0 }
@@ -79,20 +84,39 @@ struct MarketClient: Sendable {
                            source: "NonKYC")
     }
 
-    // MARK: - DexScreener
+    // MARK: - wbECX (Jupiter + Orca)
 
-    func dexScreenerWbECX() async throws -> MarketQuote {
-        let url = try DashboardHTTP.url("https://api.dexscreener.com", "/latest/dex/pairs/solana/\(Self.orcaPool)")
-        let response = try await DashboardHTTP.decode(DexScreenerResponse.self, from: url, using: fetch, route: "dexscreener")
-        return try Self.quote(dexScreener: response)
+    /// wbECX from both sources at once: Jupiter's aggregated price and 24h change, Orca's pool volume.
+    /// Either alone still yields a row — Orca's own pool price stands in when Jupiter is down.
+    func wbECX() async throws -> MarketQuote {
+        async let jupiter = try? jupiterPrice()
+        async let pool = try? orcaPool()
+        return try Self.quote(jupiter: await jupiter, orca: await pool)
     }
 
-    static func quote(dexScreener response: DexScreenerResponse) throws -> MarketQuote {
-        guard let pair = response.pairs?.first, let price = pair.priceUsd.flatMap(Double.init), price > 0 else {
-            throw DashboardError.malformed("dexscreener: priceUsd")
+    func jupiterPrice() async throws -> JupiterPrice.Entry {
+        let url = try DashboardHTTP.url("https://lite-api.jup.ag", "/price/v3?ids=\(Self.wbECXMint)")
+        let prices = try await DashboardHTTP.decode([String: JupiterPrice.Entry].self, from: url, using: fetch, route: "jupiter")
+        guard let entry = prices[Self.wbECXMint] else { throw DashboardError.malformed("jupiter: no wbECX") }
+        return entry
+    }
+
+    func orcaPool() async throws -> OrcaPool.Pool {
+        let url = try DashboardHTTP.url("https://api.orca.so", "/v2/solana/pools/\(Self.orcaPool)")
+        return try await DashboardHTTP.decode(OrcaPool.self, from: url, using: fetch, route: "orca").data
+    }
+
+    static func quote(jupiter: JupiterPrice.Entry?, orca: OrcaPool.Pool?) throws -> MarketQuote {
+        let volume = orca?.stats?.day?.volume.flatMap(Double.init)
+        if let jupiter, jupiter.usdPrice > 0 {
+            return MarketQuote(id: "wbecx", name: "Wrapped ECX (Betanet)", ticker: "wbECX", price: jupiter.usdPrice,
+                               change24h: jupiter.priceChange24h, volume24h: volume, source: "Jupiter · Orca")
         }
-        return MarketQuote(id: "wbecx", name: "Wrapped ECX (Betanet)", ticker: "wbECX", price: price,
-                           change24h: pair.priceChange?.h24, volume24h: pair.volume?.h24, source: "Orca · DexScreener")
+        if let orca, let price = orca.usdPriceOfWbECX {
+            return MarketQuote(id: "wbecx", name: "Wrapped ECX (Betanet)", ticker: "wbECX", price: price,
+                               change24h: nil, volume24h: volume, source: "Orca")
+        }
+        throw DashboardError.malformed("wbECX: no source")
     }
 }
 
@@ -118,14 +142,41 @@ struct NonKYCMarket: Decodable {
     let volume: String?
 }
 
-struct DexScreenerResponse: Decodable {
-    let pairs: [Pair]?
+/// `lite-api.jup.ag/price/v3?ids=<mint>` — keyed by mint.
+enum JupiterPrice {
+    struct Entry: Decodable {
+        let usdPrice: Double
+        let priceChange24h: Double?
+    }
+}
 
-    struct Pair: Decodable {
-        let priceUsd: String?
-        let priceChange: Window?
-        let volume: Window?
+/// `api.orca.so/v2/solana/pools/<address>` — only the fields we read.
+struct OrcaPool: Decodable {
+    let data: Pool
+
+    struct Pool: Decodable {
+        /// Token A priced in token B. This pool is A = USDC, B = wbECX, so it's wbECX per USDC.
+        let price: String?
+        let tokenA: Token
+        let tokenB: Token
+        let stats: Stats?
+
+        /// The dollar price of wbECX, from the pool's own price — only when the pool really is
+        /// USDC/wbECX in that order (inverting the wrong way round would be off by a factor of ~8).
+        var usdPriceOfWbECX: Double? {
+            guard let raw = price.flatMap(Double.init), raw > 0 else { return nil }
+            if tokenA.address == MarketClient.usdcMint && tokenB.address == MarketClient.wbECXMint { return 1 / raw }
+            if tokenA.address == MarketClient.wbECXMint && tokenB.address == MarketClient.usdcMint { return raw }
+            return nil
+        }
     }
 
-    struct Window: Decodable { let h24: Double? }
+    struct Token: Decodable { let address: String }
+
+    struct Stats: Decodable {
+        let day: Window?
+        enum CodingKeys: String, CodingKey { case day = "24h" }
+    }
+
+    struct Window: Decodable { let volume: String? }
 }

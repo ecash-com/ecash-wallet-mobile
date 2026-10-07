@@ -53,7 +53,7 @@ struct MarketsScreen: View {
 
     private func footnote(_ section: DashboardSection<MarketBoard>) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.x1) {
-            Text("Prices in USDT on Gate.io and NonKYC, and in USD on DexScreener (Orca). The implied ECX price multiplies the wrapped token's price by \(Int(MarketBoard.ecxPerWbECX)).",
+            Text("Prices in USDT on Gate.io and NonKYC, and in USDC for wbECX (Jupiter, with volume from the Orca pool). The implied ECX price multiplies the wrapped token's price by \(Int(MarketBoard.ecxPerWbECX)).",
                  bundle: .module, comment: "markets footnote: sources and the implied-price formula; %lld is the ratio")
             DashboardFreshness(updatedAt: section.updatedAt, stale: section.lastAttemptFailed)
         }
