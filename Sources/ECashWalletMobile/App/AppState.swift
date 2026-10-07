@@ -91,6 +91,10 @@ final class AppState {
     /// network (`coinNewsByNetwork`) and re-point `coinNews` on every wallet/network switch. Each is
     /// long-lived (survives tab switches), like `price`.
     private(set) var coinNews: CoinNewsViewModel
+    /// The Dashboard tab. Reports on ONE network — betanet until the remote config says mainnet
+    /// (`DashboardNetwork.current`) — not the selected wallet's. Replaced, never mutated, when the
+    /// config flips the network, so no number from the old network survives the switch.
+    private(set) var dashboard: DashboardModel
     private var coinNewsByNetwork: [WalletNetwork: CoinNewsViewModel] = [:]
     private var coinNewsNetwork: WalletNetwork?
     /// One Sidechains view model per network, kept so reopening the screen shows the last list at
@@ -189,6 +193,7 @@ final class AppState {
         let initialFeed = Self.makeCoinNewsFeed(for: initialNetwork, pending: pendingCoinNews)
         initialFeed.followed = topicSubscriptions.followed(on: initialNetwork)
         coinNews = initialFeed
+        dashboard = DashboardModel(network: DashboardNetwork.current)
         // App-lock: default ON. Lock at launch only when armed AND there's a wallet to protect
         // (a fresh install with no wallet is never gated). `object(forKey:) as? Bool` so an unset
         // default reads as ON rather than `bool(forKey:)`'s false.
@@ -248,6 +253,12 @@ final class AppState {
         }
         for e in config.resolvedExplorers() {
             RemoteServiceOverrides.setExplorerTemplate(e.txTemplate, for: e.network)
+        }
+        // The dashboard's network (betanet → mainnet at the fork). A new model, not a mutated one:
+        // its sections and cache keys belong to the old network.
+        if let dashboardNetwork = config.resolvedDashboardNetwork(),
+           RemoteServiceOverrides.setDashboardNetwork(dashboardNetwork) {
+            dashboard = DashboardModel(network: dashboardNetwork)
         }
         // Fork heights → WalletManager, which is where the split classification reads them (the engine
         // computes splitSummary inside WalletService). Deliberately NOT mirrored into the app-side

@@ -1,5 +1,5 @@
 {
-  "originHash" : "6826835b55ede8acf1a35f16ddd28abb0286105c51e401ce078d25e6d04ea0ea",
+  "originHash" : "8a28e57b8f598d560f91c799faa5f8cbd14bc9f4301183ef3af80bf74599d3f5",
   "pins" : [
     {
       "identity" : "abseil-cpp-binary",
@@ -211,7 +211,7 @@
     {
       "identity" : "skip-model",
       "kind" : "remoteSourceControl",
-      "location" : "https://github.com/skiptools/skip-model.git",
+      "location" : "https://source.skip.tools/skip-model.git",
       "state" : {
         "revision" : "3de7c8315f35035a905225b9057d4272772aa0ef",
         "version" : "1.8.0"
@@ -242,15 +242,6 @@
       "state" : {
         "revision" : "fc58e058f3d25675e047a758281c39dba5d52570",
         "version" : "1.7.2"
-      }
-    },
-    {
-      "identity" : "skip-web",
-      "kind" : "remoteSourceControl",
-      "location" : "https://source.skip.tools/skip-web.git",
-      "state" : {
-        "revision" : "f03bcc21db5fcdb079b0c94a54fd424dc8968bdb",
-        "version" : "0.11.3"
       }
     },
     {

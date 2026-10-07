@@ -7,7 +7,7 @@ import SwiftUI
 /// The app's main tabs. Top-level so `AppState` can own the selection (lets "See all" on Home
 /// switch to Activity).
 enum MainTab: String, Hashable {
-    case wallet, activity, news, settings
+    case wallet, activity, dashboard, settings
 }
 
 /// The main shell once a wallet exists. Stock `TabView` → native tabs on each platform.
@@ -21,14 +21,10 @@ struct MainTabView: View {
     // masqueraded as "non-deterministic" crashes while debugging). Always boot to Wallet.
     @State var selection = MainTab.wallet   // not `private` — Fuse bridges @State (skip-fuse rule)
 
-    /// Selection is plain state now. There used to be a coercion here forcing `.news` back to
-    /// `.wallet` whenever CoinNews was unavailable, because the News tab was conditionally REMOVED
-    /// and a TabView must never point at a missing tag.
-    ///
-    /// The News tab is permanent as of the News hub (it shows eCash.com news on networks without
-    /// CoinNews), so that coercion had nothing left to protect — and it actively broke the tab on
-    /// Bitcoin: tapping News set the selection, the getter immediately rewrote it to `.wallet`, and
-    /// the tap appeared to do nothing. Removing it is the fix; nothing else needs the indirection.
+    /// Selection is plain state. There used to be a coercion here forcing the old News tab back to
+    /// `.wallet` whenever CoinNews was unavailable, because that tab was conditionally REMOVED and a
+    /// TabView must never point at a missing tag. Every tab is permanent now, so nothing needs it —
+    /// and it once broke the tab on Bitcoin (the tap was rewritten straight back to `.wallet`).
     private var selectionBinding: Binding<MainTab> {
         Binding(get: { selection }, set: { selection = $0 })
     }
@@ -70,17 +66,14 @@ struct MainTabView: View {
                 }
                 .tag(MainTab.activity)
 
-            // News is now ALWAYS present. It used to be hidden whenever CoinNews was unavailable
-            // (Bitcoin mainnet), but the tab covers two things now: the per-network on-chain feed AND
-            // the eCash.com site, and the latter is worth reading on any network. `NewsHubScreen`
-            // decides what the tab actually shows — the chooser where both exist, the web news alone
-            // where CoinNews doesn't.
-            NavigationStack { NewsHubScreen() }
+            // Dashboard (replaced the News tab — docs/dashboard-plan.md): the eCash network, prices,
+            // eCash.com news, and CoinNews as one of its sections. Always present, on every network.
+            NavigationStack { DashboardScreen() }
                 .tabItem {
-                    Label { Text("News", bundle: .module, comment: "News tab") }
-                    icon: { tabBarIcon(Icon.news, Icon.newsFill, selected: selection == .news) }
+                    Label { Text("Dashboard", bundle: .module, comment: "Dashboard tab") }
+                    icon: { tabBarIcon(Icon.dashboard, Icon.dashboardFill, selected: selection == .dashboard) }
                 }
-                .tag(MainTab.news)
+                .tag(MainTab.dashboard)
 
             NavigationStack { SettingsScreen() }
                 .tabItem {

@@ -34,7 +34,8 @@ struct Icon {
     static let settings = Icon("settings", sf: "gearshape")
     static let settingsFill = Icon("settings_fill", sf: "gearshape.fill")
     static let news = Icon("newspaper", sf: "newspaper")
-    static let newsFill = Icon("newspaper", sf: "newspaper.fill")
+    static let dashboard = Icon("space_dashboard", sf: "square.grid.2x2")
+    static let dashboardFill = Icon("space_dashboard_fill", sf: "square.grid.2x2.fill")
 
     // Money actions
     static let send = Icon("north_east")

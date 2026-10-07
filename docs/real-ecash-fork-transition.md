@@ -116,7 +116,10 @@ What already carries over, and what doesn't:
    `currentEcash`** yet. Ship.
 3. **At the fork:** publish the config entry, verify the backends and enforcer serve the real chain
    (§3 curl), then flip `currentEcash` + `selectable` (a small release), or gate both on a config
-   flag so the flip needs no release.
+   flag so the flip needs no release. In the same config publish, point the **Dashboard** at mainnet:
+   top-level `"dashboard": {"network_id": "<mainnet id>", "display_name": "Mainnet", "explorer_url":
+   "<mainnet explorer, mempool-style /api>", "releases_channel": "<releases.ecash.com channel>"}`
+   (`docs/dashboard-plan.md` §4.6). No release needed; until it's set the Dashboard stays on betanet.
 4. **After:** migration nudges (§4), retire test forks from `selectable`, enable sidechain deposits
    on the real fork only after the on-chain proof.
 

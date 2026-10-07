@@ -4,7 +4,7 @@
 
 import SwiftUI
 
-/// The News tab — a CoinNews feed for the current network. Reads `AppState.coinNews` (a long-lived
+/// Coin News — the CoinNews feed for the selected wallet's network, pushed from the Dashboard. Reads `AppState.coinNews` (a long-lived
 /// `CoinNewsViewModel`) so the feed survives tab switches. Uses a `List` (Compose `LazyColumn`) —
 /// the robust virtualized row container — never a VStack+ForEach, which recursed in SkipUI's Compose
 /// layout (same rule as `ActivityScreen`).
@@ -35,11 +35,8 @@ struct NewsScreen: View {
                     ManageTopicsView(viewModel: vm)
                 }
             }
-            .navigationDestination(for: CoinNewsItem.self) { item in
-                if let vm = app.makeCoinNewsDetailViewModel(item: item) {
-                    CoinNewsDetailView(viewModel: vm)
-                }
-            }
+            // The `CoinNewsItem` destination is registered on `DashboardScreen` (this stack's root),
+            // which pushes stories from its preview too — one destination per type per stack.
             .task { await app.coinNews.load() }
     }
 

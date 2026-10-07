@@ -25,6 +25,7 @@ enum RemoteServiceOverrides {
     private static func explorerKey(_ n: WalletNetwork) -> String { "remote.svc.explorer.\(n.rawValue).template" }
     private static func esploraKey(_ n: WalletNetwork) -> String { "remote.svc.esplora.\(n.rawValue).url" }
     private static func enforcerKey(_ n: WalletNetwork) -> String { "remote.svc.enforcer.\(n.rawValue).url" }
+    private static let dashboardNetworkKey = "remote.dashboard.network"
 
     private static func trimmedOrNil(_ s: String?) -> String? {
         guard let s = s?.trimmingCharacters(in: .whitespacesAndNewlines), !s.isEmpty else { return nil }
@@ -109,8 +110,26 @@ enum RemoteServiceOverrides {
     }
 
 
+    /// The remotely-configured dashboard network, or nil if none stored (→ `DashboardNetwork.betanet`).
+    static func dashboardNetwork() -> DashboardNetwork? {
+        guard let json = defaults.string(forKey: dashboardNetworkKey) else { return nil }
+        return try? JSONDecoder().decode(DashboardNetwork.self, from: Data(json.utf8))
+    }
+
+    /// Store the dashboard network. Returns true if it changed, so the caller rebuilds the dashboard
+    /// only on an actual flip (betanet → mainnet at the fork).
+    @discardableResult
+    static func setDashboardNetwork(_ network: DashboardNetwork) -> Bool {
+        guard dashboardNetwork() != network,
+              let data = try? JSONEncoder().encode(network),
+              let json = String(data: data, encoding: .utf8) else { return false }
+        defaults.set(json, forKey: dashboardNetworkKey)
+        return true
+    }
+
     /// Clear all stored service overlays (full reset / tests).
     static func clearAll() {
+        defaults.removeObject(forKey: dashboardNetworkKey)
         for n in WalletNetwork.allCases {
             defaults.removeObject(forKey: coinNewsKey(n))
             defaults.removeObject(forKey: faucetURLKey(n))

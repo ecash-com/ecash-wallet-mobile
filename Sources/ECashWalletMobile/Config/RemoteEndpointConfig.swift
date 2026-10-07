@@ -29,6 +29,18 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     let schemaVersion: Int
     let refreshAfterSeconds: Int?
     let networks: [RemoteNetwork]
+    /// Which network the Dashboard tab reports on (`docs/dashboard-plan.md` §4.6). Absent → betanet.
+    let dashboard: RemoteDashboard?
+
+    /// `{"network_id": "betanet", "display_name": "Betanet", "explorer_url": "https://…",
+    /// "releases_channel": "betanet"}`. Display data only: it never routes a wallet (that's
+    /// `walletNetwork`'s allow-list), so a free-form id is safe here.
+    struct RemoteDashboard: Equatable, Sendable {
+        let networkId: String?
+        let displayName: String?
+        let explorerURL: String?
+        let releasesChannel: String?
+    }
 
     struct RemoteNetwork: Equatable, Sendable {
         let id: String?
@@ -162,6 +174,20 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         }
         guard config.schemaVersion == supportedSchemaVersion else { return nil }
         return config
+    }
+
+    /// The dashboard's network, or nil when the config doesn't name one usably — the caller keeps
+    /// the bundled betanet. Needs an id and an http(s) explorer URL; the name and releases channel
+    /// default to the id.
+    func resolvedDashboardNetwork() -> DashboardNetwork? {
+        guard let d = dashboard,
+              let id = Self.cleaned(d.networkId),
+              let explorer = Self.cleaned(d.explorerURL),
+              explorer.hasPrefix("https://") || explorer.hasPrefix("http://") else { return nil }
+        return DashboardNetwork(id: id,
+                                displayName: Self.cleaned(d.displayName) ?? id,
+                                explorerURL: explorer,
+                                releasesChannel: Self.cleaned(d.releasesChannel) ?? id)
     }
 
     // MARK: - Resolution
@@ -339,7 +365,33 @@ extension RemoteEndpointConfig: Decodable {
     enum CodingKeys: String, CodingKey {
         case schemaVersion = "schema_version"
         case refreshAfterSeconds = "refresh_after_seconds"
-        case networks
+        case networks, dashboard
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.schemaVersion = try c.decode(Int.self, forKey: .schemaVersion)
+        self.refreshAfterSeconds = try c.decodeIfPresent(Int.self, forKey: .refreshAfterSeconds)
+        self.networks = try c.decode([RemoteNetwork].self, forKey: .networks)
+        // Lenient: a malformed `dashboard` block must not cost the app its backends.
+        self.dashboard = (try? c.decodeIfPresent(RemoteDashboard.self, forKey: .dashboard)) ?? nil
+    }
+}
+
+extension RemoteEndpointConfig.RemoteDashboard: Decodable {
+    enum CodingKeys: String, CodingKey {
+        case networkId = "network_id"
+        case displayName = "display_name"
+        case explorerURL = "explorer_url"
+        case releasesChannel = "releases_channel"
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.networkId = (try? c.decodeIfPresent(String.self, forKey: .networkId)) ?? nil
+        self.displayName = (try? c.decodeIfPresent(String.self, forKey: .displayName)) ?? nil
+        self.explorerURL = (try? c.decodeIfPresent(String.self, forKey: .explorerURL)) ?? nil
+        self.releasesChannel = (try? c.decodeIfPresent(String.self, forKey: .releasesChannel)) ?? nil
     }
 }
 

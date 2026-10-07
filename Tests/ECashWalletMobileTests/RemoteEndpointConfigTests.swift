@@ -557,4 +557,50 @@ import WalletService
             #expect(config.resolvedPrimaryBackends().first?.network == network, "id \(id)")
         }
     }
+
+    // MARK: - Dashboard network (docs/dashboard-plan.md §4.6)
+
+    private static func config(dashboard: String) -> RemoteEndpointConfig? {
+        RemoteEndpointConfig.parse(Data("""
+        {"schema_version": 1, "networks": [], "dashboard": \(dashboard)}
+        """.utf8))
+    }
+
+    @Test func theDashboardNetworkResolvesFromConfig() {
+        let config = Self.config(dashboard: #"{"network_id":"mainnet","display_name":"Mainnet","explorer_url":"https://explorer.ecash.ninja","releases_channel":"mainnet"}"#)
+        #expect(config?.resolvedDashboardNetwork() == DashboardNetwork(
+            id: "mainnet", displayName: "Mainnet", explorerURL: "https://explorer.ecash.ninja", releasesChannel: "mainnet"))
+    }
+
+    @Test func nameAndChannelDefaultToTheId() {
+        let network = Self.config(dashboard: #"{"network_id":"mainnet","explorer_url":"https://e.example"}"#)?.resolvedDashboardNetwork()
+        #expect(network?.displayName == "mainnet")
+        #expect(network?.releasesChannel == "mainnet")
+    }
+
+    @Test func anUnusableDashboardBlockIsIgnored() {
+        #expect(Self.config(dashboard: #"{"network_id":"mainnet"}"#)?.resolvedDashboardNetwork() == nil)
+        #expect(Self.config(dashboard: #"{"network_id":"x","explorer_url":"ftp://e"}"#)?.resolvedDashboardNetwork() == nil)
+        // A malformed block must not cost the app the rest of the config.
+        let config = Self.config(dashboard: #""not an object""#)
+        #expect(config != nil)
+        #expect(config?.resolvedDashboardNetwork() == nil)
+    }
+
+    @Test func noDashboardBlockMeansBetanet() {
+        RemoteServiceOverrides.clearAll()
+        defer { RemoteServiceOverrides.clearAll() }
+        #expect(RemoteEndpointConfig.parse(Data(Self.validJSON.utf8))?.resolvedDashboardNetwork() == nil)
+        #expect(DashboardNetwork.current == .betanet)
+    }
+
+    @Test func theStoredDashboardNetworkRoundTripsAndReportsChanges() {
+        RemoteServiceOverrides.clearAll()
+        defer { RemoteServiceOverrides.clearAll() }
+        let mainnet = DashboardNetwork(id: "mainnet", displayName: "Mainnet", explorerURL: "https://e.example", releasesChannel: "mainnet")
+        #expect(RemoteServiceOverrides.setDashboardNetwork(mainnet))
+        #expect(!RemoteServiceOverrides.setDashboardNetwork(mainnet))   // unchanged → no rebuild
+        #expect(DashboardNetwork.current == mainnet)
+    }
 }
+
