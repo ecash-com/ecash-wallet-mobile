@@ -6,12 +6,11 @@ import Testing
 import Foundation
 @testable import ECashWalletMobile
 
-/// The paranoid-mode screen's state machine (`docs/user-provided-entropy.md` §3).
+/// The create-wallet entropy screen's state machine (`docs/user-provided-entropy.md` §3).
 ///
-/// Two tests here guard properties that would fail silently and invisibly if they broke:
-/// `theMeterIgnoresTheCSPRNGPrefix` (or mixed mode quietly becomes system-only) and
-/// `theFrozenComponentsDoNotMoveUnderTheUser` (or the field stops being reproducible, which is the
-/// whole promise).
+/// Always mixed, always swipe, and never gated (2026-10-08): the CSPRNG prefix alone is a
+/// full-strength seed, so the user can continue at any point and the bar only measures what they add.
+/// `theFrozenComponentsDoNotMoveUnderTheUser` guards reproducibility of the visible field.
 @MainActor
 @Suite struct EntropyViewModelTests {
 
@@ -130,39 +129,50 @@ import Foundation
         #expect(!vm.userInput.isEmpty)      // and the input survives
     }
 
-    // MARK: - Modes
-
-    @Test func userOnlyModeEmptiesTheSystemComponent() {
-        let vm = viewModel()
-        #expect(!vm.systemHex.isEmpty)
-        vm.mode = .userOnly
-        #expect(vm.systemHex.isEmpty)
-        #expect(vm.field.hasPrefix("v1&12&&"))
-    }
-
-    @Test func switchingBackToMixedRedrawsThePrefix() {
-        let vm = viewModel()
-        vm.mode = .userOnly
-        vm.mode = .mixed
-        #expect(vm.systemHex.count == 64)
-    }
-
     // MARK: - The meter
 
-    /// **Mixed mode's whole point.** If the CSPRNG prefix counted toward the gate, Continue would go
-    /// green before the user swiped at all — silently turning mixed mode back into system-only, and
-    /// removing the property that makes it safe against a broken RNG.
+    /// The bar measures the user's swiping only. If the CSPRNG prefix counted, it would open full
+    /// before the user swiped at all and say nothing about what they added.
     @Test func theMeterIgnoresTheCSPRNGPrefix() {
         let vm = viewModel()
         #expect(!vm.systemHex.isEmpty)     // a full 256-bit prefix is present…
-        #expect(vm.estimatedBits == 0)     // …and contributes nothing to the gate
-        #expect(!vm.canContinue)
+        #expect(vm.estimatedBits == 0)     // …and the bar is empty
+        #expect(!vm.isFull)
     }
 
-    @Test func theGateOpensOnlyOnceTheUserHasSuppliedEnough() {
+    /// Only a short swipe is required: past the minimum the entropy is usable well before the bar
+    /// fills, because the device's randomness alone is a full-strength seed.
+    @Test func aShortSwipeUnlocksBeforeTheBarFills() {
         let vm = viewModel()
-        #expect(!vm.canContinue)
+        #expect(!vm.canContinue)                  // no swipes yet
+        vm.recordSwipe("A", startsGesture: true)
+        #expect(!vm.canContinue)                  // a single tap isn't enough
+        var index = 0
+        while !vm.hasMinimumInput {
+            vm.recordSwipe(Character(Unicode.Scalar(0x41 + index % 26)!), startsGesture: index % 26 == 0)
+            index += 1
+        }
+        #expect(vm.canContinue)
+        #expect(!vm.isFull)                       // well short of a full bar
+        #expect(vm.progress < 0.25)
         fill(vm)
+        #expect(vm.isFull)
+        #expect(vm.canContinue)
+    }
+
+    @Test func theMinimumIsTheNominalSize() {
+        #expect(viewModel().minimumBits == 128)
+        #expect(viewModel(wordCount: 24).minimumBits == 256)
+    }
+
+    /// A session with no system component can't continue even with plenty of swiping — its field
+    /// would be nothing but the user's swipes.
+    @Test func aWipedSessionCannotContinue() {
+        let vm = viewModel()
+        vm.wipe()
+        fill(vm)
+        #expect(!vm.canContinue)
+        vm.beginSessionIfNeeded()
         #expect(vm.canContinue)
     }
 
@@ -170,20 +180,15 @@ import Foundation
         let vm = viewModel(wordCount: 24)
         #expect(vm.requiredBits == EntropyViewModel.swipeRequiredBits24)
         fill(vm)
-        #expect(!vm.canContinue)           // enough for 12 words, not for 24
+        #expect(!vm.isFull)                // enough for 12 words, not for 24
     }
 
-    /// The large multiple applies to swiping, where the figure comes from a behavioural model — not to
-    /// typed input, where fifty d6 rolls really are 129 bits by arithmetic. Asking eight times that
-    /// would be 388 rolls: nobody would do it, and it would buy nothing.
-    @Test func theLargeMultipleAppliesToSwipingOnly() {
+    /// The bar asks for far more than the nominal entropy, because a swipe's figure comes from a
+    /// behavioural model rather than a measurement.
+    @Test func theSwipeTargetIsALargeMultiple() {
         let vm = viewModel()
         #expect(vm.requiredBits == EntropyViewModel.swipeRequiredBits12)
-        #expect(vm.requiredBits > vm.nominalBits * 5)     // far above the theoretical minimum
-        vm.inputMethod = .typed
-        #expect(vm.requiredBits == 128)                    // …but typed keeps the nominal target
-        vm.wordCount = 24
-        #expect(vm.requiredBits == 256)
+        #expect(vm.requiredBits > vm.nominalBits * 5)
     }
 
     /// A full bar must mean "ready" — it used to track bits alone and could sit at 100% while the
@@ -195,11 +200,21 @@ import Foundation
             vm.recordSwipe(index % 2 == 0 ? "A" : "B", startsGesture: index == 0)
         }
         #expect(vm.estimatedBits >= vm.requiredBits)   // bits satisfied…
-        #expect(!vm.canContinue)                       // …gate still closed
+        #expect(!vm.isFull)                            // …checks still failing
         #expect(vm.progress < 1.0)                     // …so the bar must not read full
     }
 
     // MARK: - Field and derivation
+
+    /// The input box shows the whole hashed string: prefilled with version, word count, device
+    /// randomness and timestamp, with swipes appended.
+    @Test func theInputIsPrefilledWithTheWholeField() {
+        let vm = viewModel()
+        #expect(vm.displayedInput == "v1&12&\(vm.systemHex)&1750000000000&")
+        vm.recordSwipe("A", startsGesture: true)
+        #expect(vm.displayedInput == "v1&12&\(vm.systemHex)&1750000000000&A")
+        #expect(vm.displayedInput == vm.field)
+    }
 
     @Test func theFieldCarriesTheUsersInput() {
         let vm = viewModel()
@@ -222,90 +237,87 @@ import Foundation
         #expect(twentyFour?.hasPrefix(twelve!) == false)
     }
 
-    // MARK: - Typed input
+    // MARK: - Editing
 
-    @Test func typedInputIsFilteredToTheAlphabet() {
-        let vm = viewModel()
-        vm.inputMethod = .typed
-        vm.typedInput = "12 3\u{00e9}4"      // space and é are outside printable ASCII
-        #expect(vm.userInput == "1234")
-        #expect(vm.field.hasSuffix("1234"))
-    }
-
-    /// The rate is inferred from the alphabet the user reveals, so the "how many more" figure moves as
-    /// they type — there is no declared source to read it from.
-    @Test func theRemainingCountFollowsTheInferredRate() {
-        let vm = viewModel()
-        vm.inputMethod = .typed
-        // Six distinct symbols reads as a d6: log2(6) ≈ 2.58 bits each, so ~50 for 128 bits.
-        vm.typedInput = "351426"
-        #expect(abs(vm.typedBitsPerCharacter - 2.585) < 0.01)
-        #expect(vm.typedCharactersRemaining == 44)
-    }
-
-    /// A large alphabet is what human "random" typing looks like, and we can't tell it from a good
-    /// paste — so it drops to 1 bit per character and needs far more of them.
-    @Test func aLargeAlphabetIsCreditedAsHumanTyping() {
-        let vm = viewModel()
-        vm.inputMethod = .typed
-        var input = ""
-        for scalar in 0x41...0x5A { input += String(Character(Unicode.Scalar(scalar)!)) }  // 26 distinct
-        vm.typedInput = input
-        #expect(vm.typedBitsPerCharacter == TypedEntropyEstimator.humanTypingBits)
-        #expect(vm.estimatedBits == 26)
-    }
-
-    // MARK: - Restore from a pasted field
-
-    /// **The bug user-testing found.** Copy hands over the whole field, so pasting it back must
-    /// reproduce the same wallet. Before this, the pasted field was treated as a *contribution* and
-    /// nested inside a fresh one — same visible input, different words, no indication why.
-    @Test func pastingACopiedFieldReproducesTheSameEntropy() {
+    /// Pasting a saved field reproduces its wallet: the edited string is used exactly as written,
+    /// whatever this session's own randomness was.
+    @Test func pastingASavedFieldReproducesTheSameEntropy() {
         let original = viewModel()
         fill(original)
-        let copied = original.field
+        let saved = original.field
         let expected = original.entropyHex
 
-        let restored = viewModel(clock: 999)          // different clock, different CSPRNG draw
-        restored.inputMethod = .typed
-        restored.typedInput = copied
-
-        #expect(restored.isRestoringFromPastedField)
-        #expect(restored.field == copied)             // used verbatim, not nested
+        let restored = viewModel(clock: 999)
+        restored.applyEdit("  \(saved)\n")             // surrounding whitespace from a paste is dropped
+        #expect(restored.isEdited)
+        #expect(restored.field == saved)
+        #expect(restored.displayedInput == saved)
         #expect(restored.entropyHex == expected)
     }
 
-    /// A pasted field carries its own word count — deriving at the Settings value would silently
-    /// produce a different wallet from the one being restored.
-    @Test func aPastedFieldKeepsItsOwnWordCount() {
-        let original = viewModel(wordCount: 24)
-        let copied = original.field + "somecharacters"
-
-        let restored = viewModel(wordCount: 12)
-        restored.inputMethod = .typed
-        restored.typedInput = copied
-        #expect(restored.effectiveWordCount == 24)
-        #expect(restored.entropyHex?.count == 64)     // 32 bytes, not 16
-    }
-
-    /// A restore is exempt from the entropy gate for the same reason importing a recovery phrase is:
-    /// the wallet already exists and was gated when it was made. Requiring the gate again would make
-    /// it impossible to restore the very wallet this feature promises you can restore.
-    @Test func aRestoreSkipsTheEntropyGate() {
-        let restored = viewModel()
-        restored.inputMethod = .typed
-        restored.typedInput = "v1&12&&0&abc"          // far below the bit target
-        #expect(restored.isRestoringFromPastedField)
-        #expect(restored.canContinue)
-    }
-
-    /// Ordinary typed input is still gated — only something that parses as a field is a restore.
-    @Test func ordinaryTypedInputIsStillGated() {
+    /// The editor is for testing and restoring, so the swipe minimum doesn't apply.
+    @Test func anEditedFieldSkipsTheSwipeMinimum() {
         let vm = viewModel()
-        vm.inputMethod = .typed
-        vm.typedInput = "351426"
-        #expect(!vm.isRestoringFromPastedField)
+        vm.applyEdit("v1&12&&0&abc")
+        #expect(!vm.hasMinimumInput)
+        #expect(vm.canContinue)
+    }
+
+    /// …but it must still be a field: anything not starting `v1&12&` / `v1&24&` can't be derived.
+    @Test func anEditedStringMustBeAField() {
+        let vm = viewModel()
+        vm.applyEdit("just some text")
+        #expect(vm.isEdited)
+        #expect(vm.entropyHex == nil)
         #expect(!vm.canContinue)
+    }
+
+    /// A pasted field carries its own word count — deriving at the Settings value would refuse it.
+    @Test func anEditedFieldKeepsItsOwnWordCount() {
+        let saved = viewModel(wordCount: 24).field + "abc"
+        let vm = viewModel(wordCount: 12)
+        vm.applyEdit(saved)
+        #expect(vm.effectiveWordCount == 24)
+        #expect(vm.entropyHex?.count == 64)
+    }
+
+    /// Swipes after an edit append to the edited string.
+    @Test func swipesAfterAnEditAppendToIt() {
+        let vm = viewModel()
+        vm.applyEdit("v1&12&&0&abc")
+        vm.recordSwipe("Z", startsGesture: true)
+        #expect(vm.field == "v1&12&&0&abcZ")
+    }
+
+    /// Saving the editor unchanged keeps the generated session (and its swipe minimum).
+    @Test func anUnchangedEditIsANoOp() {
+        let vm = viewModel()
+        vm.recordSwipe("A", startsGesture: true)
+        vm.applyEdit(vm.field)
+        #expect(!vm.isEdited)
+        #expect(vm.userInput == "A")
+    }
+
+    /// Start over drops the edit and returns to a fresh generated session.
+    @Test func startOverDropsTheEdit() {
+        let vm = viewModel()
+        vm.applyEdit("v1&12&&0&abc")
+        vm.clear()
+        #expect(!vm.isEdited)
+        #expect(vm.field.hasPrefix("v1&12&\(vm.systemHex)&"))
+    }
+
+    // MARK: - Sessions
+
+    /// Each Continue on New wallet starts a new session, and each session draws its own device
+    /// randomness — backing out and continuing again must not reuse the previous draw.
+    @Test func eachSessionDrawsFreshRandomness() {
+        let first = EntropySession(wordCount: 12)
+        let second = EntropySession(wordCount: 12)
+        #expect(first != second)
+        #expect(first.model.systemHex.count == 64)
+        #expect(first.model.systemHex != second.model.systemHex)
+        #expect(first.model.field != second.model.field)
     }
 
     // MARK: - Wipe

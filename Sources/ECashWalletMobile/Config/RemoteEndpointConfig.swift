@@ -81,6 +81,11 @@ struct RemoteEndpointConfig: Equatable, Sendable {
         /// Adding a network: add its case to `WalletNetwork` and its id here, in the same change.
         var walletNetwork: WalletNetwork? {
             guard let id else { return nil }
+            return Self.walletNetwork(forId: id)
+        }
+
+        /// The allow-list itself, by id — shared with `DashboardNetwork.walletNetwork`.
+        static func walletNetwork(forId id: String) -> WalletNetwork? {
             switch id {
             case "bitcoin": return .bitcoin
             case "signet": return .signet

@@ -9,8 +9,8 @@ import WalletService
 /// health, news (on-chain CoinNews and eCash.com), markets, releases.
 ///
 /// Reports on `AppState.dashboard.network` (betanet until the config says mainnet), not the selected
-/// wallet's network — except CoinNews, which stays tied to the selected wallet because reading and
-/// posting there are per-network and need a wallet on that network.
+/// wallet's network. CoinNews is the exception: reading and posting are per-network and need a wallet
+/// on that network, so the section shows only while the selected wallet is on the dashboard's network.
 ///
 /// Layout discipline (Android Compose): a `ScrollView` of fixed cards, each preview a short `ForEach`
 /// in a `VStack` (the Home recent-activity pattern, proven stable). The unbounded lists — every block,
@@ -30,7 +30,7 @@ struct DashboardScreen: View {
                 VStack(spacing: Theme.Space.x4) {
                     priceCard
                     networkCard
-                    coinNewsCard
+                    if showsCoinNews { coinNewsCard }
                     ecosystemNewsCard
                     marketsCard
                     releasesCard
@@ -166,6 +166,14 @@ struct DashboardScreen: View {
     }
 
     // MARK: - 3. CoinNews
+
+    /// Coin News appears only while the selected wallet is ON the dashboard's network (betanet now,
+    /// mainnet after the config flip). From a Bitcoin, Signet, alphanet or Thunder wallet the section
+    /// would describe some other chain's board under the betanet dashboard, so it's left out entirely.
+    private var showsCoinNews: Bool {
+        guard let walletNetwork = app.dashboard.network.walletNetwork else { return false }
+        return app.selectedWallet?.network == walletNetwork
+    }
 
     @ViewBuilder private var coinNewsCard: some View {
         let vm = app.coinNews

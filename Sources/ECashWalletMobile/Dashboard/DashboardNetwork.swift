@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 import Foundation
+import WalletService
 
 /// The ONE network the dashboard reports on: betanet today, mainnet as soon as it's live
 /// (`docs/dashboard-plan.md` D3). Deliberately not the selected wallet's network and not user-picked —
@@ -22,6 +23,11 @@ struct DashboardNetwork: Equatable, Codable, Sendable {
     let explorerURL: String
     /// The `releases.ecash.com/L1-ecash-bitcoin/<channel>/` directory for this network's node builds.
     let releasesChannel: String
+
+    /// The wallet network this is, if the app has one: betanet → `.ecashBeta`. Nil for a network the
+    /// app has no wallets for yet (mainnet, until its case exists). Same id allow-list as the config's
+    /// backend routing, so the two can't disagree about which network an id means.
+    var walletNetwork: WalletNetwork? { RemoteEndpointConfig.RemoteNetwork.walletNetwork(forId: id) }
 
     static let betanet = DashboardNetwork(id: "betanet", displayName: "Betanet",
                                           explorerURL: "https://explorer.beta.ecash.ninja",

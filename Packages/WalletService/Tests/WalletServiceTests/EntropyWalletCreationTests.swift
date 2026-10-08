@@ -52,6 +52,39 @@ final class EntropyWalletCreationTests: XCTestCase {
         #endif
     }
 
+    // MARK: - End to end: field → exact recovery phrase
+
+    /// **Pins the whole chain in one place** — field → SHA-256 → BIP39 words — so a change anywhere
+    /// in it (field format, hashing, truncation, BDK's mapping) fails here rather than silently giving
+    /// existing users' entropy strings a different wallet.
+    ///
+    /// Expected phrases are independent of this codebase: `printf '%s' "<field>" | shasum -a 256`,
+    /// truncated to 16/32 bytes, then mapped with a separate BIP39 implementation over the official
+    /// English wordlist (sha256 2f5eed53…dbda), which also reproduces the "abandon … about" vector.
+    func testTwelveWordFieldProducesTheIndependentPhrase() throws {
+        try skipOnAndroid()
+        let factory = BDKWalletEngineFactory(chainDataDirectory: FileManager.default.temporaryDirectory)
+        let expected = "raven park clay refuse test zero wedding network long bulb obey host"
+        let keys = try factory.create(network: .signet, entropyField: field(wordCount: 12),
+                                      wordCount: 12, scriptType: .bip84)
+        XCTAssertEqual(keys.secret, expected)
+        // The preview the user sees before creating must be the same words.
+        XCTAssertEqual(try factory.previewMnemonic(entropyField: field(wordCount: 12), wordCount: 12),
+                       expected)
+    }
+
+    func testTwentyFourWordFieldProducesTheIndependentPhrase() throws {
+        try skipOnAndroid()
+        let factory = BDKWalletEngineFactory(chainDataDirectory: FileManager.default.temporaryDirectory)
+        let expected = "exchange quarter pear isolate parrot sunny gown dust sausage tray casual much "
+            + "original impose license scrub sweet ability faculty dismiss behind heart cattle pizza"
+        let keys = try factory.create(network: .signet, entropyField: field(wordCount: 24),
+                                      wordCount: 24, scriptType: .bip84)
+        XCTAssertEqual(keys.secret, expected)
+        XCTAssertEqual(try factory.previewMnemonic(entropyField: field(wordCount: 24), wordCount: 24),
+                       expected)
+    }
+
     // MARK: - Composition
 
     func testTwelveWordFieldProducesTwelveWords() throws {

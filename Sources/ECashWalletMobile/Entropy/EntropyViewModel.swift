@@ -9,26 +9,12 @@ import Crypto        // swift-crypto — SHA-256 on both platforms. NOT WalletSe
                      // which is `@nobridge` and so unreachable from this (native) module.
 import WalletService
 
-/// How the entropy field is being filled (`docs/user-provided-entropy.md` §3).
-enum EntropyMode: String, CaseIterable, Equatable {
-    /// A CSPRNG prefix plus the user's own input. **The default**, because it is never worse than
-    /// user-only and better whenever the user's randomness is worse than they think: a healthy CSPRNG
-    /// carries it, and a broken one degrades it to exactly the user's contribution — which is gated at
-    /// the full target anyway.
-    case mixed
-    /// The user's input alone, with an empty CSPRNG component. Kept for the one case that genuinely
-    /// needs it: reproducing a wallet from material generated entirely off-device, with nothing from
-    /// the phone in it.
-    case userOnly
-}
-
-/// How the user is supplying their own entropy.
-enum EntropyInputMethod: String, CaseIterable, Equatable {
-    case swipe
-    case typed
-}
-
-/// Drives the paranoid-mode entropy screen.
+/// Drives the create-wallet entropy screen.
+///
+/// **Always mixed, always swipe** (2026-10-08). The device's CSPRNG prefix is in every field and the
+/// user adds to it by swiping. The earlier options screen (mixed vs "only mine", swipe vs typed) is
+/// gone. Editing the string by hand (`applyEdit`) is the way to paste a saved field back in, to test
+/// or to reproduce a wallet.
 ///
 /// Owns the two components the user cannot type — the CSPRNG prefix and the timestamp — and **freezes
 /// both when the screen opens**. That is not incidental: the audit story is "hash the string you see",
@@ -43,7 +29,7 @@ final class EntropyViewModel {
 
     // MARK: - Frozen at open
 
-    /// SHA-256 of 32 CSPRNG bytes, hex — or empty in user-only mode. Hashing here is *formatting*, not
+    /// SHA-256 of 32 CSPRNG bytes, hex. Empty only between `wipe()` and the next session. Hashing here is *formatting*, not
     /// strengthening: `SHA-256(random)` has no more entropy than `random`, it is just a tidy fixed
     /// width.
     private(set) var systemHex: String = ""
@@ -53,20 +39,15 @@ final class EntropyViewModel {
 
     // MARK: - User choices
 
-    var mode: EntropyMode = .mixed {
-        didSet { if mode != oldValue { refreshSystemComponent() } }
-    }
-    var inputMethod: EntropyInputMethod = .swipe
-    /// Moved onto this screen from Settings: it sets the 128 vs 256-bit target, so it directly changes
-    /// how much work the user has to do. Showing it where it has consequences beats a preference set
-    /// months ago.
+    /// From Settings → New wallets. Sets the 128 vs 256-bit size and the swipe target.
     var wordCount: Int = 12
 
     // MARK: - Input
 
     private(set) var accumulator = EntropyAccumulator()
-    /// Raw typed input, before alphabet filtering.
-    var typedInput: String = ""
+    /// The string the user wrote in the editor, used in place of the generated prefix. Swipes made
+    /// after the edit are appended to it. nil until they edit.
+    private(set) var editedBase: String?
 
     // MARK: - Seams
 
@@ -101,45 +82,30 @@ final class EntropyViewModel {
 
     // MARK: - Field
 
-    /// True when the user pasted back a complete field rather than typing raw input.
-    ///
-    /// This is what makes "Copy" mean something. Copy hands over the whole field, so pasting it back
-    /// must reproduce the same wallet — otherwise the reproducibility promise is only theoretical.
-    /// Without this the pasted field would be treated as a contribution and nested inside a fresh one,
-    /// giving different words for what looks like identical input.
-    var isRestoringFromPastedField: Bool {
-        inputMethod == .typed && EntropyDerivation.isField(trimmedTypedInput)
-    }
-
-    private var trimmedTypedInput: String {
-        typedInput.trimmingCharacters(in: .whitespacesAndNewlines)
-    }
-
     /// The complete, visible entropy field — exactly what gets hashed, and exactly what the user can
     /// copy and verify.
     var field: String {
-        if isRestoringFromPastedField { return trimmedTypedInput }
+        if let editedBase { return editedBase + userInput }
         return EntropyDerivation.field(wordCount: wordCount, systemHex: systemHex,
                                        timestampMillis: timestampMillis, userInput: userInput)
     }
 
-    /// The word count in force. A pasted field carries its own — deriving it at the Settings value
-    /// instead would silently produce a different wallet from the one being restored.
+    /// Whether the user has replaced the generated string by hand.
+    var isEdited: Bool { editedBase != nil }
+
+    /// The word count in force. An edited field carries its own — deriving a pasted 24-word field at
+    /// the 12-word setting would refuse it, or worse, a different wallet from the one being restored.
     var effectiveWordCount: Int {
-        if isRestoringFromPastedField,
-           let fromField = EntropyDerivation.wordCount(inField: trimmedTypedInput) {
-            return fromField
-        }
+        if isEdited, let fromField = EntropyDerivation.wordCount(inField: field) { return fromField }
         return wordCount
     }
 
-    /// The user's own contribution, by input method.
-    var userInput: String {
-        switch inputMethod {
-        case .swipe: return accumulator.userInput
-        case .typed: return TypedEntropyEstimator.filtered(typedInput)
-        }
-    }
+    /// The user's own contribution: what the grid has recorded.
+    var userInput: String { accumulator.userInput }
+
+    /// What the input box shows: the whole field, exactly what gets hashed — prefilled with the version,
+    /// word count, device randomness and timestamp, with the user's swipes appended at the end.
+    var displayedInput: String { field }
 
     /// The derived entropy in hex, for the confirm step and the audit comparison.
     var entropyHex: String? {
@@ -148,89 +114,71 @@ final class EntropyViewModel {
 
     // MARK: - Progress
 
-    /// What a **swipe** must reach — roughly eight times the nominal entropy of the seed.
+    /// What swiping should reach for the bar to fill — roughly eight times the nominal entropy of the
+    /// seed.
+    ///
+    /// **Guidance, not a gate** (2026-10-08). The device's 128/256 CSPRNG bits are in every field, so a
+    /// wallet made before the bar fills is as strong as a normal one. Only `minimumBits` of swiping is
+    /// required. The bar measures only what the user adds on top.
     ///
     /// The credit rates are a model of how unpredictable human swiping is, not a measurement, and a
     /// model can be wrong in the dangerous direction: people start swipes where their thumb rests,
     /// paths have characteristic curvature, and a person's velocity is consistent enough that dwell is
-    /// worth less than assumed. Demanding a large multiple means the wallet still carries its nominal
-    /// entropy even if the rates over-count severely.
-    ///
-    /// At the measured ~20 runs/second this is roughly 20 seconds for 12 words and 40 for 24 —
-    /// deliberately a real effort, since this is the one number standing between a user and a wallet
-    /// whose randomness nobody can verify.
+    /// worth less than assumed. The large multiple keeps a full bar meaningful even if the rates
+    /// over-count. At the measured ~20 runs/second it is roughly 20 seconds for 12 words, 40 for 24.
     static let swipeRequiredBits12 = 1000.0
     static let swipeRequiredBits24 = 2000.0
 
     /// The nominal entropy for the word count — 128 or 256 bits.
     var nominalBits: Double { effectiveWordCount == 24 ? 256 : 128 }
 
-    /// What this input must reach.
-    ///
-    /// **The large multiple applies to swiping only.** A swipe's figure comes from a behavioural
-    /// model. Typed input from a mechanical source does not: fifty d6 rolls really are 129 bits by
-    /// arithmetic on `log2(6)`, and asking for eight times that would be 388 rolls — nobody will do
-    /// that, and it would buy nothing. Typed input has its own conservatism instead: an alphabet over
-    /// 16 symbols drops to 1 bit per character precisely because it cannot be trusted as mechanical.
+    /// What the swiping must reach for the bar to read full.
     var requiredBits: Double {
-        switch inputMethod {
-        case .swipe: return effectiveWordCount == 24 ? Self.swipeRequiredBits24 : Self.swipeRequiredBits12
-        case .typed: return nominalBits
-        }
+        effectiveWordCount == 24 ? Self.swipeRequiredBits24 : Self.swipeRequiredBits12
     }
 
     /// Bits credited to the **user's contribution only**.
     ///
-    /// The CSPRNG prefix is deliberately excluded. Crediting it would let the gate turn green before
-    /// the user has swiped at all, silently turning mixed mode back into system-only — the whole point
-    /// of mixed is that the user's own material clears the bar on its own, so the wallet is safe even
-    /// if the system's contribution is worthless.
-    var estimatedBits: Double {
-        switch inputMethod {
-        case .swipe: return accumulator.estimatedBits()
-        case .typed: return TypedEntropyEstimator.estimatedBits(for: typedInput)
-        }
-    }
+    /// The CSPRNG prefix is deliberately excluded, so the bar shows what the user added rather than
+    /// starting full.
+    var estimatedBits: Double { accumulator.estimatedBits() }
 
-    /// Fills only as far as the gate is actually open.
-    ///
-    /// It used to track bits alone, so it could sit at 100% while Continue stayed disabled — the bit
-    /// target is only one of the conditions, and the structural checks (distinct characters, separate
-    /// strokes, no repetition) can still be failing. A full bar that doesn't let you continue reads as
-    /// a broken app. It now reaches 1.0 only when everything passes, and is held just short otherwise.
+    /// Fills only once every check passes — it used to track bits alone, and sat at 100% while the
+    /// structural checks (distinct characters, separate strokes, no repetition) still read as failing.
     var progress: Double {
-        if canContinue { return 1.0 }
+        if isFull { return 1.0 }
         guard requiredBits > 0 else { return 0 }
         return min(0.95, estimatedBits / requiredBits)
     }
 
-    /// Why the input isn't acceptable yet, or nil when it is.
+    /// Why the swiping hasn't reached a full bar yet, or nil when it has.
     var rejection: EntropyRejection? {
-        switch inputMethod {
-        case .swipe: return accumulator.rejectionReason(requiredBits: requiredBits)
-        case .typed: return TypedEntropyEstimator.rejectionReason(for: typedInput,
-                                                                    requiredBits: requiredBits)
-        }
+        accumulator.rejectionReason(requiredBits: requiredBits)
     }
 
-    /// A restore is exempt from the entropy gate, deliberately and for the same reason importing a
-    /// recovery phrase is: the user is reproducing a wallet that already exists, not creating one. Its
-    /// entropy was gated when it was first made. Requiring the gate again would make it impossible to
-    /// restore the very wallet this feature promises you can restore.
+    /// The swiping has cleared the bit target and every structural check: the bar reads full (green).
+    var isFull: Bool { rejection == nil }
+
+    /// The least swiping that unlocks "Use this entropy": the seed's nominal size by the swipe model
+    /// (128 estimated bits for 12 words, 256 for 24) — a few seconds, about an eighth of the bar.
+    ///
+    /// The CSPRNG prefix already makes the field a full-strength seed, so this isn't what the wallet's
+    /// security rests on. It makes sure the user actually adds something of their own before going on,
+    /// rather than tapping straight through.
+    var minimumBits: Double { nominalBits }
+
+    /// Whether the user has swiped enough to go on. Short of a full bar is fine (2026-10-08).
+    var hasMinimumInput: Bool { estimatedBits >= minimumBits }
+
+    /// Needs a live session (an empty system component — a wiped session that hasn't restarted —
+    /// would leave a field of nothing but swipes) and the minimum swiping.
+    ///
+    /// **An edited field skips both**, deliberately, as importing a recovery phrase does: editing is
+    /// how a saved field is pasted back to reproduce its wallet, which must work as written. It only
+    /// has to be a well-formed field.
     var canContinue: Bool {
-        if isRestoringFromPastedField { return entropyHex != nil }
-        return rejection == nil
-    }
-
-    /// How many more characters are needed at the currently inferred rate. Moves as the user types,
-    /// because the rate itself is inferred from the alphabet they reveal.
-    var typedCharactersRemaining: Int {
-        TypedEntropyEstimator.charactersRemaining(for: typedInput, requiredBits: requiredBits)
-    }
-
-    /// The inferred rate, shown so the estimate isn't a black box.
-    var typedBitsPerCharacter: Double {
-        TypedEntropyEstimator.bitsPerCharacter(for: typedInput)
+        if isEdited { return entropyHex != nil }
+        return !systemHex.isEmpty && entropyHex != nil && hasMinimumInput
     }
 
     // MARK: - Actions
@@ -259,11 +207,20 @@ final class EntropyViewModel {
         accumulator.record(character, startsGesture: startsGesture)
     }
 
+    /// Replace the whole string with what the user wrote in the editor. Swipes so far are folded into
+    /// it (they were part of the text being edited), so later swipes append to the edited string.
+    func applyEdit(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed == field { return }      // unchanged: stay on the generated session
+        accumulator.reset()
+        editedBase = trimmed
+    }
+
     /// Start over. Re-draws the CSPRNG prefix and re-stamps the timestamp — this is a fresh session,
     /// so both frozen components are re-frozen. (Returning from background must NOT do this.)
     func clear() {
         accumulator.reset()
-        typedInput = ""
+        editedBase = nil
         timestampMillis = now()
         refreshSystemComponent()
     }
@@ -286,17 +243,12 @@ final class EntropyViewModel {
     /// second copy to outlive the screen.
     func wipe() {
         accumulator.reset()
-        typedInput = ""
+        editedBase = nil
         systemHex = ""
         timestampMillis = 0
     }
 
     private func refreshSystemComponent() {
-        switch mode {
-        case .mixed:
-            systemHex = EntropyDerivation.hex(Data(SHA256.hash(data: randomBytes(32))))
-        case .userOnly:
-            systemHex = ""
-        }
+        systemHex = EntropyDerivation.hex(Data(SHA256.hash(data: randomBytes(32))))
     }
 }

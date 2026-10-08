@@ -58,6 +58,19 @@ struct EntropySeedPreviewScreen: View {
                             .font(.jbMono(11, .regular))
                             .foregroundStyle(Theme.Colors.accent)
                             .frame(maxWidth: .infinity, alignment: .leading)
+                        // The recipe, moved here from the removed options screen. Quoting-proof: the
+                        // alphabet contains `'`, `"`, `$` and backslash, so `printf '%s' '…'` breaks.
+                        Text(verbatim: "printf '%s' \"$(cat entropy.txt)\" | shasum -a 256")
+                            .font(.jbMono(11, .regular))
+                            .foregroundStyle(Theme.Colors.text2)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        // The input to check, copyable right here next to the recipe that checks it.
+                        Button { Clipboard.copy(field) } label: {
+                            Text("Copy input", bundle: .module, comment: "copy the entropy field for auditing")
+                                .textStyle(.xs)
+                        }
+                        .tint(Theme.Colors.accent)
+                        .padding(.top, Theme.Space.x1)
                     }
                     .padding(Theme.Space.x2)
                     .background(Theme.Colors.bg1)

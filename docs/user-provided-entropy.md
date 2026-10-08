@@ -415,6 +415,16 @@ we should keep it.
 
 ## 7. UI and flow
 
+> **Revised 2026-10-08 (product decision):** the options screen is gone. **New wallet → Continue goes
+> straight to the swipe grid**; the field is **always mixed** (no "Only mine") and input is **always
+> swipe** (the typed/pasted path, and with it "paste a copied field back to restore", are removed —
+> the recovery phrase is the backup). The input box shows **the whole field** — opening prefilled with
+> `v1&<words>&<device hex>&<timestamp>&` — and swipes are appended. **Only a short minimum:** "Use this entropy" unlocks after
+> `nominalBits` of estimated swiping (128/256 — a few seconds), not a full bar, because the CSPRNG prefix alone is a full-strength 128/256-bit seed; the bar is guidance only
+> (it still measures the user's swiping alone and turns green at the old target). The `shasum` recipe
+> moved to the seed-preview screen. Field format and derivation (§3–§4) are unchanged, so existing
+> audits still work. The original design below is kept for history.
+
 Entry: **Create wallet → Advanced → "Provide your own entropy"**. Off by default; the CSPRNG path is
 untouched for everyone else.
 

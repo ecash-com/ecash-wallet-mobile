@@ -24,6 +24,9 @@ struct CreateConfirmView: View {
     // Defaults to whichever eCash chain is current (`currentEcash`) — never auto-mainnet
     // (Golden Rule §6). One constant so a chain move is a single edit.
     @State var network: WalletNetwork = .currentEcash
+    /// The entropy session being shown, if any. Created by Continue — that tap is what draws the
+    /// device randomness and timestamp — and cleared on the way back, so every Continue is fresh.
+    @State var entropySession: EntropySession?
 
     init(viewModel: CreateViewModel, defaultName: String) {
         self.defaultName = defaultName
@@ -62,16 +65,14 @@ struct CreateConfirmView: View {
 
                 Spacer()
 
-                // Always the entropy flow. There is no opt-out: mixed mode is never weaker than
-                // taking the bits from the device alone — the CSPRNG still contributes its full
-                // 128/256 — so the only cost is a few seconds, and offering the choice mostly
-                // invited people to skip something with no downside.
-                NavigationLink {
-                    EntropyOptionsScreen(wordCount: app.newWalletWordCount) { field, _ in
-                        vm.entropyField = field
-                        vm.submit(label: defaultName, network: network,
-                                  wordCount: app.newWalletWordCount)
-                    }
+                // Straight to the swipe grid — always mixed with the device's randomness, which alone
+                // is a full-strength seed, so the swiping only adds and can stop at any point.
+                // A Button + `navigationDestination(item:)`, not a NavigationLink: the session (and its
+                // randomness) must be drawn on THIS tap, so going back and pressing Continue again
+                // gives different randomness. A NavigationLink can build its destination early and keep
+                // its state across pushes.
+                Button {
+                    entropySession = EntropySession(wordCount: app.newWalletWordCount)
                 } label: {
                     Text("Continue", bundle: .module, comment: "continue to entropy")
                         .textStyle(.button)
@@ -88,6 +89,15 @@ struct CreateConfirmView: View {
             .padding(Theme.Space.gutter)
         }
         .navigationTitle(Text("New wallet", bundle: .module, comment: "create wallet screen title"))
+        .navigationDestination(item: $entropySession) { session in
+            // The word count comes from the entropy screen, not Settings: an edited (pasted) string
+            // carries its own, and deriving it at the Settings value would refuse it.
+            EntropyInputScreen(model: session.model) { field, wordCount in
+                vm.entropyField = field
+                vm.submit(label: defaultName, network: network, wordCount: wordCount)
+            }
+            .id(session.id)
+        }
     }
 
     /// Address type, derivation and the paranoid-mode switch — **always visible**, not behind a

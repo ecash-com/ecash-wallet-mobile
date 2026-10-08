@@ -572,6 +572,12 @@ import WalletService
             id: "mainnet", displayName: "Mainnet", explorerURL: "https://explorer.ecash.ninja", releasesChannel: "mainnet"))
     }
 
+    @Test func theDashboardNetworkMapsToItsWalletNetwork() {
+        #expect(DashboardNetwork.betanet.walletNetwork == .ecashBeta)
+        let mainnet = DashboardNetwork(id: "mainnet", displayName: "Mainnet", explorerURL: "https://e.example", releasesChannel: "mainnet")
+        #expect(mainnet.walletNetwork == nil)   // no wallets for it yet → Coin News hidden
+    }
+
     @Test func nameAndChannelDefaultToTheId() {
         let network = Self.config(dashboard: #"{"network_id":"mainnet","explorer_url":"https://e.example"}"#)?.resolvedDashboardNetwork()
         #expect(network?.displayName == "mainnet")

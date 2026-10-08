@@ -283,9 +283,11 @@ Ecosystem / Development tabs, and any buy/swap/trade entry point (§3.6).
 
 - **TPS = tx·24h ÷ 86,400**, not ÷ the window's span (§4.1). That's the reference dashboard's
   definition (97,726 → 1.131), so the two agree.
-- **CoinNews follows the selected wallet's network**, not the dashboard's (O1). Reading and posting are
-  per-network and need a wallet on that network; `NewsScreen` already binds to it. On betanet it shows
-  the "isn't live yet" copy until an indexer is in the config.
+- **CoinNews shows only while the selected wallet is on the dashboard's network** (O1) — betanet now,
+  mainnet after the flip (`DashboardNetwork.walletNetwork`, same id allow-list as backend routing). From
+  a Bitcoin, Signet, alphanet or Thunder wallet the section is hidden entirely. Reading and posting are
+  per-network and need a wallet on that network; `NewsScreen` binds to the selected wallet. On betanet
+  it shows the "isn't live yet" copy until an indexer is in the config.
 - **RSS is parsed by hand** (`RSSFeedParser`), not `XMLParser` — S1 was settled by not depending on
   `FoundationXML` on Android at all.
 - **The embedded web news screen and the SkipWeb dependency are gone** (news is native now).

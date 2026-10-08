@@ -79,9 +79,9 @@ import Testing
     }
 
     @Test func aMissingPoolLabelIsNil() throws {
-        let json = #"[{"id":"a","height":1,"timestamp":1,"tx_count":2,"size":3,"extras":{"pool":{"name":"  "}}},{"id":"b","height":0,"timestamp":1,"tx_count":2,"size":3}]"#
+        let json = #"[{"id":"a","height":1,"timestamp":1,"tx_count":2,"size":3,"extras":{"pool":{"name":"  "}}},{"id":"b","height":0,"timestamp":1,"tx_count":2,"size":3},{"id":"c","height":2,"timestamp":1,"tx_count":2,"size":3,"extras":{"pool":{"name":"Unknown"}}}]"#
         let rows = try JSONDecoder().decode([ExplorerBlock].self, from: Data(json.utf8)).map(\.dashboardBlock)
-        #expect(rows.map(\.miner) == [nil, nil])
+        #expect(rows.map(\.miner) == [nil, nil, nil])
     }
 
     @Test func aBadTipFailsTheSection() async {

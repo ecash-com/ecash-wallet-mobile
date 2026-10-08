@@ -70,9 +70,11 @@ struct ExplorerBlock: Decodable {
     }
 
     var dashboardBlock: DashboardBlock {
-        let pool = extras?.pool?.name?.trimmingCharacters(in: .whitespaces)
+        // The explorer writes a literal "Unknown" for an unidentified pool — that's no label, not a name.
+        var pool = extras?.pool?.name?.trimmingCharacters(in: .whitespaces)
+        if let name = pool, name.isEmpty || name.lowercased() == "unknown" { pool = nil }
         return DashboardBlock(hash: id, height: height, timestamp: timestamp, txCount: txCount, sizeBytes: size,
-                              miner: (pool?.isEmpty ?? true) ? nil : pool)
+                              miner: pool)
     }
 }
 
