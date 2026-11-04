@@ -48,8 +48,9 @@ the hours before the fork still lands on mainnet. The Dashboard moved to mainnet
 index URL, and the config carries nothing about Thunder — §1 table); a fiat price provider for real
 ECX (`PriceProviderRegistry`, product choice); sidechain deposits on real money stay behind the
 on-chain proof (§2); migration nudge "open this betanet wallet on eCash" (§4); alphanet is DONE —
-retired from `selectable` 2026-10-26 (case kept for existing wallets; `ecash:` payment links now route to
-mainnet + betanet, never alphanet).
+retired from `selectable` 2026-10-26, and **betanet + Thunder betanet followed 2026-10-30** (cases
+kept for existing wallets, which still load/sync/send; no new creation, import, or copy-to-network;
+Settings → Network keeps a retired chain's endpoint row while a wallet is still on it).
 
 ---
 
@@ -171,8 +172,8 @@ What already carries over, and what doesn't:
    top-level `"dashboard": {"network_id": "<mainnet id>", "display_name": "Mainnet", "explorer_url":
    "<mainnet explorer, mempool-style /api>", "releases_channel": "<releases.ecash.com channel>"}`
    (`docs/dashboard-plan.md` §4.6). No release needed; until it's set the Dashboard stays on betanet.
-4. **After:** migration nudges (§4), retire test forks from `selectable`, enable sidechain deposits
-   on the real fork only after the on-chain proof.
+4. **After:** migration nudges (§4), ~~retire test forks from `selectable`~~ (DONE 2026-10-30), enable
+   sidechain deposits on the real fork only after the on-chain proof.
 
 ## 6. Questions for L2L
 

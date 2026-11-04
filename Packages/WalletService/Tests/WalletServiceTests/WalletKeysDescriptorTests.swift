@@ -115,16 +115,16 @@ final class WalletKeysDescriptorTests: XCTestCase {
     }
 
     /// End to end through the real factory: the copy passes the descriptor check and derives the same
-    /// first address (the well-known BIP84 vector) on betanet as on alphanet.
+    /// first address (the well-known BIP84 vector) on eCash mainnet as on alphanet.
     func testCopyWalletWithRealBDKKeepsTheSameAddresses() throws {
         let f = makeFactory()
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: f)
         let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.abandon)
 
-        let beta = try manager.copyWallet(id: alpha.id, to: .ecashBeta, label: "A")
+        let copy = try manager.copyWallet(id: alpha.id, to: .ecashMainnet, label: "A")
 
-        XCTAssertEqual(beta.externalDescriptor, alpha.externalDescriptor)
-        XCTAssertEqual(try f.previewAddress(forSeed: Self.abandon, scriptType: beta.scriptType, network: .ecashBeta),
+        XCTAssertEqual(copy.externalDescriptor, alpha.externalDescriptor)
+        XCTAssertEqual(try f.previewAddress(forSeed: Self.abandon, scriptType: copy.scriptType, network: .ecashMainnet),
                        "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
     }
 }

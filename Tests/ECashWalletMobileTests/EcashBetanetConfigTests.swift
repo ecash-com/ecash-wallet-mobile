@@ -108,11 +108,12 @@ import WalletService
         #expect(WalletNetwork(rawValue: "ecash") == .ecash)
     }
 
-    /// Alphanet was retired 2026-10-26: not creatable, but its case (and rawValue) survive so
-    /// existing alphanet wallets still load.
-    @Test func betanetIsOfferedInThePickerAndAlphanetIsNot() {
-        #expect(WalletNetwork.selectable.contains(.ecashBeta))
+    /// Alphanet was retired 2026-10-26 and betanet 2026-10-30: neither is creatable, but both cases
+    /// (and rawValues) survive so existing wallets on them still load.
+    @Test func betanetAndAlphanetAreRetiredFromThePickerButKeepTheirCases() {
+        #expect(!WalletNetwork.selectable.contains(.ecashBeta))
         #expect(!WalletNetwork.selectable.contains(.ecash))
+        #expect(WalletNetwork.allCases.contains(.ecashBeta))
         #expect(WalletNetwork.allCases.contains(.ecash))
     }
 

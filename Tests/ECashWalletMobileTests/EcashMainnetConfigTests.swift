@@ -99,10 +99,10 @@ import WalletService
         Self.reset()
         EcashMainnetLaunch.resetForTesting(offered: true)
         #expect(WalletNetwork.currentEcash == .ecashMainnet)
-        #expect(WalletNetwork.selectable.prefix(3) == [.ecashMainnet, .ecashBeta, .bitcoin])
+        #expect(WalletNetwork.selectable.prefix(2) == [.ecashMainnet, .bitcoin])
         EcashMainnetLaunch.recordObservedTip(height: EcashMainnetLaunch.forkHeight)
         #expect(WalletNetwork.currentEcash == .ecashMainnet)
-        #expect(WalletNetwork.selectable.prefix(3) == [.ecashMainnet, .ecashBeta, .bitcoin])
+        #expect(WalletNetwork.selectable.prefix(2) == [.ecashMainnet, .bitcoin])
         Self.reset()
     }
 

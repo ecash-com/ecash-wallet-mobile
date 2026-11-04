@@ -6,17 +6,21 @@ import SwiftUI
 import WalletService
 
 /// Settings → Network: a registry-driven list of every network's custom backend endpoint. Each row
-/// pushes a self-contained editor that applies with its own checkmark. The list is driven by
-/// `WalletNetwork.allCases`, so a new network (eCash / forknet) shows up here automatically once it's
-/// in the registry — no new screen. Bitcoin mainnet is a first-class bundled network (creatable from
+/// pushes a self-contained editor that applies with its own checkmark. The list is the creatable
+/// networks (`WalletNetwork.selectable`) plus any network an existing wallet is on, so a retired
+/// chain (betanet, Thunder betanet, alphanet) keeps an editable endpoint for the wallets still on it
+/// and disappears once the last one is removed — no new screen per network. Bitcoin mainnet is a first-class bundled network (creatable from
 /// the wallet flows). The SOCKS5/Tor proxy row is hidden for now (see the commented Privacy section
 /// below + `docs/backends-and-endpoints.md`). See `docs/backends-and-endpoints.md`.
 struct NetworkSettingsScreen: View {
     @Environment(AppState.self) var app
 
-    /// Registry-driven — every bundled network, in declaration order. Future eCash cases appear here
-    /// automatically once added to the enum + registry.
-    private var networks: [WalletNetwork] { WalletNetwork.selectable }
+    /// Creatable networks plus those an existing wallet is on, in enum declaration order.
+    private var networks: [WalletNetwork] {
+        let held = Set(app.wallets.map { $0.network })
+        let offered = Set(WalletNetwork.selectable)
+        return WalletNetwork.allCases.filter { offered.contains($0) || held.contains($0) }
+    }
 
     var body: some View {
         List {

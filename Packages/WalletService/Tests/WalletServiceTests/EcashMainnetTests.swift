@@ -80,22 +80,25 @@ final class EcashMainnetTests: XCTestCase {
         XCTAssertEqual(Drivechain.opcode(for: WalletNetwork.ecashMainnet), UInt8(0xb7))
     }
 
-    /// Alphanet (`.ecash`) was retired 2026-10-26: never offered, but its persisted rawValue must
-    /// keep decoding so existing alphanet wallets load.
-    func testAlphanetIsRetiredButStillDecodes() {
-        XCTAssertFalse(WalletNetwork.selectable.contains(WalletNetwork.ecash))
-        XCTAssertEqual(WalletNetwork(rawValue: "ecash"), WalletNetwork.ecash)
+    /// Alphanet (`.ecash`) was retired 2026-10-26, betanet (`.ecashBeta`) and Thunder betanet
+    /// (`.thunder`) 2026-10-30: none is offered, but each persisted rawValue must keep decoding so
+    /// existing wallets on those chains load.
+    func testRetiredNetworksAreNotOfferedButStillDecode() {
+        for retired in [WalletNetwork.ecash, WalletNetwork.ecashBeta, WalletNetwork.thunder] {
+            XCTAssertFalse(WalletNetwork.selectable.contains(retired), "\(retired) must not be creatable")
+            XCTAssertEqual(WalletNetwork(rawValue: retired.rawValue), retired)
+            XCTAssertTrue(WalletNetwork.allCases.contains(retired))
+        }
         XCTAssertNotEqual(WalletNetwork.ecash, WalletNetwork.ecashMainnet)
     }
 
     // MARK: - Launch gates
 
-    /// Picker order (Jake, 2026-10-29): the real fork first, then betanet, then Bitcoin, then the
-    /// dev networks. The default is `currentEcash` (also the real fork). The order is the same with
-    /// and without a fetched config.
+    /// Picker order (Jake, 2026-10-29): the real fork first, then Bitcoin, then L2L Signet. The
+    /// default is `currentEcash` (also the real fork). The order is the same with and without a
+    /// fetched config. Betanet and Thunder betanet were retired from the picker 2026-10-30.
     func testPickerOrderPutsTheRealForkFirst() {
-        let expected = [WalletNetwork.ecashMainnet, WalletNetwork.ecashBeta, WalletNetwork.bitcoin,
-                        WalletNetwork.signet, WalletNetwork.thunder]
+        let expected = [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin, WalletNetwork.signet]
         XCTAssertEqual(WalletNetwork.selectable, expected)
         EcashMainnetLaunch.resetForTesting(offered: true)
         XCTAssertEqual(WalletNetwork.selectable, expected)
@@ -120,7 +123,7 @@ final class EcashMainnetTests: XCTestCase {
         EcashMainnetLaunch.resetForTesting(offered: true)
         XCTAssertTrue(EcashMainnetLaunch.isOffered)
         XCTAssertTrue(WalletNetwork.selectable.contains(WalletNetwork.ecashMainnet))
-        XCTAssertTrue(WalletNetwork.selectable.contains(WalletNetwork.ecashBeta), "betanet stays")
+        XCTAssertFalse(WalletNetwork.selectable.contains(WalletNetwork.ecashBeta), "betanet retired 2026-10-30")
         XCTAssertFalse(EcashMainnetLaunch.isDefault)
         XCTAssertEqual(WalletNetwork.currentEcash, WalletNetwork.ecashMainnet)
     }

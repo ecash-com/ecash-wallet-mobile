@@ -155,34 +155,30 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     case thunder
 
     /// Networks offered in the create/import picker (`NetworkSelector`) — distinct from `allCases`
-    /// (which the backend/registry loops still walk for every case). **To hide Thunder as a creatable
-    /// option** (e.g. until its RPC ships), comment out the `.thunder` line below: the case still
-    /// exists so existing Thunder wallets keep resolving; users just can't create new ones.
+    /// (which the backend/registry loops still walk for every case). Also the copy-to-network
+    /// targets (`WalletManager.copyTargets`). Settings → Network lists these PLUS any network an
+    /// existing wallet is on, so a retired chain's endpoint stays editable for the wallets that
+    /// remain on it.
+    ///
+    /// **Retiring a network = remove it from this list, keep the case.** The rawValue is persisted in
+    /// existing wallets, which keep loading, syncing and sending; nobody can create a new one.
+    /// Retired so far: alphanet (`.ecash`, 2026-10-26), **betanet (`.ecashBeta`) and Thunder
+    /// betanet (`.thunder`) (2026-10-30, Jake)** — with the real fork live, the test generations
+    /// are no longer offered for new wallets or imports.
     ///
     /// **eCash mainnet is listed FIRST when `EcashMainnetLaunch.isOffered`** — compiled on since 1.4.6 build 44;
     /// before that only once the remote config had published it (and a launch whose first fetch
     /// failed showed no mainnet until a later resume — the Android 1.4.6 report).
     public static var selectable: [WalletNetwork] {
-        // Order is the picker order (Jake, 2026-10-29): the real eCash fork first, then betanet,
-        // then Bitcoin, then the dev networks. The DEFAULT selection is a separate rule
-        // (`currentEcash`), which also points at the real fork.
-        //
-        // Alphanet (`.ecash`) was retired 2026-10-26: gone from the remote config, so it is gone
-        // from here. The case stays because its rawValue is persisted in existing wallets, which
-        // keep loading (and can be removed or copied to betanet/mainnet); nobody can create one.
-        // 2026-10-29 (Jake): the real fork goes FIRST, ahead of betanet — it is now the default too.
+        // Order is the picker order: the real eCash fork first (also the default — `currentEcash`),
+        // then Bitcoin, then L2L Signet. Betanet and Thunder betanet left here 2026-10-30; to bring
+        // a Thunder mainnet back, append `.thunder` once `NetworkRegistry` points it at mainnet.
         var out: [WalletNetwork] = []
         if EcashMainnetLaunch.isOffered {
             out.append(.ecashMainnet)
         }
-        out.append(.ecashBeta)
         out.append(.bitcoin)
         out.append(.signet)
-        // Thunder: re-enabled 2026-09-29. It was hidden while the drivechain-esplora index held no
-        // blocks (2026-09-01), which would have shown a zero balance for real ECX. The betanet index
-        // is now walking (tip 859, advancing), and the app can deposit to Thunder. To hide it again,
-        // comment this line out: existing Thunder wallets keep resolving either way.
-        out.append(.thunder)
         return out
     }
 
