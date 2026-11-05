@@ -457,10 +457,18 @@ and nothing user-visible changes until step 5.
    a no-op) and a store written for a different seed (refused by BDK's load, left in place).
    Remove-wallet now purges `orphanKeychainIds` (never a live wallet's id). Still to do on a real
    device: the §9 manual upgrade matrix, before 1.5.0.
-4. **Manager.** `createWallet` / `importWallet` / `importPrivateKey` lose `network:` and derive all
-   mainchain accounts; `switchAccount`, `availableNetworks`; engine cache keyed by `storeName`;
-   `WalletEngine.signPsbt` rebuilt from the **account** (I7); delete `copyTargets` / `copyWallet` /
-   `existingCopy` and their tests.
+4. ✅ **Manager** (DONE 2026-11-05). `createWallet` / `importWallet` / `importPrivateKey` take no
+   network: while the secret is in memory they derive an account on every offered mainchain the key
+   type can live on (`mainchainsForNewWallets`: eCash mainnet, Bitcoin, L2L Signet; a WIF key only
+   the coin-type-0' pair), stores named by the new scheme. `selectedNetwork:` (default
+   `.currentEcash`; the claim passes its claim chain) only picks which account the wallet opens on.
+   `switchAccount` is the one place `selectedAccountId` changes; `enableNetwork` switches or
+   derives-then-switches (the app gates the deriving case behind `DeviceAuth` via `hasAccount`);
+   `availableMainchains` / `availableSidechains` feed the nested switcher. The engine cache is
+   keyed by the account's store, the BDK persister opens `selectedAccount.storeName`, and the sign
+   closure already derives from the selected account's script type and network (I7). The three
+   copy-to-network methods are kept as **shims over `enableNetwork`** so the old sheet keeps
+   working on the branch; step 5 deletes them with the sheet.
 5. **App.** `AppState` per account; `NetworkSwitcherSheet` (nested, §3.1) opened from the Home chip;
    **delete `CreateConfirmView`** — create pushes `EntropyInputScreen` directly (§4) — and remove
    `NetworkSelector` from import outside Advanced; delete `CopyWalletSheet`; keep claim mode and

@@ -359,8 +359,8 @@ final class AppState {
     @discardableResult
     func createWallet(label: String, network: WalletNetwork, wordCount: Int = 12,
                       scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let wallet = try manager.createWallet(label: label, network: network, wordCount: wordCount,
-                                              scriptType: scriptType)
+        let wallet = try manager.createWallet(label: label, wordCount: wordCount,
+                                              scriptType: scriptType, selectedNetwork: network)
         resetPerWalletState()   // the new wallet is auto-selected; don't show the old one's numbers
         refresh()
         // A fresh wallet has no history, but sync anyway: it settles the balance as a known 0
@@ -375,9 +375,9 @@ final class AppState {
     @discardableResult
     func createWallet(label: String, network: WalletNetwork, entropyField: String,
                       wordCount: Int = 12, scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let wallet = try manager.createWallet(label: label, network: network,
+        let wallet = try manager.createWallet(label: label,
                                               entropyField: entropyField, wordCount: wordCount,
-                                              scriptType: scriptType)
+                                              scriptType: scriptType, selectedNetwork: network)
         resetPerWalletState()
         refresh()
         Task { await sync() }
@@ -396,8 +396,8 @@ final class AppState {
     @discardableResult
     func importWallet(label: String, network: WalletNetwork, mnemonic: String,
                       scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let wallet = try manager.importWallet(label: label, network: network, mnemonic: mnemonic,
-                                              scriptType: scriptType)
+        let wallet = try manager.importWallet(label: label, mnemonic: mnemonic,
+                                              scriptType: scriptType, selectedNetwork: network)
         scheduleInitialSplitCheck(for: wallet)
         resetPerWalletState()   // the imported wallet is auto-selected
         refresh()
@@ -411,7 +411,7 @@ final class AppState {
     /// `WalletError.invalidPrivateKey` on a bad key — never echoes the input (`docs/wif-import-and-sweep.md`).
     @discardableResult
     func importPrivateKey(label: String, network: WalletNetwork, wif: String) throws -> ManagedWallet {
-        let wallet = try manager.importPrivateKey(label: label, network: network, wif: wif)
+        let wallet = try manager.importPrivateKey(label: label, wif: wif, selectedNetwork: network)
         scheduleInitialSplitCheck(for: wallet)
         resetPerWalletState()   // the imported wallet is auto-selected
         refresh()

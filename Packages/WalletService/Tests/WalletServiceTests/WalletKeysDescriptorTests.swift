@@ -114,18 +114,25 @@ final class WalletKeysDescriptorTests: XCTestCase {
                           try f.restore(network: .ecash, mnemonic: Self.abandon, scriptType: .bip84).externalDescriptor)
     }
 
-    /// End to end through the real factory: the copy passes the descriptor check and derives the same
-    /// first address (the well-known BIP84 vector) on eCash mainnet as on alphanet.
-    func testCopyWalletWithRealBDKKeepsTheSameAddresses() throws {
+    /// End to end through the real factory: one import derives the eCash-mainnet and Bitcoin accounts
+    /// with IDENTICAL descriptors (coin-type 0') and a different Signet one (1'), and the eCash
+    /// account's first address is the well-known BIP84 vector.
+    func testImportDerivesTheSameKeysOnEcashAndBitcoinAndDifferentOnesOnSignet() throws {
         let f = makeFactory()
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: f)
-        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.abandon)
+        let wallet = try manager.importWallet(label: "A", mnemonic: Self.abandon)
 
-        let copy = try manager.copyWallet(id: alpha.id, to: .ecashMainnet, label: "A")
-
-        XCTAssertEqual(copy.externalDescriptor, alpha.externalDescriptor)
-        XCTAssertEqual(try f.previewAddress(forSeed: Self.abandon, scriptType: copy.scriptType, network: .ecashMainnet),
+        let ecash = try XCTUnwrap(wallet.account(id: "ecashMainnet-bip84-0"))
+        let bitcoin = try XCTUnwrap(wallet.account(id: "bitcoin-bip84-0"))
+        let signet = try XCTUnwrap(wallet.account(id: "signet-bip84-0"))
+        XCTAssertEqual(ecash.externalDescriptor, bitcoin.externalDescriptor)
+        XCTAssertNotEqual(ecash.externalDescriptor, signet.externalDescriptor)
+        XCTAssertEqual(ecash.masterFingerprint, signet.masterFingerprint)          // one seed
+        XCTAssertEqual(ecash.derivationPath(isChange: false, index: Int32(0)), "m/84'/0'/0'/0/0")
+        XCTAssertEqual(signet.derivationPath(isChange: false, index: Int32(0)), "m/84'/1'/0'/0/0")
+        XCTAssertEqual(try f.previewAddress(forSeed: Self.abandon, scriptType: ecash.scriptType, network: .ecashMainnet),
                        "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
+        XCTAssertFalse(ecash.externalDescriptor.lowercased().contains("xprv"))
     }
 }
 #endif

@@ -136,7 +136,8 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         let net = BDKSeam.network(wallet.network)
         let backend = WalletBackend(kindRaw: backendKind, url: backendURL, socks5: backendProxy)
         do {
-            let persister = try makePersister(for: wallet.id, network: wallet.network)
+            let persister = try makePersister(for: wallet.id, network: wallet.selectedAccount.network,
+                                              storeName: wallet.selectedAccount.storeName)
             // `var` (not deferred `let`): assigned in every branch below — a deferred `let`
             // transpiles to a reassigned Kotlin `val`, which Kotlin rejects.
             var bdkWallet: Wallet
@@ -336,15 +337,22 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
     /// One-time migration: wallets created before the layout change have an un-namespaced
     /// `<walletId>.sqlite`. Since each was pinned to one network, move it (and its `-wal`/`-shm`) to
     /// the network-scoped path so existing chain data survives instead of forcing a full rescan.
-    private func makePersister(for walletId: String, network: WalletNetwork) throws -> Persister {
+    ///
+    /// Since the seed-container model the file name comes from the ACCOUNT (`WalletAccount.storeName`,
+    /// explicit — invariant I5): a migrated record keeps `<walletId>-<network>.sqlite`, a new account
+    /// gets `<walletId>-<network>-<scriptType>-<acct>.sqlite`. The un-namespaced migration below only
+    /// applies to a record still on the legacy name.
+    private func makePersister(for walletId: String, network: WalletNetwork, storeName: String) throws -> Persister {
         let fm = FileManager.default
         try fm.createDirectory(at: chainDataDirectory, withIntermediateDirectories: true)
-        let scoped = chainDataDirectory.appendingPathComponent("\(walletId)-\(network.rawValue).sqlite")
+        let scoped = chainDataDirectory.appendingPathComponent(storeName)
         let legacy = chainDataDirectory.appendingPathComponent("\(walletId).sqlite")
-        if !fm.fileExists(atPath: scoped.path) && fm.fileExists(atPath: legacy.path) {
+        // Exact match, not a dash count — wallet ids are UUIDs.
+        let isLegacyScopedName = storeName == WalletAccount.legacyStoreName(walletId: walletId, network: network)
+        if isLegacyScopedName && !fm.fileExists(atPath: scoped.path) && fm.fileExists(atPath: legacy.path) {
             for suffix in ["", "-wal", "-shm"] {
                 let from = chainDataDirectory.appendingPathComponent("\(walletId).sqlite\(suffix)")
-                let to = chainDataDirectory.appendingPathComponent("\(walletId)-\(network.rawValue).sqlite\(suffix)")
+                let to = chainDataDirectory.appendingPathComponent("\(storeName)\(suffix)")
                 if fm.fileExists(atPath: from.path) {
                     try? fm.moveItem(at: from, to: to)
                 }

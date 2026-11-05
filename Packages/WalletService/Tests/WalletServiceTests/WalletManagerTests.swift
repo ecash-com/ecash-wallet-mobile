@@ -14,7 +14,7 @@ final class WalletManagerTests: XCTestCase {
         let ws = InMemoryWalletStore()
         let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
 
-        let wallet = try manager.createWallet(label: "Savings", network: .signet)
+        let wallet = try manager.createWallet(label: "Savings", selectedNetwork: .signet)
 
         XCTAssertEqual(manager.wallets.count, 1)
         XCTAssertEqual(manager.selectedWalletId, wallet.id)
@@ -29,7 +29,7 @@ final class WalletManagerTests: XCTestCase {
         let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
         let mnemonic = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
-        let wallet = try manager.importWallet(label: "Imported", network: .signet, mnemonic: mnemonic)
+        let wallet = try manager.importWallet(label: "Imported", mnemonic: mnemonic, selectedNetwork: .signet)
 
         XCTAssertEqual(try ks.loadMnemonic(walletId: wallet.id), mnemonic)
         XCTAssertEqual(manager.wallets.count, 1)
@@ -45,7 +45,7 @@ final class WalletManagerTests: XCTestCase {
         let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: factory)
 
         var threw = false
-        do { _ = try manager.importWallet(label: "X", network: .signet, mnemonic: "bad checksum") }
+        do { _ = try manager.importWallet(label: "X", mnemonic: "bad checksum") }
         catch { threw = true }
 
         XCTAssertTrue(threw)
@@ -60,11 +60,11 @@ final class WalletManagerTests: XCTestCase {
         let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
         let wif = "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj"
 
-        let wallet = try manager.importPrivateKey(label: "Claimed", network: .ecash, wif: wif)
+        let wallet = try manager.importPrivateKey(label: "Claimed", wif: wif, selectedNetwork: .ecashMainnet)
 
         XCTAssertEqual(wallet.keyType, WalletKeyType.wif)      // single-key wallet
         XCTAssertTrue(wallet.isBackedUp)                        // user holds the WIF → no nudge
-        XCTAssertEqual(wallet.network, WalletNetwork.ecash)
+        XCTAssertEqual(wallet.network, WalletNetwork.ecashMainnet)   // the claim chain it opened on
         XCTAssertEqual(try ks.loadMnemonic(walletId: wallet.id), wif)  // the WIF is the stored secret
         XCTAssertEqual(manager.selectedWalletId, wallet.id)
         XCTAssertEqual(try ws.allWallets().count, 1)
@@ -79,7 +79,7 @@ final class WalletManagerTests: XCTestCase {
         let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: factory)
 
         var threw = false
-        do { _ = try manager.importPrivateKey(label: "X", network: .ecash, wif: "not-a-wif") }
+        do { _ = try manager.importPrivateKey(label: "X", wif: "not-a-wif") }
         catch { threw = true }
 
         XCTAssertTrue(threw)
@@ -100,8 +100,8 @@ final class WalletManagerTests: XCTestCase {
         let ws = InMemoryWalletStore()
         let factory = MockWalletEngineFactory()
         let manager = WalletManager(keyStore: ks, walletStore: ws, factory: factory)
-        let a = try manager.createWallet(label: "A", network: .signet)
-        let b = try manager.createWallet(label: "B", network: .signet)
+        let a = try manager.createWallet(label: "A", selectedNetwork: .signet)
+        let b = try manager.createWallet(label: "B", selectedNetwork: .signet)
         manager.select(id: a.id)
 
         try manager.removeWallet(id: a.id)
@@ -118,14 +118,14 @@ final class WalletManagerTests: XCTestCase {
 
     func testRename() throws {
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let wallet = try manager.createWallet(label: "Old", network: .signet)
+        let wallet = try manager.createWallet(label: "Old", selectedNetwork: .signet)
         try manager.renameWallet(id: wallet.id, to: "New")
         XCTAssertEqual(manager.wallets.first?.label, "New")
     }
 
     func testSetBackedUp() throws {
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let wallet = try manager.createWallet(label: "A", network: .signet)
+        let wallet = try manager.createWallet(label: "A", selectedNetwork: .signet)
         XCTAssertFalse(manager.wallets.first?.isBackedUp ?? true)
         try manager.setBackedUp(id: wallet.id)
         XCTAssertTrue(manager.wallets.first?.isBackedUp ?? false)
@@ -135,8 +135,8 @@ final class WalletManagerTests: XCTestCase {
         let ks = InMemoryKeyStore()
         let ws = InMemoryWalletStore()
         let first = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
-        _ = try first.createWallet(label: "A", network: .signet)
-        _ = try first.createWallet(label: "B", network: .signet)
+        _ = try first.createWallet(label: "A", selectedNetwork: .signet)
+        _ = try first.createWallet(label: "B", selectedNetwork: .signet)
 
         // A fresh manager over the same stores loads what was persisted.
         let reloaded = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
@@ -147,7 +147,7 @@ final class WalletManagerTests: XCTestCase {
 
     func testEngineForWalletMatchesNetwork() throws {
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let wallet = try manager.createWallet(label: "A", network: .signet)
+        let wallet = try manager.createWallet(label: "A", selectedNetwork: .signet)
         let engine = try manager.engine(for: wallet)
         // `WalletNetwork.signet` written out: `engine` is a `WalletEngineProtocol` existential, so
         // inside the generic `XCTAssertEqual` the transpiler can't infer the shorthand's owning type
@@ -249,149 +249,161 @@ final class WalletManagerTests: XCTestCase {
         XCTAssertEqual(resolved.url, "https://esplora.alpha.ecash.ninja")
     }
 
-    // MARK: - Copy to another network (docs/copy-wallet-to-network.md)
+    // MARK: - Accounts (docs/seed-container-model.md §3–4): one seed, every mainchain, switchable
 
     private static let phrase = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
 
     /// Runs `body` and returns the `WalletError` it threw, or nil. SkipUnit has no XCTAssertThrowsError.
-    private func copyError(_ body: () throws -> Void) -> WalletError? {
+    private func thrown(_ body: () throws -> Void) -> WalletError? {
         do { try body(); return nil }
         catch let error as WalletError { return error }
         catch { return .engine("unexpected") }
     }
 
-    func testCopyTargetsAreTheSharedKeyNetworksOnly() throws {
+    func testCreateDerivesAnAccountOnEveryMainchainAndOpensOnEcash() throws {
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.phrase)
-        let signet = try manager.importWallet(label: "S", network: .signet, mnemonic: Self.phrase)
-
-        // Offered targets only (`selectable`): betanet shares the keys but was retired 2026-10-30.
-        XCTAssertEqual(manager.copyTargets(for: alpha.id), [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin])
-        // Signet is coin-type 1': a "copy" would have different addresses, so nothing is offered.
-        XCTAssertTrue(manager.copyTargets(for: signet.id).isEmpty)
-        XCTAssertTrue(manager.copyTargets(for: "missing").isEmpty)
+        let wallet = try manager.createWallet(label: "New")
+        XCTAssertEqual(wallet.accounts.map { $0.network }, WalletManager.mainchainsForNewWallets)
+        XCTAssertEqual(wallet.accounts.map { $0.network }, [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin, WalletNetwork.signet])
+        XCTAssertEqual(wallet.selectedAccountId, "ecashMainnet-bip84-0")
+        XCTAssertEqual(wallet.network, WalletNetwork.ecashMainnet)
+        XCTAssertEqual(wallet.accounts[2].storeName, "\(wallet.id)-signet-bip84-0.sqlite")   // explicit new-scheme stores
+        XCTAssertTrue(wallet.accounts.allSatisfy { $0.scriptType == ScriptType.bip84 })
+        XCTAssertFalse(wallet.isBackedUp)
     }
 
-    func testCopyWalletCreatesAnIndependentWalletWithItsOwnSecret() throws {
-        let ks = InMemoryKeyStore()
-        let ws = InMemoryWalletStore()
-        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
-        let alpha = try manager.importWallet(label: "Savings", network: .ecash, mnemonic: Self.phrase, scriptType: .bip86)
-
-        let beta = try manager.copyWallet(id: alpha.id, to: .ecashMainnet, label: "Savings")
-
-        XCTAssertNotEqual(beta.id, alpha.id)
-        XCTAssertEqual(beta.network, WalletNetwork.ecashMainnet)
-        XCTAssertEqual(beta.label, "Savings")
-        XCTAssertEqual(beta.scriptType, ScriptType.bip86)           // derivation carried over
-        XCTAssertEqual(beta.externalDescriptor, alpha.externalDescriptor)
-        XCTAssertEqual(beta.isBackedUp, alpha.isBackedUp)
-        XCTAssertEqual(try ks.loadMnemonic(walletId: beta.id), Self.phrase)   // its OWN Keychain entry
-        XCTAssertEqual(manager.selectedWalletId, beta.id)
-        XCTAssertEqual(try ws.allWallets().count, 2)
-        XCTAssertEqual(manager.existingCopy(of: alpha.id, on: .ecashMainnet)?.id, beta.id)
-    }
-
-    func testCopyInheritsNotBackedUp() throws {
+    func testSelectedNetworkPicksTheAccountToOpenOnAndFallsBackToTheFirst() throws {
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let created = try manager.createWallet(label: "New", network: .ecash)   // created → not backed up
-
-        let copy = try manager.copyWallet(id: created.id, to: .ecashMainnet, label: "New")
-
-        // Same phrase, same (unmet) backup obligation — the copy must keep nagging too.
-        XCTAssertFalse(copy.isBackedUp)
+        XCTAssertEqual(try manager.importWallet(label: "S", mnemonic: Self.phrase, selectedNetwork: .signet).network, WalletNetwork.signet)
+        XCTAssertEqual(try manager.importWallet(label: "B", mnemonic: Self.phrase, selectedNetwork: .bitcoin).network, WalletNetwork.bitcoin)
+        // A retired chain nobody gets an account on (alphanet) → the first mainchain.
+        XCTAssertEqual(try manager.importWallet(label: "A", mnemonic: Self.phrase, selectedNetwork: .ecash).network, WalletNetwork.ecashMainnet)
+        XCTAssertTrue(try XCTUnwrap(manager.wallets.first).isBackedUp)   // imported = already backed up
     }
 
-    func testCopyWIFWalletUsesThePrivateKeyPath() throws {
-        let ks = InMemoryKeyStore()
-        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let wif = "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj"
-        let claim = try manager.importPrivateKey(label: "Claim", network: .ecash, wif: wif)
-
-        let copy = try manager.copyWallet(id: claim.id, to: .ecashMainnet, label: "Claim")
-
-        XCTAssertEqual(copy.keyType, WalletKeyType.wif)
-        XCTAssertEqual(copy.externalDescriptor, claim.externalDescriptor)
-        XCTAssertEqual(try ks.loadMnemonic(walletId: copy.id), wif)
+    func testImportKeepsScriptTypeAndAccountIndexOnEveryAccount() throws {
+        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
+        let wallet = try manager.importWallet(label: "T", mnemonic: Self.phrase, scriptType: .bip86, accountIndex: Int32(3))
+        XCTAssertEqual(wallet.accounts.map { $0.id }, ["ecashMainnet-bip86-3", "bitcoin-bip86-3", "signet-bip86-3"])
+        XCTAssertEqual(wallet.scriptType, ScriptType.bip86)
+        XCTAssertEqual(wallet.accountIndex, Int32(3))
     }
 
-    func testRemovingOneCopyLeavesTheOtherIntact() throws {
-        let ks = InMemoryKeyStore()
-        let factory = MockWalletEngineFactory()
-        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: factory)
-        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.phrase)
-        let beta = try manager.copyWallet(id: alpha.id, to: .ecashMainnet, label: "A")
-
-        try manager.removeWallet(id: alpha.id)
-
-        // The whole point of copying the secret instead of sharing it: the survivor keeps its key.
-        XCTAssertEqual(try ks.loadMnemonic(walletId: beta.id), Self.phrase)
-        XCTAssertNil(try ks.loadMnemonic(walletId: alpha.id))
-        XCTAssertEqual(factory.purgedChainDataIds, [alpha.id])
-        XCTAssertEqual(manager.wallets.map { $0.id }, [beta.id])
+    func testWifWalletLivesOnlyOnTheCoinTypeZeroChains() throws {
+        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
+        let wif = "5HueCGU8rMjxEXxiPuD5BDku4MkFqeZyd4dZ1jvhTVqvbTLvyTJ"
+        let claim = try manager.importPrivateKey(label: "Claim", wif: wif, selectedNetwork: .ecashMainnet)
+        XCTAssertEqual(claim.keyType, WalletKeyType.wif)
+        XCTAssertEqual(claim.accounts.map { $0.network }, [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin])   // no Signet
+        XCTAssertEqual(claim.accounts[0].externalDescriptor, claim.accounts[1].externalDescriptor)   // same key, same address
+        XCTAssertEqual(manager.availableMainchains(for: claim.id), [WalletNetwork.bitcoin, WalletNetwork.ecashMainnet])
+        XCTAssertEqual(thrown { _ = try manager.enableNetwork(walletId: claim.id, network: .signet) }, .copyNotSupported)
+        XCTAssertTrue(try manager.availableSidechains(for: claim.id).isEmpty)
     }
 
-    func testCopyRefusesUnsupportedTargetsAndPersistsNothing() throws {
+    func testSwitchAccountPersistsAndIsTheOnlyWaySelectionChanges() throws {
         let ws = InMemoryWalletStore()
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: ws, factory: MockWalletEngineFactory())
-        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.phrase)
-
-        XCTAssertEqual(copyError { _ = try manager.copyWallet(id: alpha.id, to: .signet, label: "A") }, .copyNotSupported)
-        XCTAssertEqual(copyError { _ = try manager.copyWallet(id: alpha.id, to: .thunder, label: "A") }, .copyNotSupported)
-        XCTAssertEqual(copyError { _ = try manager.copyWallet(id: alpha.id, to: .ecash, label: "A") }, .copyNotSupported)
-        // Betanet shares alphanet's keys but is retired from the picker (2026-10-30): no new wallets on it.
-        XCTAssertEqual(copyError { _ = try manager.copyWallet(id: alpha.id, to: .ecashBeta, label: "A") }, .copyNotSupported)
-        XCTAssertEqual(copyError { _ = try manager.copyWallet(id: "missing", to: .ecashMainnet, label: "A") }, .copyNotSupported)
-        XCTAssertEqual(try ws.allWallets().count, 1)
-        XCTAssertEqual(manager.selectedWalletId, alpha.id)
+        let wallet = try manager.createWallet(label: "W")
+        try manager.switchAccount(walletId: wallet.id, to: "signet-bip84-0")
+        XCTAssertEqual(manager.selectedWallet?.network, WalletNetwork.signet)
+        XCTAssertEqual(try ws.allWallets()[0].selectedAccountId, "signet-bip84-0")     // persisted
+        XCTAssertEqual(try manager.balance(walletId: wallet.id), .zero)                  // engine for that account builds
+        XCTAssertEqual(thrown { try manager.switchAccount(walletId: wallet.id, to: "thunder-bip84-0") }, .persistenceFailed)
+        XCTAssertEqual(manager.selectedWallet?.network, WalletNetwork.signet)            // unchanged after the bad switch
+        XCTAssertEqual(thrown { try manager.switchAccount(walletId: "nope", to: "signet-bip84-0") }, .persistenceFailed)
     }
 
-    func testCopyRefusesASecondCopyOnTheSameNetwork() throws {
-        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.phrase)
-        _ = try manager.copyWallet(id: alpha.id, to: .ecashMainnet, label: "A")
-
-        XCTAssertEqual(copyError { _ = try manager.copyWallet(id: alpha.id, to: .ecashMainnet, label: "A") }, .alreadyOnNetwork)
-        XCTAssertEqual(manager.wallets.count, 2)
-    }
-
-    func testExistingCopyIgnoresADifferentWalletOnThatNetwork() throws {
-        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.phrase)
-        // Different keys (a single-key WIF wallet) on the target network: not a copy of `alpha`.
-        _ = try manager.importPrivateKey(label: "Other", network: .ecashMainnet,
-                                         wif: "Kzjzb4aapsgaqrrVuDe6DongJbMxrq7pyLTwRWoeGJU5hHKUekWj")
-
-        XCTAssertNil(manager.existingCopy(of: alpha.id, on: .ecashMainnet))
-    }
-
-    func testCopyWithDivergentKeysPersistsNothing() throws {
+    func testEnableNetworkSwitchesWhenTheAccountExistsAndDerivesItOtherwise() throws {
         let ks = InMemoryKeyStore()
         let ws = InMemoryWalletStore()
+        // A MIGRATED wallet that only has an eCash account (legacy shape) must be able to open on Signet.
+        let legacy = ManagedWallet(id: "m", label: "Migrated", network: .ecashMainnet,
+                                   externalDescriptor: "wpkh(mock/0/*)", internalDescriptor: "wpkh(mock/1/*)", sortIndex: 0)
+        try ws.commitV2([legacy])
+        try ks.saveMnemonic(Self.phrase, walletId: "m")
+        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
+        try manager.load()
+        XCTAssertFalse(manager.hasAccount(walletId: "m", network: .signet))
+        XCTAssertEqual(manager.availableMainchains(for: "m"), [WalletNetwork.bitcoin, WalletNetwork.signet, WalletNetwork.ecashMainnet])
+
+        let signet = try manager.enableNetwork(walletId: "m", network: .signet)        // derives (reads the phrase once)
+        XCTAssertEqual(signet.id, "signet-bip84-0")
+        XCTAssertEqual(signet.storeName, "m-signet-bip84-0.sqlite")
+        XCTAssertTrue(manager.hasAccount(walletId: "m", network: .signet))
+        XCTAssertEqual(manager.selectedWallet?.network, WalletNetwork.signet)
+        XCTAssertEqual(try ws.allWallets()[0].accounts.count, 2)                          // persisted
+        XCTAssertEqual(try ws.allWallets()[0].accounts[0].storeName, "m-ecashMainnet.sqlite")   // the legacy store untouched
+
+        _ = try manager.enableNetwork(walletId: "m", network: .ecashMainnet)             // existing: a plain switch
+        XCTAssertEqual(manager.selectedWallet?.network, WalletNetwork.ecashMainnet)
+        XCTAssertEqual(try ws.allWallets()[0].accounts.count, 2)
+    }
+
+    func testEnableNetworkWithoutASecretFailsAndChangesNothing() throws {
+        let ws = InMemoryWalletStore()
+        let legacy = ManagedWallet(id: "m", label: "M", network: .ecashMainnet,
+                                   externalDescriptor: "wpkh(mock/0/*)", internalDescriptor: "wpkh(mock/1/*)", sortIndex: 0)
+        try ws.commitV2([legacy])
+        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: ws, factory: MockWalletEngineFactory())
+        try manager.load()
+        XCTAssertEqual(thrown { _ = try manager.enableNetwork(walletId: "m", network: .bitcoin) }, .keyUnavailable)
+        XCTAssertEqual(try ws.allWallets()[0].accounts.count, 1)
+        XCTAssertEqual(manager.selectedWallet?.network, WalletNetwork.ecashMainnet)
+    }
+
+    func testSidechainsListOnlyExistingAccountsUnderTheCurrentMainchain() throws {
+        let ws = InMemoryWalletStore()
+        // A Thunder-betanet account alongside a betanet account on one wallet (what a later manual
+        // merge would produce): visible only while the wallet is on betanet.
+        let beta = WalletAccount(network: WalletNetwork.ecashBeta, scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                                 externalDescriptor: "e", internalDescriptor: "i", storeName: "w-ecashBeta.sqlite")
+        let th = WalletAccount(network: WalletNetwork.thunder, scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                               externalDescriptor: "", internalDescriptor: "", storeName: "w-thunder.sqlite")
+        let main = WalletAccount(network: WalletNetwork.ecashMainnet, scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                                 externalDescriptor: "e2", internalDescriptor: "i2", storeName: "w-ecashMainnet-bip84-0.sqlite")
+        try ws.commitV2([ManagedWallet(id: "w", label: "W", keyType: WalletKeyType.mnemonic, isBackedUp: true, sortIndex: 0,
+                                       selectedAccountId: beta.id, accounts: [beta, th, main])])
+        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: ws, factory: MockWalletEngineFactory())
+        try manager.load()
+        XCTAssertEqual(manager.availableSidechains(for: "w"), [WalletNetwork.thunder])
+        XCTAssertEqual(manager.availableMainchains(for: "w"), [WalletNetwork.bitcoin, WalletNetwork.signet, WalletNetwork.ecashBeta, WalletNetwork.ecashMainnet])
+        try manager.switchAccount(walletId: "w", to: th.id)                                // on the sidechain itself
+        XCTAssertEqual(manager.availableSidechains(for: "w"), [WalletNetwork.thunder])    // still listed under its parent
+        try manager.switchAccount(walletId: "w", to: main.id)
+        XCTAssertTrue(manager.availableSidechains(for: "w").isEmpty)                      // mainnet has none yet
+    }
+
+    func testRemoveWalletEvictsEveryAccountEngineAndPurgesItsStores() throws {
         let factory = MockWalletEngineFactory()
-        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: factory)
-        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.phrase)
-        factory.divergentRestoreNetworks = [.ecashMainnet]
-
-        XCTAssertEqual(copyError { _ = try manager.copyWallet(id: alpha.id, to: .ecashMainnet, label: "A") }, .copyMismatch)
-        XCTAssertEqual(manager.wallets.count, 1)
-        XCTAssertEqual(try ws.allWallets().count, 1)
-        XCTAssertEqual(manager.selectedWalletId, alpha.id)
+        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: factory)
+        let wallet = try manager.createWallet(label: "W")
+        _ = try manager.balance(walletId: wallet.id)
+        try manager.switchAccount(walletId: wallet.id, to: "bitcoin-bip84-0")
+        _ = try manager.balance(walletId: wallet.id)
+        try manager.removeWallet(id: wallet.id)
+        XCTAssertEqual(factory.purgedChainDataIds, [wallet.id])                            // `<id>-*` covers every account
+        XCTAssertTrue(manager.wallets.isEmpty)
     }
 
-    func testCopyWithoutAStoredSecretFails() throws {
-        let ks = InMemoryKeyStore()
-        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let alpha = try manager.importWallet(label: "A", network: .ecash, mnemonic: Self.phrase)
-        try ks.deleteMnemonic(walletId: alpha.id)
+    // MARK: Copy-to-network shims (the old sheet keeps working until step 5 deletes it)
 
-        XCTAssertEqual(copyError { _ = try manager.copyWallet(id: alpha.id, to: .ecashMainnet, label: "A") }, .keyUnavailable)
+    func testCopyShimsOpenTheSameWalletOnTheOtherNetwork() throws {
+        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
+        let wallet = try manager.importWallet(label: "A", mnemonic: Self.phrase)
+        XCTAssertEqual(manager.copyTargets(for: wallet.id), [WalletNetwork.bitcoin, WalletNetwork.signet])
+        XCTAssertEqual(manager.existingCopy(of: wallet.id, on: .bitcoin)?.id, wallet.id)   // "Added ✓"
+        XCTAssertNil(manager.existingCopy(of: wallet.id, on: .ecashMainnet))               // the one it's on
+        let same = try manager.copyWallet(id: wallet.id, to: .bitcoin, label: "ignored")
+        XCTAssertEqual(same.id, wallet.id)                                                 // no second wallet
         XCTAssertEqual(manager.wallets.count, 1)
+        XCTAssertEqual(manager.selectedWallet?.network, WalletNetwork.bitcoin)
+        XCTAssertEqual(thrown { _ = try manager.copyWallet(id: "missing", to: .bitcoin, label: "A") }, .persistenceFailed)
     }
 
-    func testCopyErrorMessagesCarryNoSecret() {
-        for error in [WalletError.copyNotSupported, .alreadyOnNetwork, .copyMismatch, .keyUnavailable] {
-            XCTAssertFalse(error.userMessage.isEmpty)
+    /// No account-related error message may carry key material (Golden Rule §2).
+    func testAccountErrorsNeverMentionSecrets() {
+        for error in [WalletError.copyNotSupported, .keyUnavailable, .persistenceFailed] {
             XCTAssertFalse(error.userMessage.contains("abandon"))
             XCTAssertFalse(error.userMessage.contains("wpkh"))
         }
