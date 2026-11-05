@@ -247,7 +247,8 @@ group:
    Its chain store `<secondaryId>-<network>.sqlite` (+`-wal`/`-shm`) is **moved** to
    `<primaryId>-<network>-<scriptType>-<acct>.sqlite` and recorded as that account's `storeName`.
    Two records on the same `(network, scriptType, acct)` (shouldn't exist — `existingCopy` blocks
-   it) keep the one with the newer mtime and leave the other file untouched on disk.
+   it), or a destination file that already exists: the later record is **kept as its own wallet**,
+   untouched, and listed in `keptStandalone` for the report. Nothing is dropped, nothing guessed.
 3. `isBackedUp` = OR of the group. The label of a secondary (`"Wallet 1 (Bitcoin)"`) is dropped.
 4. If the secondary was the **selected** wallet, selection moves to the primary with that account
    selected — the user lands on the same balance they left.
@@ -412,7 +413,8 @@ small real amount.
 Branch `seed-container` off `main`. Work in this order — each step is a reviewable PR on its own,
 and nothing user-visible changes until step 5.
 
-1. **Migration planner, pure and tested first.** `Packages/WalletService/.../WalletStoreMigrationV2.swift`:
+1. ✅ **Migration planner, pure and tested first** (DONE 2026-11-05, branch `seed-container`).
+   `Packages/WalletService/.../WalletStoreMigrationV2.swift`:
    `LegacyRecord` (today's `StoredWallet` DTO), `MigrationPlan` (wallets, accounts, file moves,
    re-keys, standalone ids), and `plan(legacy:files:)` with no BDK, no filesystem, no Keychain
    reference (I1). Add `ManagedWallet.masterFingerprint` (parse the key origin next to
