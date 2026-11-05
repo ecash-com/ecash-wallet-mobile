@@ -149,9 +149,8 @@ each script type is its own BDK wallet, own sqlite store, own sync. Consequences
   mainchain account is native segwit (bip84). Taproot comes back as an on-demand address type on
   Receive in phase 2, never as a creation decision. **The "New wallet" screen itself goes** (Jake,
   2026-11-05): with both pickers gone it held only an explainer paragraph and Continue, so "Create
-  wallet" (onboarding and the wallet list) pushes the **entropy grid directly**; its one-line
-  explainer ("add your own randomness, then see the phrase it produces") moves into the entropy
-  screen's header. Flow: entropy grid → seed preview → generate → derive the `0'`, `1'` and Thunder
+  wallet" (onboarding and the wallet list) pushes the **entropy grid directly** — no explainer
+  paragraph above it either (Jake, 2026-11-05: the grid's own copy is enough). Flow: entropy grid → seed preview → generate → derive the `0'`, `1'` and Thunder
   account keys → persist with `selectedAccountId = ecashMainnet-bip84-0` → Home. The 12/24-word
   choice stays in Settings; labels and the backup nudge are unchanged.
 - **Import:** phrase → same derivation. The **Advanced** section keeps script type + account index
@@ -474,7 +473,7 @@ and nothing user-visible changes until step 5.
    on yet) opens from the Home chip, the wallet-list ⋯ menu ("Switch network…") and Settings.
    `AppState.switchNetwork` gates a first-time chain behind device auth, then re-roots the money
    surfaces like a wallet switch. `CreateWalletScreen` replaces `CreateConfirmView`: create pushes
-   the entropy grid directly, with the explainer in its header. Import keeps Advanced and claim
+   the entropy grid directly (its own copy explains the swipe). Import keeps Advanced and claim
    mode exactly; `NetworkSelector`, `CopyWalletView`/`CopyWalletViewModel` and the manager's copy
    shims are deleted. "Send to one of my wallets" lists every wallet with an account on the sending
    network and pays THAT account (`nextUnusedAddress(walletId:network:)`); a payment link's

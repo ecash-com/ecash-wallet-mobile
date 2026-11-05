@@ -20,11 +20,8 @@ struct EntropyInputScreen: View {
     @Environment(\.dismiss) var dismiss
 
     let onComplete: (_ field: String, _ wordCount: Int) -> Void
-    /// The create flow's one-line explainer, shown above the grid now that there is no screen
-    /// before this one (`docs/seed-container-model.md §4`). Nil when entered from elsewhere.
-    let intro: Text?
     /// The create view model's error, if the last submit failed (surfaced here since this is the
-    /// screen the user is on).
+    /// screen the user is on — create starts here, `docs/seed-container-model.md §4`).
     let errorMessage: String?
 
     @State var vm: EntropyViewModel
@@ -37,10 +34,9 @@ struct EntropyInputScreen: View {
 
     /// `model` comes from the session New wallet's Continue created, which already drew this session's
     /// device randomness and timestamp.
-    init(model: EntropyViewModel, intro: Text? = nil, errorMessage: String? = nil,
+    init(model: EntropyViewModel, errorMessage: String? = nil,
          onComplete: @escaping (_ field: String, _ wordCount: Int) -> Void) {
         self.onComplete = onComplete
-        self.intro = intro
         self.errorMessage = errorMessage
         _vm = State(initialValue: model)
     }
@@ -93,11 +89,6 @@ struct EntropyInputScreen: View {
     /// Fixed column: nothing here scrolls, so the grid keeps every drag it receives.
     private var swipeLayout: some View {
         VStack(alignment: .leading, spacing: Theme.Space.x3) {
-            if let intro {
-                intro
-                    .textStyle(.sm)
-                    .foregroundStyle(Theme.Colors.text1)
-            }
             if let errorMessage {
                 Text(verbatim: errorMessage)
                     .textStyle(.sm)

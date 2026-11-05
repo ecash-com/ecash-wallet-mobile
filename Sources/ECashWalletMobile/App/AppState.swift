@@ -605,6 +605,23 @@ final class AppState {
     /// The last-known balance for any wallet, selected or not. A cached read of BDK's persisted
     /// chain data (no network, safe on the main actor), or `.unknown` when the wallet has never
     /// synced on this device and `0` would be a guess rather than a fact.
+    /// One line per chain a wallet holds coins on, for the wallet list: the account it's open on
+    /// first (always shown, even at zero or unsynced), then every other account with a known
+    /// non-zero cached balance. A seed is several chains; the list says so instead of showing
+    /// whichever chain was looked at last (Jake, 2026-11-05).
+    func accountBalances(for wallet: ManagedWallet) -> [WalletAccountBalance] {
+        var out: [WalletAccountBalance] = []
+        let current = wallet.selectedAccount
+        out.append(WalletAccountBalance(network: current.network, balance: balanceSummary(walletId: wallet.id)))
+        for account in wallet.accounts where account.id != current.id {
+            let summary = balanceSummary(walletId: wallet.id, network: account.network)
+            if case .known(let amount) = summary, amount.sats > 0 {
+                out.append(WalletAccountBalance(network: account.network, balance: summary))
+            }
+        }
+        return out
+    }
+
     /// `balanceSummary` for one of a wallet's accounts that isn't necessarily the one it's switched
     /// to (the payment-link chooser shows a seed wallet once per payable chain).
     func balanceSummary(walletId: String, network: WalletNetwork) -> WalletBalanceSummary {

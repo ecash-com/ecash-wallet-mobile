@@ -296,7 +296,7 @@ final class WalletManagerTests: XCTestCase {
         XCTAssertEqual(claim.keyType, WalletKeyType.wif)
         XCTAssertEqual(claim.accounts.map { $0.network }, [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin])   // no Signet
         XCTAssertEqual(claim.accounts[0].externalDescriptor, claim.accounts[1].externalDescriptor)   // same key, same address
-        XCTAssertEqual(manager.availableMainchains(for: claim.id), [WalletNetwork.bitcoin, WalletNetwork.ecashMainnet])
+        XCTAssertEqual(manager.availableMainchains(for: claim.id), [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin])   // picker order, eCash first
         XCTAssertEqual(thrown { _ = try manager.enableNetwork(walletId: claim.id, network: .signet) }, .copyNotSupported)
         XCTAssertTrue(try manager.availableSidechains(for: claim.id).isEmpty)
     }
@@ -325,7 +325,7 @@ final class WalletManagerTests: XCTestCase {
         let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
         try manager.load()
         XCTAssertFalse(manager.hasAccount(walletId: "m", network: .signet))
-        XCTAssertEqual(manager.availableMainchains(for: "m"), [WalletNetwork.bitcoin, WalletNetwork.signet, WalletNetwork.ecashMainnet])
+        XCTAssertEqual(manager.availableMainchains(for: "m"), [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin, WalletNetwork.signet])
 
         let signet = try manager.enableNetwork(walletId: "m", network: .signet)        // derives (reads the phrase once)
         XCTAssertEqual(signet.id, "signet-bip84-0")
@@ -367,7 +367,7 @@ final class WalletManagerTests: XCTestCase {
         let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: ws, factory: MockWalletEngineFactory())
         try manager.load()
         XCTAssertEqual(manager.availableSidechains(for: "w"), [WalletNetwork.thunder])
-        XCTAssertEqual(manager.availableMainchains(for: "w"), [WalletNetwork.bitcoin, WalletNetwork.signet, WalletNetwork.ecashBeta, WalletNetwork.ecashMainnet])
+        XCTAssertEqual(manager.availableMainchains(for: "w"), [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin, WalletNetwork.signet, WalletNetwork.ecashBeta])   // retired betanet last
         try manager.switchAccount(walletId: "w", to: th.id)                                // on the sidechain itself
         XCTAssertEqual(manager.availableSidechains(for: "w"), [WalletNetwork.thunder])    // still listed under its parent
         try manager.switchAccount(walletId: "w", to: main.id)

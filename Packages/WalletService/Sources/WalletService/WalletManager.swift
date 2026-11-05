@@ -209,14 +209,16 @@ public final class WalletManager: @unchecked Sendable {
         }
     }
 
-    /// The mainchains the switcher offers for a wallet, in enum order: the offered mainchains its
-    /// key type can live on, plus any mainchain it already has an account on (a retired chain stays
-    /// reachable for the wallets that are on it).
+    /// The mainchains the switcher offers for a wallet, in PICKER order (eCash first — Jake,
+    /// 2026-11-05 — then Bitcoin, then L2L Signet): the offered mainchains its key type can live on,
+    /// then any retired mainchain it still has an account on (so an alphanet/betanet wallet stays
+    /// reachable), in enum order after the offered ones.
     public func availableMainchains(for walletId: String) -> [WalletNetwork] {
         guard let wallet = wallets.first(where: { $0.id == walletId }) else { return [] }
         let held = Set(wallet.accounts.map { $0.network }.filter { !$0.isSidechain })
-        let offered = Set(Self.mainchainsForNewWallets.filter { Self.keyType(wallet.keyType, canLiveOn: $0) })
-        return WalletNetwork.allCases.filter { offered.contains($0) || held.contains($0) }
+        let offered = Self.mainchainsForNewWallets.filter { Self.keyType(wallet.keyType, canLiveOn: $0) }
+        let retired = WalletNetwork.allCases.filter { held.contains($0) && !offered.contains($0) }
+        return offered + retired
     }
 
     /// The sidechains nested under the wallet's CURRENT mainchain that it already has an account on.

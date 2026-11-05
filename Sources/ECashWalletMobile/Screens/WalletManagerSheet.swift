@@ -157,28 +157,27 @@ struct WalletManagerSheet: View {
             Button {
                 app.selectWallet(id: wallet.id)
             } label: {
+                // No initial-letter tile (Jake, 2026-11-05): it repeated the label and said nothing.
                 HStack(spacing: Theme.Space.x3) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: Theme.Radius.xs)
-                            .fill(Theme.Colors.accent)
-                        Text(String(wallet.label.prefix(1)).uppercased())
-                            .font(.satoshi(14, .bold))
-                            .foregroundStyle(Theme.Colors.accentText)
-                    }
-                    .frame(width: 30, height: 30)
-
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: Theme.Space.x1) {
                         Text(wallet.label)
                             .textStyle(.body)
                             .foregroundStyle(Theme.Colors.text0)
-                        // Balance in each wallet's OWN unit — a Bitcoin wallet and an eCash wallet
-                        // can sit next to each other here, and "BTC" on the wrong row would be a
-                        // small lie about which chain the coins are on.
-                        WalletBalanceLabel(balance: app.balanceSummary(walletId: wallet.id),
-                                           unitLabel: NetworkRegistry.params(for: wallet.network).unitLabel)
-                        Text(metaText(wallet), bundle: .module)
-                            .textStyle(.xs)
-                            .foregroundStyle(wallet.isBackedUp ? Theme.Colors.text2 : Theme.Colors.warning)
+                        // One line per chain the seed holds coins on — its current chain always,
+                        // plus any other with a balance — each in THAT chain's unit and chip, so a
+                        // wallet reads as a seed across networks, not as whatever was viewed last
+                        // (docs/seed-container-model.md §4). Backup state is Home's banner, not here.
+                        ForEach(app.accountBalances(for: wallet)) { line in
+                            HStack(spacing: Theme.Space.x2) {
+                                WalletBalanceLabel(balance: line.balance,
+                                                   unitLabel: NetworkRegistry.params(for: line.network).unitLabel)
+                                // The network name in its chip colour: the same signal as the chip
+                                // (Golden Rule §6), without the chip's weight in a dense list.
+                                Text(verbatim: NetworkRegistry.params(for: line.network).displayName)
+                                    .textStyle(.xs)
+                                    .foregroundStyle(NetworkChipStyle.style(for: line.network).background)
+                            }
+                        }
                     }
                 }
             }
@@ -235,13 +234,6 @@ struct WalletManagerSheet: View {
             }
             .buttonStyle(.plain)
         }
-    }
-
-    // LocalizedStringKey rendered via Text(_, bundle:) — Fuse-compatible. Backed-up rows just show
-    // the network name; the not-backed-up suffix localizes. (%@ is the network name.)
-    private func metaText(_ wallet: ManagedWallet) -> LocalizedStringKey {
-        let network = NetworkRegistry.params(for: wallet.network).displayName
-        return wallet.isBackedUp ? "\(network)" : "\(network) · Not backed up"
     }
 
     private func actionRowLabel(icon: Icon, title: LocalizedStringKey) -> some View {
