@@ -24,6 +24,7 @@ struct WalletHomeScreen: View {
     @State var claimSweepDismissed = false
     @State var showBackup = false
     @State var showWalletManager = false
+    @State var showNetworkSwitcher = false   // the Home chip's sheet
     @State var showFaucet = false
     @State var showSplit = false           // "Split coins" sheet
     @State var splitDismissed = false      // per-session: dismiss the split nudge without splitting
@@ -111,6 +112,9 @@ struct WalletHomeScreen: View {
         }
         // Wallet manager: switch / rename / add / import / remove.
         .sheet(isPresented: $showWalletManager) { WalletManagerSheet() }
+        .sheet(isPresented: $showNetworkSwitcher) {
+            if let id = app.selectedWalletId { NetworkSwitcherSheet(walletId: id) }
+        }
         // Signet faucet: request valueless test coins (signet-only; the button is gated too).
         .sheet(isPresented: $showFaucet) {
             if let vm = app.makeFaucetViewModel() {
@@ -199,7 +203,17 @@ struct WalletHomeScreen: View {
             }
 
             VStack(spacing: Theme.Space.x2) {
-                NetworkBadge(network: wallet.network)
+                // The chip is the network switcher (docs/seed-container-model.md §4): it opens a sheet
+                // with the current network marked; nothing changes until a row is tapped there.
+                Button { showNetworkSwitcher = true } label: {
+                    HStack(spacing: Theme.Space.x1) {
+                        NetworkBadge(network: wallet.network)
+                        Image(icon: Icon.expand)
+                            .foregroundStyle(Theme.Colors.text2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Switch network", bundle: .module, comment: "home: network chip opens the switcher"))
 
                 // Live balance with the privacy eye. JetBrains Mono is fixed-width already.
                 HStack(spacing: Theme.Space.x2) {

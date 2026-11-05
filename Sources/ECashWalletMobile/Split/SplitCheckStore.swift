@@ -89,6 +89,28 @@ struct SplitCheckStore {
         UserDefaults.standard.removeObject(forKey: "\(Self.pendingKey).\(walletId)")
     }
 
+    /// Carry a merged legacy record's state over to the wallet it now lives in (the seed-container
+    /// migration, `docs/seed-container-model.md §6.2`). Results merge in (an outpoint the new id
+    /// already knows keeps its own answer); the pending-initial-check flag carries over; then the
+    /// old id is forgotten. A cache either way — a wrong merge costs one re-check, never a coin.
+    func rekey(from legacyId: String, to walletId: String) {
+        guard legacyId != walletId else { return }
+        var everything = all
+        if let old = everything[legacyId] {
+            var merged = old
+            for (key, raw) in everything[walletId] ?? [:] { merged[key] = raw }
+            everything[walletId] = merged
+        }
+        everything.removeValue(forKey: legacyId)
+        all = everything
+        if needsInitialCheck(walletId: legacyId) { markNeedsInitialCheck(walletId: walletId) }
+        if lastCheckedEpochSeconds(walletId: walletId) == nil, let old = lastCheckedEpochSeconds(walletId: legacyId) {
+            UserDefaults.standard.set(old, forKey: "\(Self.checkedAtKey).\(walletId)")
+        }
+        UserDefaults.standard.removeObject(forKey: "\(Self.checkedAtKey).\(legacyId)")
+        clearInitialCheck(walletId: legacyId)
+    }
+
     /// Purge on wallet removal (Golden Rule §5).
     func forget(walletId: String) {
         var everything = all

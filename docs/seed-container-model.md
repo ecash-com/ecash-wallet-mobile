@@ -330,7 +330,7 @@ public struct ManagedWallet {            // becomes the container
     public var selectedAccountId: String
     public var accounts: [WalletAccount]
     public var selectedAccount: WalletAccount { … }
-    /// Compat shim during the port: the selected account's network. Delete when no caller remains.
+    /// The selected account's network — the official read-through (kept, see §11 step 5).
     public var network: WalletNetwork { selectedAccount.network }
 }
 ```
@@ -469,11 +469,20 @@ and nothing user-visible changes until step 5.
    closure already derives from the selected account's script type and network (I7). The three
    copy-to-network methods are kept as **shims over `enableNetwork`** so the old sheet keeps
    working on the branch; step 5 deletes them with the sheet.
-5. **App.** `AppState` per account; `NetworkSwitcherSheet` (nested, §3.1) opened from the Home chip;
-   **delete `CreateConfirmView`** — create pushes `EntropyInputScreen` directly (§4) — and remove
-   `NetworkSelector` from import outside Advanced; delete `CopyWalletSheet`; keep claim mode and
-   WIF import exactly (§4.1); apply the migration report's `rekeys` to `SplitCheckStore`; then
-   migrate the ~140 `.network` call sites off the shim and delete it.
+5. ✅ **App** (BUILT 2026-11-05). `NetworkSwitcherSheet` (nested: mainchains, the current one's
+   sidechains indented under it; current marked; a lock glyph on a chain the wallet has no account
+   on yet) opens from the Home chip, the wallet-list ⋯ menu ("Switch network…") and Settings.
+   `AppState.switchNetwork` gates a first-time chain behind device auth, then re-roots the money
+   surfaces like a wallet switch. `CreateWalletScreen` replaces `CreateConfirmView`: create pushes
+   the entropy grid directly, with the explainer in its header. Import keeps Advanced and claim
+   mode exactly; `NetworkSelector`, `CopyWalletView`/`CopyWalletViewModel` and the manager's copy
+   shims are deleted. "Send to one of my wallets" lists every wallet with an account on the sending
+   network and pays THAT account (`nextUnusedAddress(walletId:network:)`); a payment link's
+   candidates are (wallet × payable account), so an ambiguous link on a seed wallet still asks
+   which chain. Settings → Network lists every account's network. `SplitCheckStore.rekey` applies
+   the report's `rekeys` at launch. **`ManagedWallet.network` stays** as the documented
+   read-through to the selected account (it is exactly what every money surface wants), so the
+   ~140 call sites were not churned — the "compat shim" framing in §7 is withdrawn.
 6. **Release prep.** Manual upgrade matrix (§9) on both platforms from a 1.4.7 build, release notes
    stating the downgrade behaviour (§6.4), bump to 1.5.0 / next build number, update CLAUDE.md §2
    Golden Rule 4 and §4 to the container model in the same PR.

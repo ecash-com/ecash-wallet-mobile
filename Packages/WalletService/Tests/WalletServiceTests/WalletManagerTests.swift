@@ -386,21 +386,6 @@ final class WalletManagerTests: XCTestCase {
         XCTAssertTrue(manager.wallets.isEmpty)
     }
 
-    // MARK: Copy-to-network shims (the old sheet keeps working until step 5 deletes it)
-
-    func testCopyShimsOpenTheSameWalletOnTheOtherNetwork() throws {
-        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
-        let wallet = try manager.importWallet(label: "A", mnemonic: Self.phrase)
-        XCTAssertEqual(manager.copyTargets(for: wallet.id), [WalletNetwork.bitcoin, WalletNetwork.signet])
-        XCTAssertEqual(manager.existingCopy(of: wallet.id, on: .bitcoin)?.id, wallet.id)   // "Added ✓"
-        XCTAssertNil(manager.existingCopy(of: wallet.id, on: .ecashMainnet))               // the one it's on
-        let same = try manager.copyWallet(id: wallet.id, to: .bitcoin, label: "ignored")
-        XCTAssertEqual(same.id, wallet.id)                                                 // no second wallet
-        XCTAssertEqual(manager.wallets.count, 1)
-        XCTAssertEqual(manager.selectedWallet?.network, WalletNetwork.bitcoin)
-        XCTAssertEqual(thrown { _ = try manager.copyWallet(id: "missing", to: .bitcoin, label: "A") }, .persistenceFailed)
-    }
-
     /// No account-related error message may carry key material (Golden Rule §2).
     func testAccountErrorsNeverMentionSecrets() {
         for error in [WalletError.copyNotSupported, .keyUnavailable, .persistenceFailed] {

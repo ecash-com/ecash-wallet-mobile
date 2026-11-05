@@ -12,7 +12,7 @@ struct SettingsScreen: View {
     @Environment(AppState.self) var app
     @State var showBackup = false   // not `private` — Fuse bridges @State (skip-fuse rule)
     @State var showSplit = false
-    @State var showCopy = false
+    @State var showSwitch = false
 
     var body: some View {
         List {
@@ -123,13 +123,13 @@ struct SettingsScreen: View {
                         .textStyle(.xs)
                         .foregroundStyle(Theme.Colors.text2)
 
-                    // Same phrase, another network (docs/copy-wallet-to-network.md). Only where the
-                    // keys carry over — Signet and Thunder wallets have nowhere to go.
-                    if app.canCopyToNetwork(wallet) {
-                        Button { showCopy = true } label: {
+                    // A wallet is a seed and switches networks (docs/seed-container-model.md §4);
+                    // same control as the Home chip, for people who look here first.
+                    if app.canSwitchNetwork(wallet) {
+                        Button { showSwitch = true } label: {
                             HStack {
-                                Text("Copy to another network", bundle: .module,
-                                     comment: "settings: copy wallet to another network")
+                                Text("Switch network", bundle: .module,
+                                     comment: "settings: switch the wallet's network")
                                     .textStyle(.body)
                                     .foregroundStyle(Theme.Colors.text0)
                                 Spacer()
@@ -304,10 +304,8 @@ struct SettingsScreen: View {
                                   note: "This wallet has no spendable coins to split.")
             }
         }
-        .sheet(isPresented: $showCopy) {
-            if let id = app.selectedWalletId, let vm = app.makeCopyWalletViewModel(walletId: id) {
-                CopyWalletView(viewModel: vm)
-            }
+        .sheet(isPresented: $showSwitch) {
+            if let id = app.selectedWalletId { NetworkSwitcherSheet(walletId: id) }
         }
     }
 

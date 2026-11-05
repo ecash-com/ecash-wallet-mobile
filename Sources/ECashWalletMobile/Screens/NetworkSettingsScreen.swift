@@ -17,7 +17,7 @@ struct NetworkSettingsScreen: View {
 
     /// Creatable networks plus those an existing wallet is on, in enum declaration order.
     private var networks: [WalletNetwork] {
-        let held = Set(app.wallets.map { $0.network })
+        let held = Set(app.wallets.flatMap { $0.accounts.map { $0.network } })   // every account, not just the viewed one
         let offered = Set(WalletNetwork.selectable)
         return WalletNetwork.allCases.filter { offered.contains($0) || held.contains($0) }
     }

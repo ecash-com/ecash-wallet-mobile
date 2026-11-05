@@ -19,14 +19,15 @@ struct PaymentLinkWalletPicker: View {
         NavigationStack {
             List {
                 Section {
-                    ForEach(app.paymentLinkChoices) { wallet in
-                        Button { app.choosePaymentLinkWallet(id: wallet.id); dismiss() } label: {
+                    // Keyed by (wallet × account): one seed wallet can appear once per payable chain.
+                    ForEach(app.paymentLinkChoices, id: \.selectedAccount.storeName) { wallet in
+                        Button { app.choosePaymentLinkWallet(id: wallet.id, network: wallet.network); dismiss() } label: {
                             HStack(spacing: Theme.Space.x3) {
                                 VStack(alignment: .leading, spacing: Theme.Space.x1) {
                                     Text(wallet.label)
                                         .textStyle(.body)
                                         .foregroundStyle(Theme.Colors.text0)
-                                    WalletBalanceLabel(balance: app.balanceSummary(walletId: wallet.id),
+                                    WalletBalanceLabel(balance: app.balanceSummary(walletId: wallet.id, network: wallet.network),
                                                        unitLabel: NetworkRegistry.params(for: wallet.network).unitLabel)
                                 }
                                 Spacer(minLength: Theme.Space.x2)

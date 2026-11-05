@@ -93,6 +93,12 @@ public final class WalletManager: @unchecked Sendable {
         lastMigrationReport?.walletId(forLegacy: id)
     }
 
+    /// The legacy ids the migration folded into other wallets this launch (empty otherwise) — the
+    /// app re-keys its own per-`walletId` stores with these + `migratedWalletId(forLegacy:)`.
+    public func migrationMergedLegacyIds() -> [String] {
+        lastMigrationReport?.rekeys.map { $0.legacyId } ?? []
+    }
+
     public func select(id: String) {
         if wallets.contains(where: { $0.id == id }) {
             selectedWalletId = id
@@ -267,32 +273,6 @@ public final class WalletManager: @unchecked Sendable {
         try walletStore.upsertWallet(updated)
         wallets[index] = updated
         return account
-    }
-
-    // MARK: Copy-to-network — compatibility shims (removed with `CopyWalletSheet` in step 5)
-    //
-    // "Copy to network" used to re-import the phrase as a SECOND wallet. Under the seed-container
-    // model the same tap opens this wallet on that network instead (`enableNetwork`): the old UI
-    // keeps working on the branch until step 5 replaces it with the switcher.
-
-    public func copyTargets(for id: String) -> [WalletNetwork] {
-        guard let wallet = wallets.first(where: { $0.id == id }) else { return [] }
-        return availableMainchains(for: id).filter { $0 != wallet.selectedAccount.network }
-    }
-
-    /// The wallet itself when it already has an account on `network` (the old sheet shows "Added ✓").
-    public func existingCopy(of id: String, on network: WalletNetwork) -> ManagedWallet? {
-        guard let wallet = wallets.first(where: { $0.id == id }),
-              wallet.selectedAccount.network != network,
-              hasAccount(walletId: id, network: network) else { return nil }
-        return wallet
-    }
-
-    public func copyWallet(id: String, to network: WalletNetwork, label: String) throws -> ManagedWallet {
-        _ = try enableNetwork(walletId: id, network: network)
-        selectedWalletId = id
-        guard let wallet = wallets.first(where: { $0.id == id }) else { throw WalletError.persistenceFailed }
-        return wallet
     }
 
     // MARK: - Persist
@@ -690,6 +670,39 @@ public final class WalletManager: @unchecked Sendable {
     /// Thunder withdrawal output, whose mainchain destination is signed as raw script bytes.
     public func scriptPubKeyHex(for address: String, network: WalletNetwork) throws -> String {
         try factory.scriptPubKeyHex(address, network: network)
+    }
+
+    /// The CACHED balance of the wallet's account on `network` (persisted chain data, no I/O) —
+    /// for lists that show a wallet on a chain it isn't currently switched to. Throws if the wallet
+    /// has no account there.
+    public func balance(walletId: String, network: WalletNetwork) throws -> Amount {
+        guard let wallet = wallets.first(where: { $0.id == walletId }),
+              let account = wallet.accounts.first(where: { $0.network == network }) else {
+            throw WalletError.persistenceFailed
+        }
+        return try liveEngine(wallet: wallet, account: account).balance()
+    }
+
+    /// The next unused receive address of the wallet's account on `network` — which need not be the
+    /// account it is viewing. "Send to one of my wallets" lists every wallet with an account on the
+    /// sending network and pays THAT account, never the one the wallet happens to be switched to
+    /// (same-network is a safety rule: `.ecashMainnet` and `.bitcoin` addresses look identical).
+    public func nextUnusedAddress(walletId: String, network: WalletNetwork) throws -> AddressInfo {
+        guard let wallet = wallets.first(where: { $0.id == walletId }),
+              let account = wallet.accounts.first(where: { $0.network == network }) else {
+            throw WalletError.persistenceFailed
+        }
+        return try liveEngine(wallet: wallet, account: account).nextUnusedAddress()
+    }
+
+    /// Get-or-build the cached engine for one of a wallet's accounts (see `engines`).
+    private func liveEngine(wallet: ManagedWallet, account: WalletAccount) throws -> WalletEngineProtocol {
+        if let cached = engines[account.storeName] { return cached }
+        var viewed = wallet
+        viewed.selectedAccountId = account.id          // the factory builds from the selected account
+        let engine = try engine(for: viewed)
+        engines[account.storeName] = engine
+        return engine
     }
 
     /// Get-or-build the cached live engine for a walletId (see `engines`).

@@ -192,6 +192,13 @@ final class AppState {
         if let saved = savedSelection {
             manager.select(id: manager.migratedWalletId(forLegacy: saved) ?? saved)
         }
+        // The migration's per-walletId re-keys (report `rekeys`): the split-check cache follows a
+        // merged record into the wallet it lives in now. A cache — a miss costs one re-check.
+        for legacyId in manager.migrationMergedLegacyIds() {
+            if let walletId = manager.migratedWalletId(forLegacy: legacyId) {
+                splitCheckStore.rekey(from: legacyId, to: walletId)
+            }
+        }
         // Point the News feed at the selected wallet's network up front (CoinNews is per network).
         // Build it via a direct member assignment now (a stored prop with no default must be set
         // before `self` is fully initialized); the cache + `updateCoinNewsFeed()` are populated
@@ -436,11 +443,12 @@ final class AppState {
     /// Vend a `CreateViewModel` wired to this manager (used by the Create flow). The VM is owned by
     /// the view; capturing `self` here is safe (no retain cycle — AppState doesn't hold the VM).
     func makeCreateViewModel() -> CreateViewModel {
-        CreateViewModel(create: { label, network, wordCount, scriptType in
-            _ = try self.createWallet(label: label, network: network, wordCount: wordCount,
+        // No network: a new wallet opens on the current eCash chain (docs/seed-container-model.md §4).
+        CreateViewModel(create: { label, wordCount, scriptType in
+            _ = try self.createWallet(label: label, network: .currentEcash, wordCount: wordCount,
                                       scriptType: scriptType)
-        }, createWithEntropy: { label, network, entropyField, wordCount, scriptType in
-            _ = try self.createWallet(label: label, network: network, entropyField: entropyField,
+        }, createWithEntropy: { label, entropyField, wordCount, scriptType in
+            _ = try self.createWallet(label: label, network: .currentEcash, entropyField: entropyField,
                                       wordCount: wordCount, scriptType: scriptType)
         })
     }
@@ -466,41 +474,56 @@ final class AppState {
             })
     }
 
-    /// Whether `wallet` can be copied to any other network — drives the "Copy to network…" entries.
-    /// Takes the observed wallet value (not a `manager` lookup, which isn't observable) so rows update.
-    func canCopyToNetwork(_ wallet: ManagedWallet) -> Bool {
-        WalletNetwork.selectable.contains { $0 != wallet.network && wallet.network.sharesKeys(with: $0) }
-    }
+    // MARK: - Network switching (docs/seed-container-model.md §4)
 
-    /// Vend a `CopyWalletViewModel` ("Copy to network") for `walletId`, or nil if it has nowhere to
-    /// go. The id is captured at present-time, so a switch mid-flow can't change which wallet gets
-    /// copied (`docs/copy-wallet-to-network.md`).
-    func makeCopyWalletViewModel(walletId id: String) -> CopyWalletViewModel? {
-        guard let wallet = wallets.first(where: { $0.id == id }) else { return nil }
-        let targets = manager.copyTargets(for: id).map {
-            CopyWalletViewModel.Target(network: $0, existingWalletId: manager.existingCopy(of: id, on: $0)?.id)
+    /// Whether the wallet has anywhere else to go — drives the "Switch network…" entries.
+    func canSwitchNetwork(_ wallet: ManagedWallet) -> Bool {
+        manager.availableMainchains(for: wallet.id).count + manager.availableSidechains(for: wallet.id).count > 1
+    }
+    func availableMainchains(for walletId: String) -> [WalletNetwork] { manager.availableMainchains(for: walletId) }
+    func availableSidechains(for walletId: String) -> [WalletNetwork] { manager.availableSidechains(for: walletId) }
+    func hasAccount(walletId: String, network: WalletNetwork) -> Bool { manager.hasAccount(walletId: walletId, network: network) }
+    /// Why the last `switchNetwork` failed, for the switcher sheet. User-safe (a `WalletError` message).
+    private(set) var networkSwitchMessage: String? = nil
+
+    /// Switch a wallet to `network`. Opening a chain the wallet has no account on yet derives one,
+    /// which reads the phrase once — that case is gated behind device auth when app-lock is on,
+    /// like the Backup reveal. On the selected wallet the money surfaces re-root exactly as a
+    /// wallet switch does: reset, cached state, sync, price. Returns false (with a message) on
+    /// failure; nothing changes then.
+    func switchNetwork(walletId: String, to network: WalletNetwork) async -> Bool {
+        networkSwitchMessage = nil
+        let isNew = !manager.hasAccount(walletId: walletId, network: network)
+        if isNew && appLock.enabled {
+            let reason = "Open this wallet on \(NetworkRegistry.params(for: network).displayName)"
+            guard await DeviceAuth.authenticate(reason: reason) else {
+                networkSwitchMessage = "Authentication is required to open this wallet on a new network."
+                return false
+            }
         }
-        guard !targets.isEmpty else { return nil }
-        return CopyWalletViewModel(
-            walletLabel: wallet.label,
-            targets: targets,
-            copy: { network in
-                // "Wallet 1 (Betanet)": the two wallets share a name otherwise, and the network is
-                // what tells them apart.
-                let label = "\(wallet.label) (\(NetworkRegistry.params(for: network).displayName))"
-                let copy = try self.manager.copyWallet(id: id, to: network, label: label)
-                self.scheduleInitialSplitCheck(for: copy)
-                self.resetPerWalletState()   // the copy is auto-selected
-                self.refresh()
-                // Sync immediately: the point of the copy is to see what this seed holds there.
-                Task { await self.sync() }
-            },
-            authorize: { reason in
-                // Reads the secret (inside WalletService), so gate it like the other key-touching
-                // flows when app-lock is on (§7); pass through if off.
-                guard self.appLock.enabled else { return true }
-                return await DeviceAuth.authenticate(reason: reason)
-            })
+        do {
+            _ = try manager.enableNetwork(walletId: walletId, network: network)
+        } catch let error as WalletError {
+            networkSwitchMessage = error.userMessage
+            return false
+        } catch {
+            networkSwitchMessage = WalletError.persistenceFailed.userMessage
+            return false
+        }
+        // An eCash account opened for the first time may hold coins shared with Bitcoin: owe it the
+        // one automatic split check, like an import does.
+        if isNew, let wallet = manager.wallets.first(where: { $0.id == walletId }) {
+            scheduleInitialSplitCheck(for: wallet)
+        }
+        if walletId == selectedWalletId {
+            resetPerWalletState()
+            refresh()
+            await sync()
+            await refreshPrice()
+        } else {
+            refresh()
+        }
+        return true
     }
 
     /// Vend a `SplitViewModel` for the selected eCash wallet, or nil if none is selected / nothing to
@@ -582,6 +605,16 @@ final class AppState {
     /// The last-known balance for any wallet, selected or not. A cached read of BDK's persisted
     /// chain data (no network, safe on the main actor), or `.unknown` when the wallet has never
     /// synced on this device and `0` would be a guess rather than a fact.
+    /// `balanceSummary` for one of a wallet's accounts that isn't necessarily the one it's switched
+    /// to (the payment-link chooser shows a seed wallet once per payable chain).
+    func balanceSummary(walletId: String, network: WalletNetwork) -> WalletBalanceSummary {
+        if manager.wallets.first(where: { $0.id == walletId })?.network == network {
+            return balanceSummary(walletId: walletId)
+        }
+        guard let amount = try? manager.balance(walletId: walletId, network: network) else { return .unknown }
+        return amount.sats > 0 ? .known(amount) : .unknown
+    }
+
     func balanceSummary(walletId: String) -> WalletBalanceSummary {
         guard let amount = try? walletOps.balance(walletId: walletId) else { return .unknown }
         if syncStore.hasSynced(walletId: walletId) { return .known(amount) }
@@ -629,7 +662,16 @@ final class AppState {
             return
         }
         let routing = PaymentLink.routing(scheme: scheme, address: parsed.address)
-        let candidates = wallets.filter { routing.networks.contains($0.network) }
+        // One candidate per (wallet × account on a payable chain): a seed wallet holding both a
+        // Bitcoin and an eCash account is TWO choices for an ambiguous link, shown with that
+        // account's chip and balance — picking the chain is the whole decision.
+        let candidates: [ManagedWallet] = wallets.flatMap { wallet in
+            wallet.accounts.filter { routing.networks.contains($0.network) }.map { account in
+                var viewed = wallet
+                viewed.selectedAccountId = account.id
+                return viewed
+            }
+        }
         guard !candidates.isEmpty else {
             paymentLinkProblem = PaymentLink.noWalletMessage(for: routing)
             return
@@ -646,8 +688,7 @@ final class AppState {
         // ambiguous link the wrong choice sends real value to a chain the payee will never watch,
         // and on a named chain the user still knows better than we do which wallet should pay.
         if candidates.count == 1 {
-            if candidates[0].id != selectedWalletId { selectWallet(id: candidates[0].id) }
-            pendingPaymentLink = body
+            choosePaymentLinkWallet(id: candidates[0].id, network: candidates[0].network, body: body)
         } else {
             paymentLinkChoices = candidates
             paymentLinkChoiceBody = body
@@ -667,11 +708,35 @@ final class AppState {
     /// intent is captured. Called from Home's `.task`, which runs after the first render.
     func recheckPaymentLinkAfterLaunch() { checkAndroidPaymentLink() }
 
-    /// Pay the pending link from a chosen wallet.
-    func choosePaymentLinkWallet(id: String) {
+    /// Pay the pending link from a chosen wallet, on the chosen chain.
+    func choosePaymentLinkWallet(id: String, network: WalletNetwork) {
         guard let body = paymentLinkChoiceBody else { return }
         clearPaymentLinkChoice()
-        if id != selectedWalletId { selectWallet(id: id) }
+        choosePaymentLinkWallet(id: id, network: network, body: body)
+    }
+
+    /// Select the wallet, switch it to `network` (it has an account there — the candidates were
+    /// built from accounts — so no secret is read), and hand Send the link.
+    private func choosePaymentLinkWallet(id: String, network: WalletNetwork, body: String) {
+        if !manager.hasAccount(walletId: id, network: network) {
+            paymentLinkProblem = "That wallet can't pay on \(NetworkRegistry.params(for: network).displayName)."
+            return
+        }
+        let wallet = manager.wallets.first { $0.id == id }
+        let needsSwitch = wallet?.network != network
+        if needsSwitch {
+            guard (try? manager.enableNetwork(walletId: id, network: network)) != nil else {
+                paymentLinkProblem = WalletError.persistenceFailed.userMessage
+                return
+            }
+        }
+        if id != selectedWalletId {
+            selectWallet(id: id)
+        } else if needsSwitch {
+            resetPerWalletState()
+            refresh()
+            Task { await sync() }
+        }
         pendingPaymentLink = body
     }
 
@@ -721,7 +786,7 @@ final class AppState {
             // uses Bitcoin's `bc` HRP, so a cross-network entry here would look perfectly valid and
             // send coins to a chain that will never see them (Golden Rule §6).
             destinations: manager.wallets
-                .filter { $0.network == wallet.network && $0.id != id }
+                .filter { other in other.id != id && other.accounts.contains { $0.network == wallet.network } }
                 .map { SendViewModel.Destination(id: $0.id, label: $0.label,
                                                  balance: balanceSummary(walletId: $0.id)) },
             send: { address, amount, feeRate in
@@ -752,7 +817,13 @@ final class AppState {
             // deriving a FRESH address every time someone browses the picker would inflate that
             // wallet's revealed-index space, which is what hid a real incoming tx once before.
             addressForDestination: { destinationId in
-                try await self.walletOps.receiveAddress(walletId: destinationId, unused: true).address
+                // Pay the destination wallet's account ON THIS NETWORK — not whichever account it
+                // happens to be switched to (Golden Rule §6). Sidechain wallets still go through the
+                // facade (Thunder derives outside BDK).
+                if wallet.network.isSidechain {
+                    return try await self.walletOps.receiveAddress(walletId: destinationId, unused: true).address
+                }
+                return try self.manager.nextUnusedAddress(walletId: destinationId, network: wallet.network).address
             })
         activeSendVM = vm
         return vm

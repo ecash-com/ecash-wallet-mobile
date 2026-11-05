@@ -7,7 +7,7 @@ import WalletService
 
 /// The wallet manager, presented as a sheet from the Home switcher pill. One row per wallet
 /// (avatar, label, network, backup state, selected check); tap to switch. Per-row "⋯" menu →
-/// rename / copy to network / remove (remove warns extra-loudly when the wallet isn't backed up — Golden Rule §5
+/// rename / switch network / remove (remove warns extra-loudly when the wallet isn't backed up — Golden Rule §5
 /// purge). "New" and "Import" reuse the existing Create/Import flows via navigation.
 ///
 /// Dismissal: any change of the selected wallet (switch, create, import) closes the sheet —
@@ -22,7 +22,7 @@ struct WalletManagerSheet: View {
     /// Presentation is its OWN state, deliberately not derived from `removeTarget` — see
     /// `confirmationDialog` below for why deriving it silently broke removal on Android.
     @State var isRemovingWallet = false
-    @State var copyTarget: ManagedWallet? = nil
+    @State var switchTarget: ManagedWallet? = nil
     @State var path: [WalletManagerRoute] = []
 
     var body: some View {
@@ -91,8 +91,9 @@ struct WalletManagerSheet: View {
             .navigationDestination(for: WalletManagerRoute.self) { route in
                 switch route {
                 case .create:
-                    CreateConfirmView(viewModel: app.makeCreateViewModel(),
-                                      defaultName: app.nextDefaultWalletName)
+                    CreateWalletScreen(viewModel: app.makeCreateViewModel(),
+                                       defaultName: app.nextDefaultWalletName,
+                                       wordCount: app.newWalletWordCount)
                 case .importWallet:
                     ImportWalletView(viewModel: app.makeImportViewModel(),
                                      defaultName: app.nextDefaultWalletName)
@@ -110,11 +111,9 @@ struct WalletManagerSheet: View {
         .sheet(item: $renameTarget) { wallet in
             renameSheet(wallet)
         }
-        // Copy to network: a successful copy selects the new wallet, which closes this sheet too.
-        .sheet(item: $copyTarget) { wallet in
-            if let vm = app.makeCopyWalletViewModel(walletId: wallet.id) {
-                CopyWalletView(viewModel: vm)
-            }
+        // Switch network: the wallet stays the same wallet; a switch on the selected one re-roots Home.
+        .sheet(item: $switchTarget) { wallet in
+            NetworkSwitcherSheet(walletId: wallet.id)
         }
         // Remove: explicit confirmation, extra-loud when not backed up.
         // `isPresented` is a plain Bool, NOT a binding derived from `removeTarget`, because SkipUI
@@ -207,13 +206,13 @@ struct WalletManagerSheet: View {
                         Image(icon: Icon.rename)
                     }
                 }
-                // Only where the keys carry over (docs/copy-wallet-to-network.md) — not Signet/Thunder.
-                if app.canCopyToNetwork(wallet) {
-                    Button { copyTarget = wallet } label: {
+                // A wallet is a seed; it switches networks (docs/seed-container-model.md §4).
+                if app.canSwitchNetwork(wallet) {
+                    Button { switchTarget = wallet } label: {
                         Label {
-                            Text("Copy to network…", bundle: .module, comment: "wallet row menu: copy wallet to another network")
+                            Text("Switch network…", bundle: .module, comment: "wallet row menu: switch the wallet's network")
                         } icon: {
-                            Image(icon: Icon.copy)
+                            Image(icon: Icon.sort)
                         }
                     }
                 }

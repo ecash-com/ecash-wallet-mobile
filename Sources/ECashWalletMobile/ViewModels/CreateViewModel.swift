@@ -31,12 +31,12 @@ final class CreateViewModel {
     /// Seed-equivalent while set — cleared as soon as the wallet exists.
     var entropyField: String? = nil
 
-    private let create: @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void
-    private let createWithEntropy: @MainActor (_ label: String, _ network: WalletNetwork, _ entropyField: String, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void
+    private let create: @MainActor (_ label: String, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void
+    private let createWithEntropy: @MainActor (_ label: String, _ entropyField: String, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void
     private(set) var phase: Phase = .idle
 
-    init(create: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void,
-         createWithEntropy: @escaping @MainActor (_ label: String, _ network: WalletNetwork, _ entropyField: String, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void = { _, _, _, _, _ in }) {
+    init(create: @escaping @MainActor (_ label: String, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void,
+         createWithEntropy: @escaping @MainActor (_ label: String, _ entropyField: String, _ wordCount: Int, _ scriptType: ScriptType) throws -> Void = { _, _, _, _ in }) {
         self.create = create
         self.createWithEntropy = createWithEntropy
     }
@@ -49,9 +49,9 @@ final class CreateViewModel {
         return nil
     }
 
-    /// Generate + persist a wallet on `network`. Synchronous BDK key derivation (no network I/O),
+    /// Generate + persist a wallet (it opens on the current eCash chain; networks are switched from Home). Synchronous BDK key derivation (no network I/O),
     /// so it's fast; surfaced as a brief `.creating` state. Errors map to a user-safe message.
-    func submit(label: String, network: WalletNetwork, wordCount: Int = 12) {
+    func submit(label: String, wordCount: Int = 12) {
         guard phase != .creating else { return }
         phase = .creating
         do {
@@ -59,12 +59,12 @@ final class CreateViewModel {
             // plain path stays as a fallback: if it were somehow missing, creating from the CSPRNG is
             // a better outcome than refusing to make a wallet.
             if let entropyField, !entropyField.isEmpty {
-                try createWithEntropy(label, network, entropyField, wordCount, scriptType)
+                try createWithEntropy(label, entropyField, wordCount, scriptType)
                 // The field is seed-equivalent and the mnemonic is now the real backup — drop it the
                 // moment it has served its purpose (§8).
                 self.entropyField = nil
             } else {
-                try create(label, network, wordCount, scriptType)
+                try create(label, wordCount, scriptType)
             }
             // Success: AppState re-roots to Home; nothing else to do here.
         } catch let error as WalletError {

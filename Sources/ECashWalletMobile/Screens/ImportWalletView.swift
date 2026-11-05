@@ -6,7 +6,8 @@ import SwiftUI
 import WalletService
 
 /// Restore a wallet from a 12/24-word recovery phrase (Welcome → here → Home). No network
-/// question — same model as Create (`docs/wallet-and-network-model.md`). BDK validates the
+/// question — a wallet is a seed; `network` below is only the account it opens on
+/// (`docs/seed-container-model.md §4`). BDK validates the
 /// word list + checksum at submit; a rejection shows only the scrubbed user message, never the
 /// entered words (Golden Rule §2).
 ///
@@ -81,21 +82,10 @@ struct ImportWalletView: View {
                 // is a single key with no derivation). Showing a recovery-phrase control to someone
                 // holding a private key invites them to paste it in the wrong box.
                 if !isClaim {
-                    // Network is chosen up front (it fixes the address set) and unmistakable
-                    // (Golden Rule §4/§6).
-                    NetworkSelector(network: $network)
-                        .onChange(of: network) { _, newNet in
-                            // Thunder has a fixed ed25519 derivation and no WIF/script-type concept
-                            // — force the phrase path so a stale WIF/type selection can't carry over.
-                            if newNet == .thunder { vm.kind = .recoveryPhrase }
-                            vm.updatePreview(network: newNet)
-                            vm.updateSeedPreview(network: newNet)
-                        }
-
-                    // Advanced (import type + BIP script-type derivation) applies only to
-                    // BDK/secp256k1 networks. Thunder is ed25519 with a fixed derivation
-                    // (m/1'/0'/0'/i') — no choice to make — so hide Advanced entirely for it.
-                    if network != .thunder { advancedSection }
+                    // No network picker: a wallet is a seed that opens on eCash and switches networks
+                    // from Home (docs/seed-container-model.md §4). Advanced (import type + BIP
+                    // script-type derivation) stays — that is recovery-correctness, not a network.
+                    advancedSection
                 }
 
                 // Input depends on the chosen import type. In claim mode `kind` is pinned to

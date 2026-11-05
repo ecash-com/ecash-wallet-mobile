@@ -57,6 +57,29 @@ import Testing
         #expect(!store.needsInitialCheck(walletId: id))
     }
 
+    /// The seed-container migration folds a copy's record into the wallet it came from; its
+    /// split-check cache follows (results merge, the owed check carries over, the old id is gone),
+    /// and an answer the surviving wallet already has is never overwritten.
+    @Test func rekeyCarriesAMergedRecordsStateToItsWallet() {
+        let store = SplitCheckStore()
+        let old = "split-rekey-old-\(UUID().uuidString)"
+        let new = "split-rekey-new-\(UUID().uuidString)"
+        defer { store.forget(walletId: old); store.forget(walletId: new) }
+        store.merge(["a:0": .shared, "b:1": .chainSpecific], walletId: old)
+        store.merge(["b:1": .shared], walletId: new)            // the wallet's own, newer answer
+        store.markNeedsInitialCheck(walletId: old)
+
+        store.rekey(from: old, to: new)
+
+        #expect(store.results(walletId: new)["a:0"] == .shared)
+        #expect(store.results(walletId: new)["b:1"] == .shared)   // kept its own
+        #expect(store.results(walletId: old).isEmpty)
+        #expect(store.needsInitialCheck(walletId: new))
+        #expect(!store.needsInitialCheck(walletId: old))
+        #expect(store.lastCheckedEpochSeconds(walletId: old) == nil)
+        #expect(store.lastCheckedEpochSeconds(walletId: new) != nil)
+    }
+
     /// "Couldn't reach Bitcoin" is never recorded, so it can't stand in for an answer.
     @Test func unknownVerdictsAreNotStored() {
         let store = SplitCheckStore()

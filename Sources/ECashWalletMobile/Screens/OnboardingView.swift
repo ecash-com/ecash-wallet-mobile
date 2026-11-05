@@ -16,13 +16,14 @@ struct OnboardingView: View {
 
     var body: some View {
         NavigationStack(path: $path) {
-            WelcomeView(onCreate: { path.append(.createConfirm) },
+            WelcomeView(onCreate: { path.append(.create) },
                         onImport: { path.append(.importWallet) })
                 .navigationDestination(for: OnboardingRoute.self) { route in
                     switch route {
-                    case .createConfirm:
-                        CreateConfirmView(viewModel: app.makeCreateViewModel(),
-                                          defaultName: app.nextDefaultWalletName)
+                    case .create:
+                        CreateWalletScreen(viewModel: app.makeCreateViewModel(),
+                                           defaultName: app.nextDefaultWalletName,
+                                           wordCount: app.newWalletWordCount)
                     case .importWallet:
                         ImportWalletView(viewModel: app.makeImportViewModel(),
                                          defaultName: app.nextDefaultWalletName)
@@ -33,6 +34,6 @@ struct OnboardingView: View {
 }
 
 enum OnboardingRoute: Hashable {
-    case createConfirm
+    case create
     case importWallet
 }
