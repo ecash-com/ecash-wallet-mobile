@@ -146,11 +146,14 @@ each script type is its own BDK wallet, own sqlite store, own sync. Consequences
 ## 4. Behaviour, screen by screen
 
 - **Create:** no network picker and **no script-type picker** (Jake, 2026-11-04): every new
-  mainchain account is native segwit (bip84). The current create screen's address-type control
-  (`ScriptType.creatable`) is removed; taproot comes back as an on-demand address type on Receive in
-  phase 2, never as a creation decision. Generate phrase → derive the `0'`, `1'` and Thunder account
-  keys → persist with `selectedAccountId = ecashMainnet-bip84-0` → Home. 12/24 words, entropy-grid,
-  labels, backup nudge: unchanged.
+  mainchain account is native segwit (bip84). Taproot comes back as an on-demand address type on
+  Receive in phase 2, never as a creation decision. **The "New wallet" screen itself goes** (Jake,
+  2026-11-05): with both pickers gone it held only an explainer paragraph and Continue, so "Create
+  wallet" (onboarding and the wallet list) pushes the **entropy grid directly**; its one-line
+  explainer ("add your own randomness, then see the phrase it produces") moves into the entropy
+  screen's header. Flow: entropy grid → seed preview → generate → derive the `0'`, `1'` and Thunder
+  account keys → persist with `selectedAccountId = ecashMainnet-bip84-0` → Home. The 12/24-word
+  choice stays in Settings; labels and the backup nudge are unchanged.
 - **Import:** phrase → same derivation. The **Advanced** section keeps script type + account index
   (recovery-correctness, `docs/custom-derivation-path-import.md`), applied to the accounts created at
   import. Phase 3 (§8): scan all four script types on the default network and keep those with
@@ -268,6 +271,22 @@ Thunder records have no descriptor, so a Thunder record stays a **separate walle
 be removed by their owners as betanet winds down.
 
 ### 6.3 Dry run and failure handling
+
+**As built (step 3, 2026-11-05):** `WalletMigrationV2Applier` in WalletService. `WalletManager.load`
+runs it before reading the list; it has no `KeyStore` reference and no logging of its own. Order:
+`store.beginV2Migration()` (copies `wallets.json` → `wallets.json.pre-v2`, once) → plan → for each
+merged record with a store: open its legacy store with its own descriptors **load-only** and read
+the balance → move the `.sqlite` (+`-wal`/`-shm` if present) → reopen at the account name, same
+descriptors, compare the balance → on any failure move it back, record the exclusion
+(`load-before` / `move` / `load-after`), re-plan with that id pinned standalone, continue → write
+`migration-v2.log.json` (ids, store names, counts, exclusions, selection — never a label or
+descriptor; a test scans for canaries) → `store.commitV2`. An empty legacy list is committed as an
+empty v2 list so a fresh install writes v2 from its first wallet. A destination already present
+with its source gone is an interrupted earlier run: the record is still merged and the store is
+verified in place, never moved twice. The app's persisted selection goes INTO `load(savedSelectedId:)`
+so it can be mapped to the wallet a merged copy now lives in (`migratedWalletId(forLegacy:)`).
+The per-`walletId` app-store re-keys (`SplitCheckStore`) are in the report's `rekeys` and are
+applied app-side in step 5.
 
 - The migration is **computed fully in memory first** (plan: wallets, moves, re-keys), then applied:
   copy `wallets.json` → `wallets.json.pre-v2` → file moves, each followed by the BDK reopen +
@@ -430,16 +449,22 @@ and nothing user-visible changes until step 5.
    `wallets.json` again; before that it stays on the legacy file and refuses a multi-account
    write. The planner emits real `ManagedWallet`s. Verified: WalletService 328 host + JUnit, app
    592 tests, Android debug APK with the regenerated bridge.
-3. **Applier.** File moves with the BDK reopen + balance check (I3/I4), `wallets.json.pre-v2` copy,
-   `migration-v2.log.json`, the done flag. Real-BDK tests on sim + emulator with a seeded legacy
-   `wallets.json` fixture covering (a)–(d) from §9.
+3. ✅ **Applier** (DONE 2026-11-05, §6.3 "as built"). The "done flag" is the v2 file's existence
+   (`FileWalletStore.isV2`) — one source of truth, no UserDefaults flag to drift. Mock-factory tests
+   cover merge / empty list / run-once / pass-through / back-out before and after the move /
+   resume / report scrubbing; `MigrationApplierBDKTests` runs the whole thing over real BDK SQLite
+   stores with a funded store (balance intact after the move, snapshot byte-identical, second launch
+   a no-op) and a store written for a different seed (refused by BDK's load, left in place).
+   Remove-wallet now purges `orphanKeychainIds` (never a live wallet's id). Still to do on a real
+   device: the §9 manual upgrade matrix, before 1.5.0.
 4. **Manager.** `createWallet` / `importWallet` / `importPrivateKey` lose `network:` and derive all
    mainchain accounts; `switchAccount`, `availableNetworks`; engine cache keyed by `storeName`;
    `WalletEngine.signPsbt` rebuilt from the **account** (I7); delete `copyTargets` / `copyWallet` /
    `existingCopy` and their tests.
 5. **App.** `AppState` per account; `NetworkSwitcherSheet` (nested, §3.1) opened from the Home chip;
-   remove `NetworkSelector` from create (and the script-type control — bip84 only) and from import
-   outside Advanced; delete `CopyWalletSheet`; keep claim mode and WIF import exactly (§4.1); then
+   **delete `CreateConfirmView`** — create pushes `EntropyInputScreen` directly (§4) — and remove
+   `NetworkSelector` from import outside Advanced; delete `CopyWalletSheet`; keep claim mode and
+   WIF import exactly (§4.1); apply the migration report's `rekeys` to `SplitCheckStore`; then
    migrate the ~140 `.network` call sites off the shim and delete it.
 6. **Release prep.** Manual upgrade matrix (§9) on both platforms from a 1.4.7 build, release notes
    stating the downgrade behaviour (§6.4), bump to 1.5.0 / next build number, update CLAUDE.md §2

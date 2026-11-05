@@ -279,6 +279,53 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         }
     }
 
+    // MARK: - Seed-container migration support (`docs/seed-container-model.md §6`)
+
+    public func chainDataFileNames() -> [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: chainDataDirectory.path)) ?? []
+    }
+
+    public func moveChainDataStore(from: String, to: String) throws {
+        let fm = FileManager.default
+        for suffix in ["", "-wal", "-shm"] {
+            let src = chainDataDirectory.appendingPathComponent("\(from)\(suffix)")
+            let dst = chainDataDirectory.appendingPathComponent("\(to)\(suffix)")
+            guard fm.fileExists(atPath: src.path) else { continue }     // nothing to move (or done)
+            if fm.fileExists(atPath: dst.path) { throw WalletError.persistenceFailed }   // never overwrite
+            do {
+                try fm.moveItem(at: src, to: dst)
+            } catch {
+                throw WalletError.persistenceFailed
+            }
+        }
+    }
+
+    public func cachedBalance(storeName: String, account: WalletAccount, keyType: WalletKeyType) throws -> Int64 {
+        let path = chainDataDirectory.appendingPathComponent(storeName).path
+        // `Persister.newSqlite` would CREATE a missing file; a probe must never do that.
+        guard FileManager.default.fileExists(atPath: path) else { throw WalletError.persistenceFailed }
+        do {
+            let net = BDKSeam.network(account.network)
+            let persister = try Persister.newSqlite(path: path)
+            // LOAD ONLY — unlike `engine(for:)`, no fallback to constructing a fresh wallet: BDK's
+            // load checks the persisted descriptors against the ones passed, and that refusal is
+            // exactly the signal the migration relies on (invariant I3).
+            let wallet: Wallet
+            if keyType == .wif {
+                let descriptor = try Descriptor(descriptor: account.externalDescriptor, network: net)
+                wallet = try Wallet.loadSingle(descriptor: descriptor, persister: persister)
+            } else {
+                let external = try Descriptor(descriptor: account.externalDescriptor, network: net)
+                let change = try Descriptor(descriptor: account.internalDescriptor, network: net)
+                wallet = try Wallet.load(descriptor: external, changeDescriptor: change, persister: persister)
+            }
+            return Int64(wallet.balance().total.toSat())
+        } catch {
+            // Scrub: a BDK error can embed descriptor text — classify, never echo (Golden Rule §2).
+            throw WalletError.persistenceFailed
+        }
+    }
+
     // MARK: - Helpers
 
     /// One SQLite file per `(walletId × network)` under `chainDataDirectory`, named

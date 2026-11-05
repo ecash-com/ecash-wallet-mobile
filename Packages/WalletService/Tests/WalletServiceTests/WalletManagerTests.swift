@@ -396,4 +396,66 @@ final class WalletManagerTests: XCTestCase {
             XCTAssertFalse(error.userMessage.contains("wpkh"))
         }
     }
+
+    // MARK: - Seed-container migration at load (docs/seed-container-model.md §6)
+
+    private func legacyRecord(_ id: String, _ network: WalletNetwork, sort: Int) -> ManagedWallet {
+        let coin = network == .signet ? "1" : "0"
+        return ManagedWallet(id: id, label: "W", network: network,
+                             externalDescriptor: "wpkh([d34db33f/84'/\(coin)'/0']xpub\(id)/0/*)",
+                             internalDescriptor: "wpkh([d34db33f/84'/\(coin)'/0']xpub\(id)/1/*)",
+                             sortIndex: sort)
+    }
+
+    func testLoadRunsTheMigrationOnceAndMapsTheSavedSelection() throws {
+        let ks = InMemoryKeyStore()
+        let ws = InMemoryWalletStore()
+        let factory = MockWalletEngineFactory()
+        try ws.upsertWallet(legacyRecord("orig", .ecashMainnet, sort: 0))
+        try ws.upsertWallet(legacyRecord("copy", .bitcoin, sort: 1))
+        try ks.saveMnemonic("phrase", walletId: "orig")
+        try ks.saveMnemonic("phrase", walletId: "copy")
+        factory.chainDataFiles = ["copy-bitcoin.sqlite"]
+        factory.cachedBalances["copy-bitcoin.sqlite"] = 42
+
+        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: factory)
+        try manager.load(savedSelectedId: "copy")                     // the app's persisted choice was the copy
+
+        XCTAssertTrue(ws.isV2)
+        XCTAssertEqual(manager.wallets.map { $0.id }, ["orig"])
+        XCTAssertEqual(manager.selectedWalletId, "orig")
+        XCTAssertEqual(manager.selectedWallet?.selectedAccountId, "bitcoin-bip84-0")
+        XCTAssertEqual(manager.migratedWalletId(forLegacy: "copy"), "orig")
+        XCTAssertEqual(manager.migratedWalletId(forLegacy: "orig"), "orig")
+        XCTAssertNil(manager.migratedWalletId(forLegacy: "nope"))
+        // The migration never touched a Keychain entry (I1): both phrases are still there.
+        XCTAssertEqual(try ks.loadMnemonic(walletId: "copy"), "phrase")
+        XCTAssertEqual(try ks.loadMnemonic(walletId: "orig"), "phrase")
+
+        // A second load is an ordinary load.
+        try manager.load(savedSelectedId: "orig")
+        XCTAssertEqual(factory.storeMoves.count, 1)
+        XCTAssertEqual(ws.migrationReports.count, 1)
+    }
+
+    func testRemoveWalletPurgesTheOrphanKeychainEntriesButNeverALiveWallet() throws {
+        let ks = InMemoryKeyStore()
+        let ws = InMemoryWalletStore()
+        let a = WalletAccount(network: WalletNetwork.ecashMainnet, scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                              externalDescriptor: "e", internalDescriptor: "i", storeName: "m-ecashMainnet.sqlite")
+        let merged = ManagedWallet(id: "m", label: "Merged", keyType: WalletKeyType.mnemonic, isBackedUp: true, sortIndex: 0,
+                                   selectedAccountId: a.id, accounts: [a],
+                                   mergedFrom: ["old", "other"], orphanKeychainIds: ["old", "other"])
+        try ws.commitV2([merged, legacyRecord("other", .signet, sort: 1)])   // "other" is somehow still live
+        for id in ["m", "old", "other"] { try ks.saveMnemonic("phrase-\(id)", walletId: id) }
+
+        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
+        try manager.load()
+        try manager.removeWallet(id: "m")
+
+        XCTAssertNil(try ks.loadMnemonic(walletId: "m"))
+        XCTAssertNil(try ks.loadMnemonic(walletId: "old"))                  // the orphan went with it
+        XCTAssertEqual(try ks.loadMnemonic(walletId: "other"), "phrase-other")   // a live wallet's entry never
+        XCTAssertEqual(manager.wallets.map { $0.id }, ["other"])
+    }
 }

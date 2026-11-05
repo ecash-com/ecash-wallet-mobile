@@ -31,14 +31,20 @@ import Foundation
 // applier persists exactly what the planner verified. Only the plan/move/rekey wrappers are
 // planner-local and stay `internal` (not bridged).
 
-/// A chain-data file rename, basenames within the chain-data directory.
-struct PlannedFileMove: Equatable {
-    let from: String
-    let to: String
+/// A BDK store rename, basenames within the chain-data directory — the `.sqlite` file; its
+/// `-wal`/`-shm` sidecars travel with it (`WalletEngineFactory.moveChainDataStore`). One per merged
+/// record that has a store, tagged with that record so the applier can verify and revert it.
+struct PlannedFileMove: Equatable, Codable {
+    let legacyId: String
+    // Not `from`/`to`: inside Skip's generated Kotlin `encode(to: Encoder)` a property named `to`
+    // resolves to the encoder parameter, and the report encodes the encoder (ClassCastException).
+    let source: String
+    let destination: String
 }
 
-/// A per-`walletId` app store (e.g. `SplitCheckStore`) whose key must follow a merged record.
-struct PlannedRekey: Equatable {
+/// A per-`walletId` app store (e.g. `SplitCheckStore`) whose key must follow a merged record. Also
+/// the legacy-id → wallet-id map (`mergedInto`) the app uses to restore a selection.
+struct PlannedRekey: Equatable, Codable {
     let legacyId: String
     let walletId: String
     let accountId: String
@@ -106,14 +112,16 @@ struct MigrationPlan: Equatable {
         if accountTotal != inputAccounts {
             problems.append("accounts \(accountTotal) != input accounts \(inputAccounts)")
         }
-        // Moves: distinct destinations, never onto a source, never a no-op.
+        // Moves: distinct destinations, never onto a source, never a no-op, each for a merged record.
         var destinations = Set<String>()
-        let sources = Set(fileMoves.map { $0.from })
+        let sources = Set(fileMoves.map { $0.source })
+        let mergedIds = Set(rekeys.map { $0.legacyId })
         for m in fileMoves {
-            if m.from == m.to { problems.append("no-op move \(m.from)") }
-            if destinations.contains(m.to) { problems.append("two moves to \(m.to)") }
-            destinations.insert(m.to)
-            if sources.contains(m.to) { problems.append("move onto a source \(m.to)") }
+            if m.source == m.destination { problems.append("no-op move \(m.source)") }
+            if destinations.contains(m.destination) { problems.append("two moves to \(m.destination)") }
+            destinations.insert(m.destination)
+            if sources.contains(m.destination) { problems.append("move onto a source \(m.destination)") }
+            if !mergedIds.contains(m.legacyId) { problems.append("move for unmerged \(m.legacyId)") }
         }
         if let sel = selectedWalletId, !walletIds.contains(sel) {
             problems.append("selected wallet \(sel) not in plan")
@@ -133,8 +141,14 @@ enum WalletStoreMigrationV2 {
         return record.masterFingerprint
     }
 
-    static func plan(legacy: [ManagedWallet], chainDataFiles: [String], selectedId: String?) -> MigrationPlan {
+    /// - Parameters:
+    ///   - keepStandalone: legacy ids that must NOT be merged even if they match a group — the
+    ///     applier re-plans with the ids whose store failed verification (§6.3), so a failed record
+    ///     stays its own wallet, untouched, and the rest of the migration still proceeds.
+    static func plan(legacy: [ManagedWallet], chainDataFiles: [String], selectedId: String?,
+                     keepStandalone: [String] = []) -> MigrationPlan {
         let files = Set(chainDataFiles)
+        let pinned = Set(keepStandalone)
         // Deterministic regardless of input order: lowest sortIndex first, then id.
         let ordered = legacy.sorted { a, b in
             if a.sortIndex != b.sortIndex { return a.sortIndex < b.sortIndex }
@@ -146,7 +160,7 @@ enum WalletStoreMigrationV2 {
         var groups: [String: [ManagedWallet]] = [:]
         var units: [PlanUnit] = []   // (group key | standalone record), in order of first appearance
         for record in ordered {
-            if let key = mergeKey(for: record) {
+            if !pinned.contains(record.id), let key = mergeKey(for: record) {
                 if groups[key] == nil {
                     groupOrder.append(key)
                     units.append(PlanUnit(groupKey: key, standalone: nil))
@@ -162,7 +176,7 @@ enum WalletStoreMigrationV2 {
         var wallets: [ManagedWallet] = []
         var moves: [PlannedFileMove] = []
         var rekeys: [PlannedRekey] = []
-        var keptStandalone: [String] = []
+        var keptStandalone: [String] = keepStandalone
         var mergedInto: [String: String] = [:]   // secondary id → primary id
         var claimedDestinations = Set<String>()
 
@@ -191,8 +205,13 @@ enum WalletStoreMigrationV2 {
                 let destination = WalletAccount.storeName(walletId: primary.id, network: secondary.network,
                                                           scriptType: secondary.scriptType,
                                                           accountIndex: secondary.accountIndex)
-                let destinationExists = files.contains { $0.hasPrefix(destination) }
-                if takenAccountIds.contains(accountId) || destinationExists || claimedDestinations.contains(destination) {
+                // A destination that already exists is a CONFLICT only while the source is still
+                // there too. Destination present + source gone = an interrupted earlier run already
+                // moved it; plan the move and the applier verifies it in place (§6.3).
+                let hasSource = files.contains(WalletAccount.legacyStoreName(walletId: secondary.id, network: secondary.network))
+                    || files.contains("\(secondary.id).sqlite")
+                let conflict = hasSource && files.contains { $0.hasPrefix(destination) }
+                if takenAccountIds.contains(accountId) || conflict || claimedDestinations.contains(destination) {
                     // Not provably safe to fold in — keep it as its own wallet, untouched (I2/I3).
                     keptStandalone.append(secondary.id)
                     wallets.append(standaloneWallet(secondary))
@@ -206,7 +225,9 @@ enum WalletStoreMigrationV2 {
                                               externalDescriptor: secondary.externalDescriptor,
                                               internalDescriptor: secondary.internalDescriptor,
                                               storeName: destination))
-                moves.append(contentsOf: storeMoves(for: secondary, to: destination, files: files))
+                if let move = storeMove(for: secondary, to: destination, files: files) {
+                    moves.append(move)
+                }
                 rekeys.append(PlannedRekey(legacyId: secondary.id, walletId: primary.id, accountId: accountId))
                 mergedFrom.append(secondary.id)
                 mergedInto[secondary.id] = primary.id
@@ -248,25 +269,166 @@ enum WalletStoreMigrationV2 {
     /// A record that stays its own wallet: unchanged, store file and all.
     private static func standaloneWallet(_ record: ManagedWallet) -> ManagedWallet { record }
 
-    /// The moves that carry a merged record's chain data to its new account store. The scoped
-    /// `<id>-<network>.sqlite` (+`-wal`/`-shm`) when present; else the pre-2026-06 un-namespaced
-    /// `<id>.sqlite` family, which `makePersister` would otherwise only ever migrate under the OLD id.
-    /// No files → no moves; BDK creates the store fresh on first open.
-    private static func storeMoves(for record: ManagedWallet, to destination: String,
-                                   files: Set<String>) -> [PlannedFileMove] {
-        let suffixes = ["", "-wal", "-shm"]
+    /// The move that carries a merged record's chain data to its new account store: the scoped
+    /// `<id>-<network>.sqlite` when present, else the pre-2026-06 un-namespaced `<id>.sqlite`, which
+    /// `makePersister` would otherwise only ever migrate under the OLD id. Sidecars follow at apply
+    /// time. Destination already present with no source = moved by an interrupted run; the move is
+    /// still planned (source = the scoped name) so the applier verifies it in place. No file either
+    /// side → no move; BDK creates the store fresh on first open.
+    private static func storeMove(for record: ManagedWallet, to destination: String,
+                                  files: Set<String>) -> PlannedFileMove? {
         let scoped = WalletAccount.legacyStoreName(walletId: record.id, network: record.network)
         let unscoped = "\(record.id).sqlite"
-        let base = files.contains(scoped) ? scoped : (files.contains(unscoped) ? unscoped : nil)
-        guard let base = base else { return [] }
-        var out: [PlannedFileMove] = []
-        for suffix in suffixes {
-            let from = "\(base)\(suffix)"
-            if files.contains(from) {
-                out.append(PlannedFileMove(from: from, to: "\(destination)\(suffix)"))
-            }
+        if files.contains(scoped) || files.contains(destination) {
+            return PlannedFileMove(legacyId: record.id, source: scoped, destination: destination)
         }
-        return out
+        if files.contains(unscoped) {
+            return PlannedFileMove(legacyId: record.id, source: unscoped, destination: destination)
+        }
+        return nil
+    }
+}
+
+// MARK: - The APPLIER
+
+/// A merged record the applier backed out of merging, and why. `reason` is a fixed code:
+/// `load-before` (its legacy store wouldn't open with its own descriptors), `move` (a rename
+/// failed), `load-after` (the moved store wouldn't reopen, or its balance differed). In every
+/// case the moves were reverted and the record stays its own wallet, untouched.
+struct MigrationExclusion: Equatable, Codable {
+    let legacyId: String
+    let reason: String
+}
+
+/// What the migration did — persisted as `migration-v2.log.json` and kept by `WalletManager` for the
+/// app (selection mapping, per-`walletId` store re-keys). **Ids, store names, and counts only**:
+/// never a label, a descriptor, or anything from the Keychain (Golden Rule §2; pinned by
+/// `testReportNeverContainsLabelsOrDescriptors`).
+struct MigrationReport: Equatable, Codable {
+    let version: Int
+    let appliedAtEpochSeconds: Int64
+    let summary: String
+    let walletIds: [String]
+    let moves: [PlannedFileMove]
+    let rekeys: [PlannedRekey]
+    let keptStandalone: [String]
+    let excluded: [MigrationExclusion]
+    let selectedWalletId: String?
+
+    /// The wallet a legacy id now lives in: itself, or the primary it was merged into.
+    func walletId(forLegacy id: String) -> String? {
+        if walletIds.contains(id) { return id }
+        return rekeys.first { $0.legacyId == id }?.walletId
+    }
+}
+
+/// Applies a verified `MigrationPlan` (`docs/seed-container-model.md §6.3`): snapshot the legacy
+/// list, move each merged record's store with a BDK reopen + balance check on either side, back
+/// out any record that fails, write the report, commit v2. Reaches files only through the factory
+/// and the wallet list only through the store; has **no `KeyStore`** (invariant I1) and no logging
+/// of its own.
+///
+/// Retry-safe: a failure before `commitV2` leaves the legacy list authoritative and the next launch
+/// runs again; a store already moved is recognised (source gone, destination present) and verified
+/// in place rather than moved twice.
+// SKIP @nobridge
+public final class WalletMigrationV2Applier {
+    private let store: WalletStore
+    private let factory: WalletEngineFactory
+
+    init(store: WalletStore, factory: WalletEngineFactory) {
+        self.store = store
+        self.factory = factory
+    }
+
+    /// Run the migration unless the store is already v2. Returns the report, or `nil` when there
+    /// was nothing to do. An **empty** legacy list is still committed (as an empty v2 list) so a
+    /// fresh install writes v2 from its first wallet on.
+    func migrateIfNeeded(selectedId: String?, nowEpochSeconds: Int64) throws -> MigrationReport? {
+        if store.isV2 { return nil }
+        let legacy = try store.allWallets()
+        try store.beginV2Migration()                         // I5: snapshot before anything moves
+        let files = factory.chainDataFileNames()
+
+        var keep: [String] = []
+        var excluded: [MigrationExclusion] = []
+        var verified = Set<String>()                         // legacy ids moved + checked already
+        var plan = WalletStoreMigrationV2.plan(legacy: legacy, chainDataFiles: files,
+                                               selectedId: selectedId, keepStandalone: keep)
+        var passes = 0
+        while true {
+            passes += 1
+            if passes > legacy.count + 1 { throw WalletError.persistenceFailed }   // can't happen; never spin
+            // I2: never apply a plan that doesn't verify.
+            if !plan.verify(against: legacy).isEmpty { throw WalletError.persistenceFailed }
+
+            var failure: MigrationExclusion? = nil
+            for rekey in plan.rekeys {
+                if verified.contains(rekey.legacyId) { continue }
+                guard let record = legacy.first(where: { $0.id == rekey.legacyId }),
+                      let wallet = plan.wallets.first(where: { $0.id == rekey.walletId }),
+                      let account = wallet.account(id: rekey.accountId) else {
+                    throw WalletError.persistenceFailed
+                }
+                guard let move = plan.fileMoves.first(where: { $0.legacyId == rekey.legacyId }) else {
+                    verified.insert(rekey.legacyId)          // never synced: nothing to carry
+                    continue
+                }
+                let outcome = carry(record: record, account: account, move: move)
+                if let reason = outcome {
+                    failure = MigrationExclusion(legacyId: rekey.legacyId, reason: reason)
+                    break
+                }
+                verified.insert(rekey.legacyId)
+            }
+            guard let failed = failure else { break }
+            excluded.append(failed)
+            keep.append(failed.legacyId)
+            plan = WalletStoreMigrationV2.plan(legacy: legacy, chainDataFiles: files,
+                                               selectedId: selectedId, keepStandalone: keep)
+        }
+
+        let report = MigrationReport(version: FileWalletStore.v2Version,
+                                     appliedAtEpochSeconds: nowEpochSeconds,
+                                     summary: plan.summary,
+                                     walletIds: plan.wallets.map { $0.id },
+                                     moves: plan.fileMoves, rekeys: plan.rekeys,
+                                     keptStandalone: plan.keptStandalone, excluded: excluded,
+                                     selectedWalletId: plan.selectedWalletId)
+        try store.saveMigrationReport(try JSONEncoder().encode(report))
+        try store.commitV2(plan.wallets)                      // the one-way switch, last
+        return report
+    }
+
+    /// Move one record's store to its account name and prove nothing changed: the store must open
+    /// with the record's descriptors before (I3) and after, with the same balance (I4). Returns a
+    /// failure reason, or `nil` on success. On failure the move is undone.
+    private func carry(record: ManagedWallet, account: WalletAccount, move: PlannedFileMove) -> String? {
+        let keyType = record.keyType
+        let alreadyMoved = !factory.chainDataFileNames().contains(move.source)
+            && factory.chainDataFileNames().contains(move.destination)
+        if alreadyMoved {
+            // A retry after an interrupted run: verify in place.
+            return (try? factory.cachedBalance(storeName: move.destination, account: account, keyType: keyType)) == nil
+                ? "load-after" : nil
+        }
+        let before: Int64
+        do {
+            before = try factory.cachedBalance(storeName: move.source, account: account, keyType: keyType)
+        } catch {
+            return "load-before"
+        }
+        do {
+            try factory.moveChainDataStore(from: move.source, to: move.destination)
+        } catch {
+            return "move"
+        }
+        if let after = try? factory.cachedBalance(storeName: move.destination, account: account, keyType: keyType),
+           after == before {
+            return nil
+        }
+        try? factory.moveChainDataStore(from: move.destination, to: move.source)   // revert; the record stays standalone
+        return "load-after"
     }
 }
 

@@ -87,6 +87,24 @@ public protocol WalletEngineFactory: AnyObject {
     /// Best-effort: a failed delete must not block wallet removal — the secret is gone first.
     /// Called by `WalletManager.removeWallet` so removal purges EVERY keyed artifact (Golden Rule §5).
     func purgeChainData(for walletId: String)
+
+    // MARK: Seed-container migration support (`docs/seed-container-model.md §6`)
+    //
+    // The factory owns the chain-data directory, so the migration applier reaches the files only
+    // through these three calls — it never touches the filesystem itself.
+
+    /// Basenames of every file in the chain-data directory (the planner's input).
+    func chainDataFileNames() -> [String]
+    /// Rename a BDK store and its `-wal`/`-shm` sidecars, whichever exist, from `from` to `to`
+    /// (basenames). A missing source is a no-op (already moved, or a sidecar SQLite dropped on
+    /// close); an existing destination throws — nothing is ever overwritten (invariant I5).
+    func moveChainDataStore(from: String, to: String) throws
+    /// Open the store `storeName` with `account`'s public descriptors on its network — **load only,
+    /// never create** — and return its cached total balance in sats. BDK refuses to load a store whose
+    /// persisted descriptors differ from the ones passed, so a store that doesn't belong to this
+    /// seed fails loud here instead of being silently re-initialised (invariant I3). Throws for a
+    /// missing file, a mismatch, or a store that can't be read; never echoes the BDK error.
+    func cachedBalance(storeName: String, account: WalletAccount, keyType: WalletKeyType) throws -> Int64
 }
 
 /// Deterministic factory for unit tests — no BDK. Uses the canonical 12-word test vector.
@@ -199,6 +217,44 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
 
     public func purgeChainData(for walletId: String) {
         purgedChainDataIds.append(walletId)
+    }
+
+    // MARK: Migration support — a simulated chain-data directory
+
+    /// The simulated directory listing. Tests seed it with legacy store names.
+    public var chainDataFiles: [String] = []
+    /// Cached balance per store basename. A store present in `chainDataFiles` but absent here
+    /// "fails to load" (stands in for BDK's descriptor-mismatch refusal).
+    public var cachedBalances: [String: Int64] = [:]
+    /// Store basenames whose load throws regardless (simulates a corrupt or foreign store).
+    public var failingStores: [String] = []
+    /// Every move performed, as `"from>to"`, in order — including reverts.
+    public private(set) var storeMoves: [String] = []
+
+    public func chainDataFileNames() -> [String] { chainDataFiles }
+
+    public func moveChainDataStore(from: String, to: String) throws {
+        for suffix in ["", "-wal", "-shm"] {
+            let src = "\(from)\(suffix)"
+            let dst = "\(to)\(suffix)"
+            guard chainDataFiles.contains(src) else { continue }
+            if chainDataFiles.contains(dst) { throw WalletError.persistenceFailed }
+            chainDataFiles.removeAll { $0 == src }
+            chainDataFiles.append(dst)
+            if suffix.isEmpty, let balance = cachedBalances[src] {
+                cachedBalances[src] = nil
+                cachedBalances[dst] = balance
+            }
+        }
+        storeMoves.append("\(from)>\(to)")
+    }
+
+    public func cachedBalance(storeName: String, account: WalletAccount, keyType: WalletKeyType) throws -> Int64 {
+        if failingStores.contains(storeName) { throw WalletError.persistenceFailed }
+        guard chainDataFiles.contains(storeName), let balance = cachedBalances[storeName] else {
+            throw WalletError.persistenceFailed
+        }
+        return balance
     }
 }
 

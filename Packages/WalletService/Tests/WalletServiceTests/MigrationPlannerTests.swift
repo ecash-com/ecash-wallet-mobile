@@ -124,11 +124,8 @@ final class MigrationPlannerTests: XCTestCase {
         XCTAssertEqual(w.orphanKeychainIds, ["copy"])      // recorded, never deleted here
         XCTAssertEqual(w.selectedAccountId, "ecashMainnet-bip84-0")
 
-        XCTAssertEqual(p.fileMoves, [
-            PlannedFileMove(from: "copy-bitcoin.sqlite", to: "orig-bitcoin-bip84-0.sqlite"),
-            PlannedFileMove(from: "copy-bitcoin.sqlite-wal", to: "orig-bitcoin-bip84-0.sqlite-wal"),
-            PlannedFileMove(from: "copy-bitcoin.sqlite-shm", to: "orig-bitcoin-bip84-0.sqlite-shm"),
-        ])
+        // One move per record: the .sqlite; the applier carries -wal/-shm along if present.
+        XCTAssertEqual(p.fileMoves, [PlannedFileMove(legacyId: "copy", source: "copy-bitcoin.sqlite", destination: "orig-bitcoin-bip84-0.sqlite")])
         XCTAssertEqual(p.rekeys, [PlannedRekey(legacyId: "copy", walletId: "orig", accountId: "bitcoin-bip84-0")])
         XCTAssertEqual(p.selectedWalletId, "orig")
     }
@@ -152,7 +149,7 @@ final class MigrationPlannerTests: XCTestCase {
         let p = plan(legacy, files: storeFiles("b", .ecashMainnet, wal: false))
         XCTAssertEqual(p.wallets.count, 1)
         XCTAssertEqual(p.wallets[0].accounts.map { $0.id }, ["ecashMainnet-bip84-0", "ecashMainnet-bip86-0"])
-        XCTAssertEqual(p.fileMoves, [PlannedFileMove(from: "b-ecashMainnet.sqlite", to: "a-ecashMainnet-bip86-0.sqlite")])
+        XCTAssertEqual(p.fileMoves, [PlannedFileMove(legacyId: "b", source: "b-ecashMainnet.sqlite", destination: "a-ecashMainnet-bip86-0.sqlite")])
     }
 
     func testSecondaryWithoutAStoreMergesWithNoMoves() {
@@ -166,10 +163,7 @@ final class MigrationPlannerTests: XCTestCase {
         // A pre-2026-06 store `<id>.sqlite` that makePersister never got to rename under its old id.
         let p = plan([hd("a", .ecashMainnet, sort: 0), hd("b", .bitcoin, sort: 1)],
                      files: ["b.sqlite", "b.sqlite-wal"])
-        XCTAssertEqual(p.fileMoves, [
-            PlannedFileMove(from: "b.sqlite", to: "a-bitcoin-bip84-0.sqlite"),
-            PlannedFileMove(from: "b.sqlite-wal", to: "a-bitcoin-bip84-0.sqlite-wal"),
-        ])
+        XCTAssertEqual(p.fileMoves, [PlannedFileMove(legacyId: "b", source: "b.sqlite", destination: "a-bitcoin-bip84-0.sqlite")])
     }
 
     func testThreeWayMergeAcrossNetworksAndScriptTypes() {
@@ -263,7 +257,7 @@ final class MigrationPlannerTests: XCTestCase {
         XCTAssertFalse(p.summary.contains("label"))
         XCTAssertFalse(p.summary.contains("xpub"))
         XCTAssertFalse(p.summary.contains("wpkh"))
-        XCTAssertEqual(p.summary, "wallets=1 accounts=2 merged=1 moves=3 rekeys=1 selected=a")
+        XCTAssertEqual(p.summary, "wallets=1 accounts=2 merged=1 moves=1 rekeys=1 selected=a")
     }
 
     // MARK: - verify() catches a bad plan
@@ -276,7 +270,7 @@ final class MigrationPlannerTests: XCTestCase {
                                  storeName: "a-ecashMainnet.sqlite")
         let onlyA = ManagedWallet(id: "a", label: "", keyType: WalletKeyType.mnemonic, isBackedUp: false, sortIndex: 0,
                                   selectedAccountId: acct.id, accounts: [acct])
-        let bad = MigrationPlan(wallets: [onlyA, onlyA], fileMoves: [PlannedFileMove(from: "x", to: "x")],
+        let bad = MigrationPlan(wallets: [onlyA, onlyA], fileMoves: [PlannedFileMove(legacyId: "nobody", source: "x", destination: "x")],
                                 rekeys: [], selectedWalletId: "zzz", keptStandalone: [])
         let problems = bad.verify(against: legacy)
         XCTAssertTrue(problems.contains { $0.contains("duplicate wallet id a") })
@@ -285,6 +279,7 @@ final class MigrationPlannerTests: XCTestCase {
         XCTAssertTrue(problems.contains { $0.contains("legacy a placed 2 times") })
         XCTAssertTrue(problems.contains { $0.contains("accounts 2 != input accounts 2") } == false)   // 2 wallets × 1 account = 2 inputs
         XCTAssertTrue(problems.contains { $0.contains("no-op move x") })
+        XCTAssertTrue(problems.contains { $0.contains("move for unmerged nobody") })
         XCTAssertTrue(problems.contains { $0.contains("selected wallet zzz not in plan") })
     }
 
@@ -301,5 +296,29 @@ final class MigrationPlannerTests: XCTestCase {
         XCTAssertEqual(p.wallets.map { $0.id }, ["a", "b"])
         XCTAssertEqual(p.wallets[0], container)
         XCTAssertTrue(p.fileMoves.isEmpty)
+    }
+
+    func testKeepStandalonePinsARecordOutOfItsGroup() {
+        // The applier re-plans with the ids whose store failed verification: pinned records stay
+        // their own wallet, the rest of the group still merges, and the pin is reported.
+        let legacy = [hd("a", .ecashMainnet, sort: 0), hd("b", .bitcoin, sort: 1), hd("c", .signet, sort: 2)]
+        let files = storeFiles("b", .bitcoin) + storeFiles("c", .signet)
+        let p = WalletStoreMigrationV2.plan(legacy: legacy, chainDataFiles: files, selectedId: "b", keepStandalone: ["b"])
+        XCTAssertTrue(p.verify(against: legacy).isEmpty)
+        XCTAssertEqual(p.wallets.map { $0.id }, ["a", "b"])
+        XCTAssertEqual(p.wallets[0].mergedFrom, ["c"])
+        XCTAssertEqual(p.fileMoves.map { $0.legacyId }, ["c"])
+        XCTAssertEqual(p.keptStandalone, ["b"])
+        XCTAssertEqual(p.selectedWalletId, "b")             // still its own wallet, still selected
+    }
+
+    func testAlreadyMovedStoreIsPlannedForInPlaceVerification() {
+        // An interrupted earlier run moved b's store but died before commit: destination present,
+        // source gone. That's not a conflict — the move is planned so the applier verifies it.
+        let legacy = [hd("a", .ecashMainnet, sort: 0), hd("b", .bitcoin, sort: 1)]
+        let p = plan(legacy, files: ["a-bitcoin-bip84-0.sqlite"])
+        XCTAssertEqual(p.wallets.map { $0.id }, ["a"])
+        XCTAssertEqual(p.fileMoves, [PlannedFileMove(legacyId: "b", source: "b-bitcoin.sqlite", destination: "a-bitcoin-bip84-0.sqlite")])
+        XCTAssertTrue(p.keptStandalone.isEmpty)
     }
 }

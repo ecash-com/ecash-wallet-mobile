@@ -26,6 +26,13 @@ public protocol WalletStore: AnyObject {
     /// Replace the whole list with the seed-container (v2) shape in one write. The migration
     /// applier's commit step (`docs/seed-container-model.md §6`); after it the store is in v2 mode.
     func commitV2(_ wallets: [ManagedWallet]) throws
+    /// True once `commitV2` has run. The applier never migrates a v2 store.
+    var isV2: Bool { get }
+    /// Snapshot the legacy list before anything moves (`wallets.json` → `wallets.json.pre-v2`,
+    /// invariant I5). Idempotent; a no-op where there is nothing to snapshot.
+    func beginV2Migration() throws
+    /// Persist the applier's report (`migration-v2.log.json`): ids, store names and counts only.
+    func saveMigrationReport(_ json: Data) throws
 }
 
 /// In-memory WalletStore — the working store for now (and for fast unit tests; Robolectric-safe).
@@ -54,7 +61,14 @@ public final class InMemoryWalletStore: WalletStore {
     public func commitV2(_ list: [ManagedWallet]) throws {
         wallets.removeAll()
         for w in list { wallets[w.id] = w }
+        isV2 = true
     }
+
+    public private(set) var isV2 = false
+    public private(set) var migrationBegun = false
+    public private(set) var migrationReports: [Data] = []
+    public func beginV2Migration() throws { migrationBegun = true }
+    public func saveMigrationReport(_ json: Data) throws { migrationReports.append(json) }
 }
 
 /// The real store: the wallet list as JSON on disk. Cross-platform via SkipFoundation, no SQLite.
@@ -95,6 +109,26 @@ public final class FileWalletStore: WalletStore {
     /// The frozen legacy file — the applier snapshots it to `wallets.json.pre-v2` before committing.
     public var legacyFileURL: URL { legacyURL }
     public var v2FileURL: URL { v2URL }
+    /// `wallets.json.pre-v2` — a byte copy of the legacy list taken before the migration moved anything.
+    public var preV2SnapshotURL: URL { URL(fileURLWithPath: legacyURL.path + ".pre-v2") }
+    /// `migration-v2.log.json` beside the wallet list.
+    public var migrationReportURL: URL {
+        legacyURL.deletingLastPathComponent().appendingPathComponent("migration-v2.log.json")
+    }
+
+    public func beginV2Migration() throws {
+        let fm = FileManager.default
+        guard fm.fileExists(atPath: legacyURL.path), !fm.fileExists(atPath: preV2SnapshotURL.path) else { return }
+        do {
+            try fm.copyItem(at: legacyURL, to: preV2SnapshotURL)
+        } catch {
+            throw WalletError.persistenceFailed
+        }
+    }
+
+    public func saveMigrationReport(_ json: Data) throws {
+        try json.write(to: migrationReportURL)
+    }
 
     // MARK: Legacy DTO (unchanged shape — older builds must keep decoding it)
 

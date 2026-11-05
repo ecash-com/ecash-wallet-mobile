@@ -184,11 +184,13 @@ final class AppState {
         balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
         // New-wallet seed length: 24 if explicitly chosen, otherwise 12 (covers unset → default 12).
         newWalletWordCount = (UserDefaults.standard.object(forKey: Self.newWalletWordCountKey) as? Int) == 24 ? 24 : 12
-        try? manager.load()
-        // Restore the active wallet across launches (manager.load defaults to the first wallet;
-        // select is a no-op if the saved id no longer exists).
-        if let saved = UserDefaults.standard.string(forKey: Self.selectedWalletKey) {
-            manager.select(id: saved)
+        // Restore the active wallet across launches. The saved id goes INTO load so the one-time
+        // seed-container migration can map it if that wallet was merged into another
+        // (`docs/seed-container-model.md §6.2`); select is a no-op if the id no longer exists.
+        let savedSelection = UserDefaults.standard.string(forKey: Self.selectedWalletKey)
+        try? manager.load(savedSelectedId: savedSelection)
+        if let saved = savedSelection {
+            manager.select(id: manager.migratedWalletId(forLegacy: saved) ?? saved)
         }
         // Point the News feed at the selected wallet's network up front (CoinNews is per network).
         // Build it via a direct member assignment now (a stored prop with no default must be set

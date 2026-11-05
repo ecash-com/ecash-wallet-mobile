@@ -59,13 +59,37 @@ public final class WalletManager: @unchecked Sendable {
         return wallets.first { $0.id == id }
     }
 
-    /// Load persisted wallets (call at launch). Keeps the current selection if still present,
-    /// else selects the first wallet.
-    public func load() throws {
+    /// The seed-container migration's report from this launch, if it ran (`docs/seed-container-model.md
+    /// §6`). Internal: the app reads what it needs through `migratedWalletId(forLegacy:)`.
+    private(set) var lastMigrationReport: MigrationReport?
+
+    /// Load persisted wallets (call at launch). Runs the one-time seed-container migration first
+    /// if the store is still in the legacy shape. Selection: `savedSelectedId` (the app's persisted
+    /// choice, mapped through the migration if that wallet was merged into another), else the
+    /// current selection if still present, else the first wallet.
+    public func load(savedSelectedId: String? = nil) throws {
+        let applier = WalletMigrationV2Applier(store: walletStore, factory: factory)
+        let now = Int64(Date().timeIntervalSince1970)
+        if let report = try applier.migrateIfNeeded(selectedId: savedSelectedId ?? selectedWalletId,
+                                                    nowEpochSeconds: now) {
+            lastMigrationReport = report
+            engines.removeAll()
+            if let mapped = report.selectedWalletId { selectedWalletId = mapped }
+        }
         wallets = try walletStore.allWallets()
+        if let saved = savedSelectedId, wallets.contains(where: { $0.id == saved }) {
+            selectedWalletId = saved
+        }
         if selectedWalletId == nil || !wallets.contains(where: { $0.id == selectedWalletId }) {
             selectedWalletId = wallets.first?.id
         }
+    }
+
+    /// Where a wallet id from before the seed-container migration lives now: itself, or the wallet
+    /// it was merged into. `nil` if unknown. Lets the app restore a persisted selection that named a
+    /// merged copy. Only answers for the launch on which the migration ran.
+    public func migratedWalletId(forLegacy id: String) -> String? {
+        lastMigrationReport?.walletId(forLegacy: id)
     }
 
     public func select(id: String) {
@@ -252,7 +276,13 @@ public final class WalletManager: @unchecked Sendable {
     /// chain-data store (factory), and re-selects another wallet if the removed one was selected
     /// (Golden Rule §5 — every keyed artifact). Secret first, so a later failure can't strand it.
     public func removeWallet(id: String) throws {
+        // The ONLY place the Keychain entries a merge left behind are deleted (invariant I1): they
+        // hold this wallet's phrase, and the user is removing this wallet. Never an id that is
+        // still a live wallet. Best-effort, after this wallet's own entry.
+        let orphans = (wallets.first { $0.id == id }?.orphanKeychainIds ?? [])
+            .filter { orphan in !wallets.contains { $0.id == orphan } }
         try keyStore.deleteMnemonic(walletId: id)
+        for orphan in orphans { try? keyStore.deleteMnemonic(walletId: orphan) }
         try walletStore.deleteWallet(id: id)
         factory.purgeChainData(for: id)
         engines[id] = nil
