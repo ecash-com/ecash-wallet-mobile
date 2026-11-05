@@ -447,15 +447,82 @@ final class WalletManagerTests: XCTestCase {
                                    selectedAccountId: a.id, accounts: [a],
                                    mergedFrom: ["old", "other"], orphanKeychainIds: ["old", "other"])
         try ws.commitV2([merged, legacyRecord("other", .signet, sort: 1)])   // "other" is somehow still live
-        for id in ["m", "old", "other"] { try ks.saveMnemonic("phrase-\(id)", walletId: id) }
+        try ks.saveMnemonic("same phrase", walletId: "m")
+        try ks.saveMnemonic("same phrase", walletId: "old")                   // a true duplicate
+        try ks.saveMnemonic("phrase-other", walletId: "other")
 
         let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
         try manager.load()
         try manager.removeWallet(id: "m")
 
         XCTAssertNil(try ks.loadMnemonic(walletId: "m"))
-        XCTAssertNil(try ks.loadMnemonic(walletId: "old"))                  // the orphan went with it
+        XCTAssertNil(try ks.loadMnemonic(walletId: "old"))                  // proven duplicate: went with it
         XCTAssertEqual(try ks.loadMnemonic(walletId: "other"), "phrase-other")   // a live wallet's entry never
         XCTAssertEqual(manager.wallets.map { $0.id }, ["other"])
+    }
+
+    /// Guard 1: an orphan entry whose content differs from the wallet's own is NEVER deleted — even
+    /// though the record lists it. This is what makes a (2^-32) fingerprint collision harmless.
+    func testRemoveWalletLeavesAnOrphanEntryThatIsNotADuplicate() throws {
+        let ks = InMemoryKeyStore()
+        let ws = InMemoryWalletStore()
+        let a = WalletAccount(network: WalletNetwork.ecashMainnet, scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                              externalDescriptor: "e", internalDescriptor: "i", storeName: "m-ecashMainnet.sqlite")
+        let merged = ManagedWallet(id: "m", label: "Merged", keyType: WalletKeyType.mnemonic, isBackedUp: true, sortIndex: 0,
+                                   selectedAccountId: a.id, accounts: [a],
+                                   mergedFrom: ["dup", "stranger"], orphanKeychainIds: ["dup", "stranger"])
+        try ws.commitV2([merged])
+        try ks.saveMnemonic("same phrase", walletId: "m")
+        try ks.saveMnemonic("same phrase", walletId: "dup")
+        try ks.saveMnemonic("a DIFFERENT seed", walletId: "stranger")
+
+        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
+        try manager.load()
+        try manager.removeWallet(id: "m")
+
+        XCTAssertNil(try ks.loadMnemonic(walletId: "m"))
+        XCTAssertNil(try ks.loadMnemonic(walletId: "dup"))
+        XCTAssertEqual(try ks.loadMnemonic(walletId: "stranger"), "a DIFFERENT seed")   // untouched
+    }
+
+    /// Guard 1, corner: if the wallet's own entry is already gone, nothing can be proven, so no
+    /// orphan is deleted at all.
+    func testRemoveWalletWithoutItsOwnEntryDeletesNoOrphan() throws {
+        let ks = InMemoryKeyStore()
+        let ws = InMemoryWalletStore()
+        let a = WalletAccount(network: WalletNetwork.ecashMainnet, scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                              externalDescriptor: "e", internalDescriptor: "i", storeName: "m-ecashMainnet.sqlite")
+        try ws.commitV2([ManagedWallet(id: "m", label: "M", keyType: WalletKeyType.mnemonic, isBackedUp: true, sortIndex: 0,
+                                       selectedAccountId: a.id, accounts: [a],
+                                       mergedFrom: ["spare"], orphanKeychainIds: ["spare"])])
+        try ks.saveMnemonic("same phrase", walletId: "spare")                 // only the spare exists
+
+        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
+        try manager.load()
+        try manager.removeWallet(id: "m")
+        XCTAssertEqual(try ks.loadMnemonic(walletId: "spare"), "same phrase")
+    }
+
+    /// Guard 2: reveal and signing fall back to the spare copy when the wallet's own entry is missing.
+    func testSecretFallsBackToTheOrphanCopyWhenTheOwnEntryIsMissing() throws {
+        let ks = InMemoryKeyStore()
+        let ws = InMemoryWalletStore()
+        let a = WalletAccount(network: WalletNetwork.ecashMainnet, scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                              externalDescriptor: "e", internalDescriptor: "i", storeName: "m-ecashMainnet.sqlite")
+        try ws.commitV2([ManagedWallet(id: "m", label: "M", keyType: WalletKeyType.mnemonic, isBackedUp: true, sortIndex: 0,
+                                       selectedAccountId: a.id, accounts: [a],
+                                       mergedFrom: ["spare"], orphanKeychainIds: ["spare"])])
+        try ks.saveMnemonic("the phrase", walletId: "spare")
+
+        let manager = WalletManager(keyStore: ks, walletStore: ws, factory: MockWalletEngineFactory())
+        try manager.load()
+        XCTAssertEqual(try manager.mnemonic(for: "m"), "the phrase")       // reveal works
+        try ks.saveMnemonic("own phrase", walletId: "m")
+        XCTAssertEqual(try manager.mnemonic(for: "m"), "own phrase")       // own entry wins when present
+        // A wallet with no entries at all still reveals nothing — the fallback never widens beyond
+        // this wallet's own orphan ids.
+        try ks.deleteMnemonic(walletId: "m")
+        try ks.deleteMnemonic(walletId: "spare")
+        XCTAssertNil(try manager.mnemonic(for: "m"))
     }
 }

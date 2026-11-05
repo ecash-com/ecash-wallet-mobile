@@ -213,7 +213,7 @@ public final class WalletManager: @unchecked Sendable {
             throw WalletError.copyNotSupported
         }
         if existingCopy(of: id, on: network) != nil { throw WalletError.alreadyOnNetwork }
-        guard let secret = try keyStore.loadMnemonic(walletId: id) else { throw WalletError.keyUnavailable }
+        guard let secret = try loadSecret(walletId: id) else { throw WalletError.keyUnavailable }
 
         let keys: WalletKeys
         switch source.keyType {
@@ -276,13 +276,24 @@ public final class WalletManager: @unchecked Sendable {
     /// chain-data store (factory), and re-selects another wallet if the removed one was selected
     /// (Golden Rule §5 — every keyed artifact). Secret first, so a later failure can't strand it.
     public func removeWallet(id: String) throws {
-        // The ONLY place the Keychain entries a merge left behind are deleted (invariant I1): they
-        // hold this wallet's phrase, and the user is removing this wallet. Never an id that is
-        // still a live wallet. Best-effort, after this wallet's own entry.
+        // The ONLY place the Keychain entries a merge left behind are deleted (invariant I1), and
+        // only after PROOF: an orphan entry is deleted if, and only if, its content is identical to
+        // this wallet's own entry — read and compared in memory, never logged. The merge was keyed
+        // on a 32-bit master fingerprint; a collision between unrelated seeds is ~2^-32 per pair,
+        // but this check makes deleting a different seed's only copy impossible rather than
+        // improbable. A non-matching (or unreadable) orphan entry is left in the Keychain. Never an
+        // id that is still a live wallet. Best-effort, after this wallet's own entry is gone.
         let orphans = (wallets.first { $0.id == id }?.orphanKeychainIds ?? [])
             .filter { orphan in !wallets.contains { $0.id == orphan } }
+        let own = try keyStore.loadMnemonic(walletId: id)
         try keyStore.deleteMnemonic(walletId: id)
-        for orphan in orphans { try? keyStore.deleteMnemonic(walletId: orphan) }
+        if let own = own, !own.isEmpty {
+            for orphan in orphans {
+                if let spare = try? keyStore.loadMnemonic(walletId: orphan), spare == own {
+                    try? keyStore.deleteMnemonic(walletId: orphan)
+                }
+            }
+        }
         try walletStore.deleteWallet(id: id)
         factory.purgeChainData(for: id)
         engines[id] = nil
@@ -305,7 +316,21 @@ public final class WalletManager: @unchecked Sendable {
 
     /// The wallet's mnemonic, for the gated Backup reveal only. Never log this.
     public func mnemonic(for id: String) throws -> String? {
-        try keyStore.loadMnemonic(walletId: id)
+        try loadSecret(walletId: id)
+    }
+
+    /// The ONE path that reads a wallet's secret: its own Keychain entry, else the first non-empty
+    /// entry among the orphan ids a seed-container merge left on it (`orphanKeychainIds`). Those
+    /// entries hold the same phrase, written by copy-to-network — a spare copy the device already
+    /// has. If the primary entry was ever lost, the wallet still signs and still reveals; a wrong
+    /// phrase can only fail to sign. Never logs; never widens beyond this wallet's own ids.
+    private func loadSecret(walletId: String) throws -> String? {
+        if let own = try keyStore.loadMnemonic(walletId: walletId), !own.isEmpty { return own }
+        let orphans = wallets.first { $0.id == walletId }?.orphanKeychainIds ?? []
+        for orphan in orphans {
+            if let spare = try keyStore.loadMnemonic(walletId: orphan), !spare.isEmpty { return spare }
+        }
+        return nil
     }
 
     /// Build the live `WalletEngine` for a wallet (loads its mnemonic, hands it to the factory).
@@ -315,14 +340,13 @@ public final class WalletManager: @unchecked Sendable {
         // Watch-only build: the mnemonic is NOT read here. The factory's engine derives nothing
         // secret to show balance/addresses/history; the Keychain is touched only at sign time,
         // through this closure (sign-on-demand, §7 / docs/key-storage.md §3).
-        let keyStore = self.keyStore
         let walletId = wallet.id
         let backend = resolvedBackend(for: wallet.network)
         return try factory.engine(for: wallet,
                                   backendKind: backend.kind.rawValue,
                                   backendURL: backend.url,
                                   backendProxy: backend.socks5,
-                                  loadSecret: { try keyStore.loadMnemonic(walletId: walletId) })
+                                  loadSecret: { [unowned self] in try self.loadSecret(walletId: walletId) })
     }
 
     // MARK: - Chain backend & custom endpoints (bridged primitive surface)
@@ -773,7 +797,7 @@ public final class WalletManager: @unchecked Sendable {
     /// Derive the wallet's CoinNews identity private key on demand (never persisted — Golden Rule §2).
     private func coinNewsIdentityKey(walletId: String) throws -> Data {
         guard let wallet = wallets.first(where: { $0.id == walletId }),
-              let phrase = try keyStore.loadMnemonic(walletId: walletId) else {
+              let phrase = try loadSecret(walletId: walletId) else {
             throw WalletError.signingFailed
         }
         return try CoinNewsIdentity.privateKey(mnemonicPhrase: phrase, network: wallet.network)
