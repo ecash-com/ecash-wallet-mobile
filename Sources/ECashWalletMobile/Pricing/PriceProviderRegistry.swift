@@ -23,10 +23,9 @@ enum PriceProviderRegistry {
         case .ecashBeta:
             return nil   // betanet coins have no market either
         case .ecashMainnet:
-            // Real ECX has markets (the Dashboard's Markets card quotes them), but a per-wallet fiat
-            // line needs a provider chosen deliberately (which venue, which currencies). Product
-            // decision; nil until then — no fiat line, same as before the fork.
-            return nil
+            // The wECX / USDC Orca pool via GeckoTerminal (keyless) — the same pool CoinMarketCap's
+            // ECX page quotes. USD only; labelled as wECX wherever it shows (Jake, 2026-11-05).
+            return GeckoTerminalPriceProvider()
         case .thunder:
             return nil   // Thunder (test) coins have no fiat price
         }

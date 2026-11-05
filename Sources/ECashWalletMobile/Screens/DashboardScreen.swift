@@ -6,7 +6,7 @@ import SwiftUI
 import WalletService
 
 /// The Dashboard tab (`docs/dashboard-plan.md`): the eCash network at a glance — chain health, news
-/// (on-chain CoinNews and eCash.com), markets, releases. No ECX price card until real ECX is listed
+/// (on-chain CoinNews and eCash.com), markets, releases. ECX price = the wECX Orca pool (keyless)
 /// somewhere keyless (the Betanet wbECX card went with Betanet, 2026-10-29).
 ///
 /// Reports on `AppState.dashboard.network` (eCash mainnet; a config `dashboard` block can override),
@@ -29,6 +29,7 @@ struct DashboardScreen: View {
             Theme.Colors.bg0.ignoresSafeArea()
             ScrollView {
                 VStack(spacing: Theme.Space.x4) {
+                    priceCard
                     networkCard
                     if showsCoinNews { coinNewsCard }
                     ecosystemNewsCard
@@ -197,6 +198,42 @@ struct DashboardScreen: View {
         } else {
             EcosystemNewsRow(item: item)
         }
+    }
+
+    // MARK: - 1. Price
+
+    /// ECX as the wECX / USDC Orca pool prices it (the pool CoinMarketCap quotes). Labelled for what
+    /// it is — a wrapped token on Solana — never presented as an exchange rate for native ECX.
+    private var priceCard: some View {
+        let section = app.dashboard.markets
+        return VStack(alignment: .leading, spacing: Theme.Space.x2) {
+            DashboardSectionHeader(title: "ECX price")
+            if let quote = section.value?.ecx {
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.x3) {
+                    Text(verbatim: DashboardFormat.usd(quote.price))
+                        .font(.jbMono(34, .medium))
+                        .foregroundStyle(Theme.Colors.text0)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    if let change = quote.change24h {
+                        Text(verbatim: DashboardFormat.percentChange(change))
+                            .textStyle(.sm)
+                            .foregroundStyle(change < 0 ? Theme.Colors.negative : Theme.Colors.positive)
+                    }
+                }
+                Text("wECX, wrapped ECX on Solana", bundle: .module,
+                     comment: "dashboard price card: what the headline price is")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text1)
+                DashboardFreshness(updatedAt: section.updatedAt, stale: section.lastAttemptFailed,
+                                   source: quote.source)
+            } else if section.display == .loading {
+                DashboardSkeleton(rows: 2)
+            } else {
+                DashboardUnavailable()
+            }
+        }
+        .dashboardCard()
     }
 
     // MARK: - 5. Markets

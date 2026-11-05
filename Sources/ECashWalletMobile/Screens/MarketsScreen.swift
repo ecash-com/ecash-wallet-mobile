@@ -35,8 +35,8 @@ struct MarketsScreen: View {
 
     private func footnote(_ section: DashboardSection<MarketBoard>) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.x1) {
-            Text("Prices in USDT on Gate.io and NonKYC. ECX itself is not listed on a public exchange yet.",
-                 bundle: .module, comment: "markets footnote: sources, and why there is no ECX row")
+            Text("Prices in USDT on Gate.io and NonKYC. ECX is priced from the wECX pool on Orca (Solana), shown on the Dashboard.",
+                 bundle: .module, comment: "markets footnote: sources, and where the ECX price comes from")
             DashboardFreshness(updatedAt: section.updatedAt, stale: section.lastAttemptFailed)
         }
         .textStyle(.xs)

@@ -39,10 +39,12 @@ import Testing
         web.on(Self.gateURL("BTC_USDT"), Self.btcGate)
         web.on(Self.gateURL("BCH_USDT"), #"[{"currency_pair":"BCH_USDT","last":"301.41","change_percentage":"-4.68","quote_volume":"4308319.7"}]"#)
         web.on(Self.gateURL("BSV_USDT"), "upstream error", status: 502)
-        web.on(Self.gateURL("XEC_USDT"), #"[{"currency_pair":"XEC_USDT","last":"0.000007569","change_percentage":"-5.62","quote_volume":"20894.05"}]"#)
         web.on(Self.nonKYCURL, Self.nonKYC)
+        web.on(MarketClient.ecxPoolURL, GeckoTerminalPriceProviderTests.live)
         let board = try await MarketClient(fetch: web.fetch).board()
-        #expect(board.quotes.map(\.ticker) == ["BTC", "BCH", "XEC", "BTCB2"])
+        #expect(board.quotes.map(\.ticker) == ["BTC", "BCH", "BTCB2"])
+        #expect(board.ecx?.ticker == "ECX")                                   // the headline card
+        #expect(abs((board.ecx?.price ?? 0) - 31.4254965) < 1e-6)
     }
 
     @Test func everyVenueDownFailsTheSection() async {

@@ -22,21 +22,39 @@ struct MarketClient: Sendable {
         ("btc", "Bitcoin", "BTC_USDT", "BTC"),
         ("bch", "Bitcoin Cash", "BCH_USDT", "BCH"),
         ("bsv", "Bitcoin SV", "BSV_USDT", "BSV"),
-        ("xec", "XEC", "XEC_USDT", "XEC"),
+        // XEC (Bitcoin ABC's eCash) was listed here until 2026-11-05 — dropped (Jake): a different
+        // project that happens to share our name, and a row that only invited confusion.
     ]
 
     func board() async throws -> MarketBoard {
-        // All five in flight at once; each `try?` so one venue failing only drops its row.
+        // All four in flight at once; each `try?` so one venue failing only drops its row.
         let assets = Self.gateAssets
         async let btc = try? gate(assets[0])
         async let bch = try? gate(assets[1])
         async let bsv = try? gate(assets[2])
-        async let xec = try? gate(assets[3])
         async let btcb2 = try? nonKYCBTCB2()
-        let quotes: [MarketQuote?] = [await btc, await bch, await bsv, await xec, await btcb2]
+        async let ecx = try? ecxFromOrca()
+        let quotes: [MarketQuote?] = [await btc, await bch, await bsv, await btcb2]
         let loaded = quotes.compactMap { $0 }
-        if loaded.isEmpty { throw DashboardError.malformed("markets: every source failed") }
-        return MarketBoard(quotes: loaded)
+        let ecxQuote = await ecx
+        if loaded.isEmpty && ecxQuote == nil { throw DashboardError.malformed("markets: every source failed") }
+        return MarketBoard(quotes: loaded, ecx: ecxQuote)
+    }
+
+    // MARK: - ECX (wECX / USDC on Orca, via GeckoTerminal — keyless)
+
+    static let ecxPoolURL = GeckoTerminalPriceProvider.endpoint
+
+    func ecxFromOrca() async throws -> MarketQuote {
+        guard let url = URL(string: Self.ecxPoolURL) else { throw DashboardError.malformed("orca: url") }
+        let data = try await DashboardHTTP.get(url, using: fetch)
+        guard let pool = try? GeckoTerminalPriceProvider.parse(data) else { throw DashboardError.malformed("orca") }
+        return Self.quote(pool: pool)
+    }
+
+    static func quote(pool: GeckoTerminalPriceProvider.PoolQuote) -> MarketQuote {
+        MarketQuote(id: "ecx", name: "eCash", ticker: "ECX", price: pool.priceUSD,
+                    change24h: pool.change24h, volume24h: pool.volume24hUSD, source: "Orca")
     }
 
     // MARK: - Gate.io

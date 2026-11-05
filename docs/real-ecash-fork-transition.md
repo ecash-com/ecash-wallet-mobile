@@ -117,7 +117,7 @@ exhaustive `switch` on purpose:
 | `EnforcerEndpointRegistry` | `https://seed.ecash.eu.com/enforcer` is BitWindow's default for real ECX (not live as of 2026-09-29) | config `services.enforcer.url` |
 | `CoinNewsAvailability` / `CoinNewsEndpointRegistry` | real-fork CoinNews indexer? | config |
 | `FaucetRegistry` | **nil**: no faucet on real money | settled |
-| `PriceProviderRegistry` | a real ECX price feed, once one exists | product |
+| `PriceProviderRegistry` | ✅ wECX / USDC Orca pool via GeckoTerminal (keyless, USD), 2026-11-05 | done |
 | `NetworkChipStyle` + a colorset | the real fork's chip colour. It must read as *real money* and never be confused with the test forks' teal | design |
 | `PaymentLink` wrong-network copy | covered by the `.ecash, .ecashBeta` group; add the new case | trivial |
 | `RemoteEndpointConfig.walletNetwork` | map the real fork's config `id` to the new case (after §0) | config id |

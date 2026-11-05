@@ -78,7 +78,7 @@ hairline `border`, `Radius.md`) — the same look as `TxDetailSheet`'s cards.
 │         CoinCarp · Market Data       │
 │ 02 Oct  Sidecoin Ships First …       │
 │                                      │
-│ MARKETS                        See ›│  ── 6. Compact market list (BTC, BCH, BSV, XEC, BTCB2)
+│ MARKETS                        See ›│  ── 6. Compact market list (BTC, BCH, BSV, BTCB2 — XEC dropped 2026-11-05)
 │ Bitcoin   BTC   $83,196   ▼ 3.7%     │     one row each: name, ticker, price, 24h %
 │ Bitcoin Cash BCH  $301.4  ▼ 4.7%     │
 │ …                                    │
@@ -160,7 +160,7 @@ every 5 min while the tab is visible (the site's cadence).
 
 | Asset | Source | Endpoint | Fields |
 |---|---|---|---|
-| BTC, BCH, BSV, XEC | **Gate.io** spot tickers | `GET https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT` (one call per pair, or one call with no pair and filter) | `last`, `change_percentage`, `quote_volume` |
+| BTC, BCH, BSV | **Gate.io** spot tickers | `GET https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT` (one call per pair, or one call with no pair and filter) | `last`, `change_percentage`, `quote_volume` |
 | BTCB2 | **NonKYC** | `GET https://api.nonkyc.io/api/v2/market/getbysymbol/BTCB2_USDT` | `lastPrice`, `yesterdayPrice` (→ 24h %), `volume` |
 | wbECX → ECX | **Jupiter** price API (+ **Orca** pool for volume / fallback price) — *DexScreener dropped the pool 2026-10-07, see §10* | `GET https://lite-api.jup.ag/price/v3?ids=EVHqNdzjCupKi4rQkbuYw52sa1m8A7jeUAMP23S9AVVq`; `GET https://api.orca.so/v2/solana/pools/nNKg814Wq3uTkoG4fM8LzvBQv4Fu2iCgKFmK2YmPQzM` | Jupiter `usdPrice`, `priceChange24h`; Orca `stats.24h.volume`, `price` (wbECX per USDC — inverted) |
 
@@ -316,7 +316,7 @@ Ecosystem / Development tabs, and any buy/swap/trade entry point (§3.6).
   what depending on a fetch costs, so the default no longer waits for it. Caches are keyed by id, so
   nothing cached under `betanet.*` is shown.
 - **ECX price card and the wbECX market row removed.** wbECX was wrapped *betanet* ECX; real ECX is
-  not listed on Gate.io or NonKYC (checked that day). The Markets table (BTC/BCH/BSV/XEC/BTCB2) stays.
+  not listed on Gate.io or NonKYC (checked that day). The Markets table (BTC/BCH/BSV/BTCB2; XEC removed 2026-11-05) stays.
   Jupiter/Orca code is gone — `git log -S wbECX` to recover it if an ECX market appears there.
 - Betanet and alphanet are no longer referenced by the dashboard. CoinNews still follows the selected
   wallet's network, as before.

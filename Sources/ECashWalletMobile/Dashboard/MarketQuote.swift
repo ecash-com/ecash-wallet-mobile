@@ -26,6 +26,10 @@ struct MarketQuote: Equatable, Codable, Sendable, Identifiable {
 /// any keyless venue (Gate.io and NonKYC checked 2026-10-29), and the Betanet wbECX row (Solana, ×50
 /// implied price) was dropped with Betanet when the dashboard moved to mainnet (2026-10-29).
 struct MarketBoard: Equatable, Codable, Sendable {
-    /// BTC, BCH, BSV, XEC, BTCB2 — whichever loaded, in that order.
+    /// BTC, BCH, BSV, BTCB2 — whichever loaded, in that order.
     let quotes: [MarketQuote]
+    /// ECX, as the wECX / USDC Orca pool on Solana prices it (GeckoTerminal; the pool CoinMarketCap
+    /// quotes). The Dashboard's headline card. Nil when the pool call failed. Optional so a cached
+    /// board written before this field decodes.
+    var ecx: MarketQuote? = nil
 }
