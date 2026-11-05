@@ -420,10 +420,16 @@ and nothing user-visible changes until step 5.
    reference (I1). Add `ManagedWallet.masterFingerprint` (parse the key origin next to
    `keyOriginPath`). Write the §9 planner tests before the planner. Transpiles under Skip, so keep it
    in the Lite subset (no `Set` parameters — see `SplitSummary.classify`).
-2. **Model.** `WalletAccount`, `WalletNetwork.kind` (`.mainchain` / `.sidechain(parent:)`), make
-   `keyFamily` public, grow `ManagedWallet` into the container with the `network` compat shim so the
-   app keeps compiling. `StoredWalletV2` DTO + `FileWalletStore` reading v2-else-legacy. Bridge
-   rules apply (signed types, no `Date`) and a new bridged type needs a clean Android rebuild.
+2. ✅ **Model** (DONE 2026-11-05). `WalletAccount` (bridged), `WalletNetwork.parentChain` /
+   `isSidechain` / `sidechains(of:)` (an optional parent rather than an associated-value enum — bridge
+   safe), `keyFamily` public, `ManagedWallet` is the container (`accounts`, `selectedAccountId`,
+   `mergedFrom`, `orphanKeychainIds`) with `network` / descriptors / `scriptType` / `accountIndex`
+   reading through to the selected account so every caller still compiles; the legacy
+   `network:` initializer builds a one-account wallet. `FileWalletStore` reads/writes
+   `wallets.v2.json` (`{"version":2,"wallets":[…]}`) once `commitV2` has run and never touches
+   `wallets.json` again; before that it stays on the legacy file and refuses a multi-account
+   write. The planner emits real `ManagedWallet`s. Verified: WalletService 328 host + JUnit, app
+   592 tests, Android debug APK with the regenerated bridge.
 3. **Applier.** File moves with the BDK reopen + balance check (I3/I4), `wallets.json.pre-v2` copy,
    `migration-v2.log.json`, the done flag. Real-BDK tests on sim + emulator with a seeded legacy
    `wallets.json` fixture covering (a)–(d) from §9.

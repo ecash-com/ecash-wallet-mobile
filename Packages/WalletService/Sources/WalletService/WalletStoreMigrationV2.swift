@@ -27,45 +27,9 @@ import Foundation
 //   that already exists) stays a standalone wallet — never dropped, never guessed (I2, I3).
 // - Every legacy record ends up as exactly one account somewhere (`verify`).
 //
-// Types are `internal` for now: step 2 introduces the bridged `WalletAccount`/container model; this
-// planner then maps onto it. Keeping these off the bridge also keeps step 1 free of the
-// clean-Android-rebuild cost a new bridged type carries.
-
-/// One account of a planned wallet.
-struct PlannedAccount: Equatable {
-    /// `"<network>-<scriptType>-<accountIndex>"`, unique within its wallet.
-    let id: String
-    let network: WalletNetwork
-    let scriptType: ScriptType
-    let accountIndex: Int32
-    let externalDescriptor: String
-    let internalDescriptor: String
-    /// The BDK sqlite file (basename) this account reads — explicit, so a migrated account keeps the
-    /// file it already has and no naming heuristic ever decides where chain data lives.
-    let storeName: String
-    /// The legacy record this account came from.
-    let sourceId: String
-
-    static func accountId(network: WalletNetwork, scriptType: ScriptType, accountIndex: Int32) -> String {
-        "\(network.rawValue)-\(scriptType.rawValue)-\(accountIndex)"
-    }
-}
-
-/// One planned wallet (= one seed, or one WIF key).
-struct PlannedWallet: Equatable {
-    let id: String
-    let label: String
-    let keyType: WalletKeyType
-    let isBackedUp: Bool
-    let sortIndex: Int
-    let selectedAccountId: String
-    let accounts: [PlannedAccount]
-    /// Legacy ids folded into this wallet (its own id excluded).
-    let mergedFrom: [String]
-    /// Keychain entries the merged records leave behind. They hold the SAME phrase as this wallet's
-    /// entry. The migration never deletes them (I1); they are recorded so remove-wallet can.
-    let orphanKeychainIds: [String]
-}
+// The plan is made of the real `ManagedWallet` (container) + `WalletAccount` model (step 2), so the
+// applier persists exactly what the planner verified. Only the plan/move/rekey wrappers are
+// planner-local and stay `internal` (not bridged).
 
 /// A chain-data file rename, basenames within the chain-data directory.
 struct PlannedFileMove: Equatable {
@@ -81,7 +45,7 @@ struct PlannedRekey: Equatable {
 }
 
 struct MigrationPlan: Equatable {
-    let wallets: [PlannedWallet]
+    let wallets: [ManagedWallet]
     let fileMoves: [PlannedFileMove]
     let rekeys: [PlannedRekey]
     /// The wallet to select after migration — the legacy selection, or the wallet it was merged
@@ -108,8 +72,8 @@ struct MigrationPlan: Equatable {
     /// empty means the plan is safe to apply. The applier refuses a plan with any violation.
     func verify(against legacy: [ManagedWallet]) -> [String] {
         var problems: [String] = []
-        // Every legacy id is exactly one wallet or exactly one merged member, and every legacy
-        // record is exactly one account.
+        // Every legacy id is exactly one wallet or exactly one merged member, and every input
+        // account is carried over exactly once.
         var placed: [String: Int] = [:]
         var accountTotal = 0
         var walletIds = Set<String>()
@@ -136,8 +100,11 @@ struct MigrationPlan: Equatable {
             let n = placed[record.id] ?? 0
             if n != 1 { problems.append("legacy \(record.id) placed \(n) times") }
         }
-        if accountTotal != legacy.count {
-            problems.append("accounts \(accountTotal) != legacy records \(legacy.count)")
+        // Every input account survives: a legacy record contributes one, an already-container-shaped
+        // record contributes all of its own.
+        let inputAccounts = legacy.reduce(0) { $0 + $1.accounts.count }
+        if accountTotal != inputAccounts {
+            problems.append("accounts \(accountTotal) != input accounts \(inputAccounts)")
         }
         // Moves: distinct destinations, never onto a source, never a no-op.
         var destinations = Set<String>()
@@ -156,22 +123,13 @@ struct MigrationPlan: Equatable {
 }
 
 enum WalletStoreMigrationV2 {
-    /// The store a legacy record already uses: `<walletId>-<network>.sqlite`
-    /// (`BDKWalletEngineFactory.makePersister`). A migrated primary/standalone keeps exactly this.
-    static func legacyStoreName(walletId: String, network: WalletNetwork) -> String {
-        "\(walletId)-\(network.rawValue).sqlite"
-    }
-
-    /// The store of an account added to a wallet: `<walletId>-<network>-<scriptType>-<acct>.sqlite`.
-    static func accountStoreName(walletId: String, network: WalletNetwork,
-                                 scriptType: ScriptType, accountIndex: Int32) -> String {
-        "\(walletId)-\(network.rawValue)-\(scriptType.rawValue)-\(accountIndex).sqlite"
-    }
-
-    /// Whether a legacy record may merge with others of the same seed. Only HD mnemonic records on a
-    /// BDK network with a parseable master fingerprint qualify; WIF and Thunder never do.
+    /// Whether a legacy record may merge with others of the same seed. Only a single-account HD
+    /// mnemonic record on a BDK network with a parseable master fingerprint qualifies; WIF, Thunder,
+    /// and anything already in container shape never do.
     static func mergeKey(for record: ManagedWallet) -> String? {
-        guard record.keyType == .mnemonic, record.network != .thunder else { return nil }
+        guard record.accounts.count == 1, record.keyType == .mnemonic, record.network != .thunder else {
+            return nil
+        }
         return record.masterFingerprint
     }
 
@@ -201,7 +159,7 @@ enum WalletStoreMigrationV2 {
             }
         }
 
-        var wallets: [PlannedWallet] = []
+        var wallets: [ManagedWallet] = []
         var moves: [PlannedFileMove] = []
         var rekeys: [PlannedRekey] = []
         var keptStandalone: [String] = []
@@ -219,20 +177,20 @@ enum WalletStoreMigrationV2 {
                 continue
             }
 
-            let primaryAccount = ownAccount(of: primary)
-            var accounts: [PlannedAccount] = [primaryAccount]
+            let primaryAccount = primary.selectedAccount   // keeps the store file it already has
+            var accounts: [WalletAccount] = [primaryAccount]
             var takenAccountIds = Set<String>([primaryAccount.id])
             var mergedFrom: [String] = []
             var backedUp = primary.isBackedUp
             var selectedAccountId = primaryAccount.id
 
             for secondary in members.dropFirst() {
-                let accountId = PlannedAccount.accountId(network: secondary.network,
-                                                         scriptType: secondary.scriptType,
-                                                         accountIndex: secondary.accountIndex)
-                let destination = accountStoreName(walletId: primary.id, network: secondary.network,
-                                                   scriptType: secondary.scriptType,
-                                                   accountIndex: secondary.accountIndex)
+                let accountId = WalletAccount.accountId(network: secondary.network,
+                                                        scriptType: secondary.scriptType,
+                                                        accountIndex: secondary.accountIndex)
+                let destination = WalletAccount.storeName(walletId: primary.id, network: secondary.network,
+                                                          scriptType: secondary.scriptType,
+                                                          accountIndex: secondary.accountIndex)
                 let destinationExists = files.contains { $0.hasPrefix(destination) }
                 if takenAccountIds.contains(accountId) || destinationExists || claimedDestinations.contains(destination) {
                     // Not provably safe to fold in — keep it as its own wallet, untouched (I2/I3).
@@ -242,12 +200,12 @@ enum WalletStoreMigrationV2 {
                 }
                 takenAccountIds.insert(accountId)
                 claimedDestinations.insert(destination)
-                accounts.append(PlannedAccount(id: accountId, network: secondary.network,
-                                               scriptType: secondary.scriptType,
-                                               accountIndex: secondary.accountIndex,
-                                               externalDescriptor: secondary.externalDescriptor,
-                                               internalDescriptor: secondary.internalDescriptor,
-                                               storeName: destination, sourceId: secondary.id))
+                accounts.append(WalletAccount(id: accountId, network: secondary.network,
+                                              scriptType: secondary.scriptType,
+                                              accountIndex: secondary.accountIndex,
+                                              externalDescriptor: secondary.externalDescriptor,
+                                              internalDescriptor: secondary.internalDescriptor,
+                                              storeName: destination))
                 moves.append(contentsOf: storeMoves(for: secondary, to: destination, files: files))
                 rekeys.append(PlannedRekey(legacyId: secondary.id, walletId: primary.id, accountId: accountId))
                 mergedFrom.append(secondary.id)
@@ -256,7 +214,7 @@ enum WalletStoreMigrationV2 {
                 if secondary.id == selectedId { selectedAccountId = accountId }
             }
 
-            wallets.append(PlannedWallet(id: primary.id, label: primary.label, keyType: primary.keyType,
+            wallets.append(ManagedWallet(id: primary.id, label: primary.label, keyType: primary.keyType,
                                          isBackedUp: backedUp, sortIndex: primary.sortIndex,
                                          selectedAccountId: selectedAccountId, accounts: accounts,
                                          mergedFrom: mergedFrom, orphanKeychainIds: mergedFrom))
@@ -287,25 +245,8 @@ enum WalletStoreMigrationV2 {
         let standalone: ManagedWallet?
     }
 
-    /// The account a legacy record IS today, keeping the store file it already has.
-    private static func ownAccount(of record: ManagedWallet) -> PlannedAccount {
-        PlannedAccount(id: PlannedAccount.accountId(network: record.network, scriptType: record.scriptType,
-                                                    accountIndex: record.accountIndex),
-                       network: record.network, scriptType: record.scriptType,
-                       accountIndex: record.accountIndex,
-                       externalDescriptor: record.externalDescriptor,
-                       internalDescriptor: record.internalDescriptor,
-                       storeName: legacyStoreName(walletId: record.id, network: record.network),
-                       sourceId: record.id)
-    }
-
-    private static func standaloneWallet(_ record: ManagedWallet) -> PlannedWallet {
-        let account = ownAccount(of: record)
-        return PlannedWallet(id: record.id, label: record.label, keyType: record.keyType,
-                             isBackedUp: record.isBackedUp, sortIndex: record.sortIndex,
-                             selectedAccountId: account.id, accounts: [account],
-                             mergedFrom: [], orphanKeychainIds: [])
-    }
+    /// A record that stays its own wallet: unchanged, store file and all.
+    private static func standaloneWallet(_ record: ManagedWallet) -> ManagedWallet { record }
 
     /// The moves that carry a merged record's chain data to its new account store. The scoped
     /// `<id>-<network>.sqlite` (+`-wal`/`-shm`) when present; else the pre-2026-06 un-namespaced
@@ -314,7 +255,7 @@ enum WalletStoreMigrationV2 {
     private static func storeMoves(for record: ManagedWallet, to destination: String,
                                    files: Set<String>) -> [PlannedFileMove] {
         let suffixes = ["", "-wal", "-shm"]
-        let scoped = legacyStoreName(walletId: record.id, network: record.network)
+        let scoped = WalletAccount.legacyStoreName(walletId: record.id, network: record.network)
         let unscoped = "\(record.id).sqlite"
         let base = files.contains(scoped) ? scoped : (files.contains(unscoped) ? unscoped : nil)
         guard let base = base else { return [] }
@@ -326,36 +267,6 @@ enum WalletStoreMigrationV2 {
             }
         }
         return out
-    }
-}
-
-extension ManagedWallet {
-    /// The BIP32 master fingerprint from the public descriptor's key origin —
-    /// `wpkh([d34db33f/84'/0'/0']xpub…)` → `"d34db33f"`, lowercased. The same seed yields the same
-    /// fingerprint on every coin-type and script type, which is what lets the migration recognise
-    /// copies of one seed WITHOUT reading a mnemonic. `nil` for a WIF wallet (no origin), a Thunder
-    /// record (no descriptor), or anything that doesn't parse as 8 hex digits.
-    var masterFingerprint: String? {
-        ManagedWallet.masterFingerprint(externalDescriptor)
-    }
-
-    static func masterFingerprint(_ descriptor: String) -> String? {
-        let opened = descriptor.components(separatedBy: "[")
-        guard opened.count > 1 else { return nil }
-        let origin = opened[1].components(separatedBy: "]")
-        guard origin.count > 1 else { return nil }
-        let steps = origin[0].components(separatedBy: "/")
-        guard let first = steps.first else { return nil }
-        let fp = first.lowercased()
-        // Character-by-character hex check in a plain loop: `UInt32(_:radix:)` and
-        // `String.allSatisfy` have no Kotlin counterpart in Skip, and an `Int` radix parse would
-        // overflow Kotlin's 32-bit Int on fingerprints above 0x7fffffff.
-        guard fp.count == 8 else { return nil }
-        let hexDigits = "0123456789abcdef"
-        for ch in fp {
-            if !hexDigits.contains(String(ch)) { return nil }
-        }
-        return fp
     }
 }
 

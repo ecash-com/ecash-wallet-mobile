@@ -23,6 +23,9 @@ public protocol WalletStore: AnyObject {
     func upsertWallet(_ wallet: ManagedWallet) throws
     func deleteWallet(id: String) throws
     func deleteAll() throws
+    /// Replace the whole list with the seed-container (v2) shape in one write. The migration
+    /// applier's commit step (`docs/seed-container-model.md §6`); after it the store is in v2 mode.
+    func commitV2(_ wallets: [ManagedWallet]) throws
 }
 
 /// In-memory WalletStore — the working store for now (and for fast unit tests; Robolectric-safe).
@@ -47,28 +50,57 @@ public final class InMemoryWalletStore: WalletStore {
     public func deleteAll() throws {
         wallets.removeAll()
     }
+
+    public func commitV2(_ list: [ManagedWallet]) throws {
+        wallets.removeAll()
+        for w in list { wallets[w.id] = w }
+    }
 }
 
-/// The real store: the wallet list as a JSON file (Codable `[ManagedWallet]`). Cross-platform via
-/// SkipFoundation, no SQLite. Small enough that read-modify-write per change is fine.
+/// The real store: the wallet list as JSON on disk. Cross-platform via SkipFoundation, no SQLite.
+/// Small enough that read-modify-write per change is fine.
+///
+/// **Two files, one mode at a time** (`docs/seed-container-model.md §6.1`):
+/// - `wallets.json` — the **legacy** list, one record per (seed × network). Read and written
+///   until the seed-container migration has committed.
+/// - `wallets.v2.json` — the **container** list (`version: 2`, wallets with accounts). Once it
+///   exists the store reads and writes ONLY this file and never touches `wallets.json` again, which
+///   stays frozen so a downgrade still boots (§6.4).
+/// `commitV2` is the one-way switch; the applier calls it after the file moves have verified.
 // SKIP @nobridge
 public final class FileWalletStore: WalletStore {
-    private let fileURL: URL
+    private let legacyURL: URL
+    private let v2URL: URL
 
-    public init(fileURL: URL) {
-        self.fileURL = fileURL
+    /// `fileURL` is the legacy `wallets.json`; the v2 file sits beside it as `wallets.v2.json`.
+    public convenience init(fileURL: URL) {
+        self.init(legacyURL: fileURL,
+                  v2URL: fileURL.deletingLastPathComponent().appendingPathComponent("wallets.v2.json"))
     }
 
-    /// Default location: `<applicationSupport>/wallets.json`.
+    public init(legacyURL: URL, v2URL: URL) {
+        self.legacyURL = legacyURL
+        self.v2URL = v2URL
+    }
+
+    /// Default location: `<applicationSupport>/wallets.json` (+ `wallets.v2.json`).
     public static func applicationSupport() throws -> FileWalletStore {
         let dir = URL.applicationSupportDirectory
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         return FileWalletStore(fileURL: dir.appendingPathComponent("wallets.json"))
     }
 
-    /// Codable mirror of `ManagedWallet`. `ManagedWallet` itself is NOT `Codable` (it's bridged to
-    /// Android and a JNI-peer struct can't synthesize Codable — see Models.swift), so we persist
-    /// through this private DTO. `WalletNetwork` is Codable, so this synthesizes cleanly.
+    /// True once `commitV2` has run (the v2 file exists). The applier checks this to never migrate twice.
+    public var isV2: Bool { FileManager.default.fileExists(atPath: v2URL.path) }
+    /// The frozen legacy file — the applier snapshots it to `wallets.json.pre-v2` before committing.
+    public var legacyFileURL: URL { legacyURL }
+    public var v2FileURL: URL { v2URL }
+
+    // MARK: Legacy DTO (unchanged shape — older builds must keep decoding it)
+
+    /// Codable mirror of a pre-container `ManagedWallet`. `ManagedWallet` itself is NOT `Codable`
+    /// (it's bridged to Android and a JNI-peer struct can't synthesize Codable), so we persist
+    /// through DTOs. `WalletNetwork` is Codable, so this synthesizes cleanly.
     private struct StoredWallet: Codable {
         let id: String
         let label: String
@@ -84,10 +116,12 @@ public final class FileWalletStore: WalletStore {
         let isBackedUp: Bool
         let sortIndex: Int
 
+        /// Only a one-account wallet has a legacy form; the caller checks.
         init(_ w: ManagedWallet) {
-            id = w.id; label = w.label; network = w.network
-            externalDescriptor = w.externalDescriptor; internalDescriptor = w.internalDescriptor
-            keyType = w.keyType; scriptType = w.scriptType; accountIndex = w.accountIndex
+            let a = w.selectedAccount
+            id = w.id; label = w.label; network = a.network
+            externalDescriptor = a.externalDescriptor; internalDescriptor = a.internalDescriptor
+            keyType = w.keyType; scriptType = a.scriptType; accountIndex = a.accountIndex
             isBackedUp = w.isBackedUp; sortIndex = w.sortIndex
         }
         var managed: ManagedWallet {
@@ -99,15 +133,101 @@ public final class FileWalletStore: WalletStore {
         }
     }
 
+    // MARK: v2 DTOs (`{"version": 2, "wallets": [...]}`)
+    //
+    // Every field a future build might add is decoded leniently (unknown keys are ignored by
+    // Codable; new optional keys default), so a v2 file written by a newer app still loads here.
+
+    private struct StoredAccountV2: Codable {
+        let id: String
+        let network: WalletNetwork
+        let scriptType: ScriptType
+        let accountIndex: Int32
+        let externalDescriptor: String
+        let internalDescriptor: String
+        let storeName: String
+
+        init(_ a: WalletAccount) {
+            id = a.id; network = a.network; scriptType = a.scriptType; accountIndex = a.accountIndex
+            externalDescriptor = a.externalDescriptor; internalDescriptor = a.internalDescriptor
+            storeName = a.storeName
+        }
+        var account: WalletAccount {
+            WalletAccount(id: id, network: network, scriptType: scriptType, accountIndex: accountIndex,
+                          externalDescriptor: externalDescriptor, internalDescriptor: internalDescriptor,
+                          storeName: storeName)
+        }
+    }
+
+    private struct StoredWalletV2: Codable {
+        let id: String
+        let label: String
+        let keyType: WalletKeyType?
+        let isBackedUp: Bool
+        let sortIndex: Int
+        let selectedAccountId: String?
+        let accounts: [StoredAccountV2]
+        let mergedFrom: [String]?
+        let orphanKeychainIds: [String]?
+
+        init(_ w: ManagedWallet) {
+            id = w.id; label = w.label; keyType = w.keyType; isBackedUp = w.isBackedUp
+            sortIndex = w.sortIndex; selectedAccountId = w.selectedAccountId
+            accounts = w.accounts.map { StoredAccountV2($0) }
+            mergedFrom = w.mergedFrom; orphanKeychainIds = w.orphanKeychainIds
+        }
+        /// `nil` for a record with no accounts — unrepresentable, and the applier's `verify` never
+        /// writes one. Skipped on load rather than crashing the whole list (the phrase stays in the
+        /// Keychain; nothing is deleted).
+        var managed: ManagedWallet? {
+            let accts = accounts.map { $0.account }
+            guard let first = accts.first else { return nil }
+            return ManagedWallet(id: id, label: label, keyType: keyType ?? .mnemonic,
+                                 isBackedUp: isBackedUp, sortIndex: sortIndex,
+                                 selectedAccountId: selectedAccountId ?? first.id, accounts: accts,
+                                 mergedFrom: mergedFrom ?? [], orphanKeychainIds: orphanKeychainIds ?? [])
+        }
+    }
+
+    private struct StoredFileV2: Codable {
+        let version: Int
+        let wallets: [StoredWalletV2]
+    }
+
+    static let v2Version = 2
+
+    // MARK: IO
+
     private func loadAll() throws -> [ManagedWallet] {
-        guard let data = try? Data(contentsOf: fileURL) else { return [] }
+        if isV2 {
+            guard let data = try? Data(contentsOf: v2URL) else { return [] }
+            let file = (try? JSONDecoder().decode(StoredFileV2.self, from: data))
+            return (file?.wallets ?? []).compactMap { $0.managed }
+        }
+        guard let data = try? Data(contentsOf: legacyURL) else { return [] }
         let stored = (try? JSONDecoder().decode([StoredWallet].self, from: data)) ?? []
         return stored.map { $0.managed }
     }
 
     private func saveAll(_ wallets: [ManagedWallet]) throws {
+        if isV2 {
+            try writeV2(wallets)
+            return
+        }
+        // Legacy mode: the legacy file can only hold one-account wallets. A multi-account wallet
+        // before the migration has committed is a programming error — refuse rather than silently
+        // drop accounts (fail loud, Golden Rule §8).
+        for w in wallets where w.accounts.count != 1 {
+            throw WalletError.persistenceFailed
+        }
         let data = try JSONEncoder().encode(wallets.map { StoredWallet($0) })
-        try data.write(to: fileURL)
+        try data.write(to: legacyURL)
+    }
+
+    private func writeV2(_ wallets: [ManagedWallet]) throws {
+        let file = StoredFileV2(version: FileWalletStore.v2Version, wallets: wallets.map { StoredWalletV2($0) })
+        let data = try JSONEncoder().encode(file)
+        try data.write(to: v2URL)
     }
 
     public func allWallets() throws -> [ManagedWallet] {
@@ -127,8 +247,21 @@ public final class FileWalletStore: WalletStore {
         try saveAll(all)
     }
 
+    /// Remove every wallet. In v2 mode this writes an EMPTY v2 list rather than deleting the file:
+    /// deleting it would drop the store back into legacy mode and resurrect the frozen
+    /// `wallets.json` on the next read.
     public func deleteAll() throws {
-        try? FileManager.default.removeItem(at: fileURL)
+        if isV2 {
+            try writeV2([])
+        } else {
+            try? FileManager.default.removeItem(at: legacyURL)
+        }
+    }
+
+    /// The one-way switch to v2 (see the type comment). Writes the container list; from here on the
+    /// legacy file is never read or written again.
+    public func commitV2(_ wallets: [ManagedWallet]) throws {
+        try writeV2(wallets)
     }
 }
 

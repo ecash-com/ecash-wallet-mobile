@@ -119,7 +119,6 @@ final class MigrationPlannerTests: XCTestCase {
         XCTAssertEqual(w.accounts.map { $0.id }, ["ecashMainnet-bip84-0", "bitcoin-bip84-0"])
         XCTAssertEqual(w.accounts[0].storeName, "orig-ecashMainnet.sqlite")
         XCTAssertEqual(w.accounts[1].storeName, "orig-bitcoin-bip84-0.sqlite")
-        XCTAssertEqual(w.accounts[1].sourceId, "copy")
         XCTAssertEqual(w.accounts[1].externalDescriptor, legacy[1].externalDescriptor)
         XCTAssertEqual(w.mergedFrom, ["copy"])
         XCTAssertEqual(w.orphanKeychainIds, ["copy"])      // recorded, never deleted here
@@ -271,12 +270,12 @@ final class MigrationPlannerTests: XCTestCase {
 
     func testVerifyFlagsADroppedRecordAndADuplicateStore() {
         let legacy = [hd("a", .ecashMainnet, sort: 0), hd("b", .bitcoin, fp: Self.fpB, sort: 1)]
-        let acct = PlannedAccount(id: "ecashMainnet-bip84-0", network: WalletNetwork.ecashMainnet,
-                                  scriptType: ScriptType.bip84, accountIndex: Int32(0),
-                                  externalDescriptor: "", internalDescriptor: "",
-                                  storeName: "a-ecashMainnet.sqlite", sourceId: "a")
-        let onlyA = PlannedWallet(id: "a", label: "", keyType: WalletKeyType.mnemonic, isBackedUp: false, sortIndex: 0,
-                                  selectedAccountId: acct.id, accounts: [acct], mergedFrom: [], orphanKeychainIds: [])
+        let acct = WalletAccount(id: "ecashMainnet-bip84-0", network: WalletNetwork.ecashMainnet,
+                                 scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                                 externalDescriptor: "", internalDescriptor: "",
+                                 storeName: "a-ecashMainnet.sqlite")
+        let onlyA = ManagedWallet(id: "a", label: "", keyType: WalletKeyType.mnemonic, isBackedUp: false, sortIndex: 0,
+                                  selectedAccountId: acct.id, accounts: [acct])
         let bad = MigrationPlan(wallets: [onlyA, onlyA], fileMoves: [PlannedFileMove(from: "x", to: "x")],
                                 rekeys: [], selectedWalletId: "zzz", keptStandalone: [])
         let problems = bad.verify(against: legacy)
@@ -284,7 +283,23 @@ final class MigrationPlannerTests: XCTestCase {
         XCTAssertTrue(problems.contains { $0.contains("store a-ecashMainnet.sqlite used twice") })
         XCTAssertTrue(problems.contains { $0.contains("legacy b placed 0 times") })
         XCTAssertTrue(problems.contains { $0.contains("legacy a placed 2 times") })
+        XCTAssertTrue(problems.contains { $0.contains("accounts 2 != input accounts 2") } == false)   // 2 wallets × 1 account = 2 inputs
         XCTAssertTrue(problems.contains { $0.contains("no-op move x") })
         XCTAssertTrue(problems.contains { $0.contains("selected wallet zzz not in plan") })
+    }
+
+    func testContainerShapedRecordsAreNeverMerged() {
+        // Running the planner over an already-migrated list must be a no-op (idempotence at the
+        // data level, not just the flag): a wallet with two accounts is left exactly as it is.
+        let a = hd("a", .ecashMainnet, sort: 0)
+        let extra = WalletAccount(network: WalletNetwork.bitcoin, scriptType: ScriptType.bip84, accountIndex: Int32(0),
+                                  externalDescriptor: a.externalDescriptor, internalDescriptor: a.internalDescriptor,
+                                  storeName: "a-bitcoin-bip84-0.sqlite")
+        let container = ManagedWallet(id: "a", label: "Main", keyType: WalletKeyType.mnemonic, isBackedUp: true,
+                                      sortIndex: 0, selectedAccountId: extra.id, accounts: [a.selectedAccount, extra])
+        let p = plan([container, hd("b", .signet, sort: 1)])
+        XCTAssertEqual(p.wallets.map { $0.id }, ["a", "b"])
+        XCTAssertEqual(p.wallets[0], container)
+        XCTAssertTrue(p.fileMoves.isEmpty)
     }
 }
