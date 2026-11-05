@@ -14,7 +14,7 @@ struct MarketsScreen: View {
         List {
             Section(header: header(Text("Bitcoin and its forks", bundle: .module, comment: "markets: comparison section")),
                     footer: footnote(section)) {
-                ForEach(section.value?.quotes ?? []) { quote in
+                ForEach(section.value?.allQuotes ?? []) { quote in
                     MarketRow(quote: quote, detailed: true)
                 }
             }

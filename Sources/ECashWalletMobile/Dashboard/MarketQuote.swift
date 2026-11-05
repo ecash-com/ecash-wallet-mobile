@@ -32,4 +32,11 @@ struct MarketBoard: Equatable, Codable, Sendable {
     /// quotes). The Dashboard's headline card. Nil when the pool call failed. Optional so a cached
     /// board written before this field decodes.
     var ecx: MarketQuote? = nil
+
+    /// Every row for the markets table: ECX first (it is the coin this app is for), then the
+    /// Bitcoin forks in their fixed order.
+    var allQuotes: [MarketQuote] {
+        if let ecx { return [ecx] + quotes }
+        return quotes
+    }
 }

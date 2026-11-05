@@ -246,7 +246,7 @@ struct DashboardScreen: View {
             case .loading: DashboardSkeleton(rows: 4)
             case .unavailable: DashboardUnavailable()
             case .ready:
-                ForEach(section.value?.quotes ?? []) { quote in
+                ForEach(section.value?.allQuotes ?? []) { quote in
                     MarketRow(quote: quote)
                 }
             }

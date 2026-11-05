@@ -44,6 +44,7 @@ import Testing
         let board = try await MarketClient(fetch: web.fetch).board()
         #expect(board.quotes.map(\.ticker) == ["BTC", "BCH", "BTCB2"])
         #expect(board.ecx?.ticker == "ECX")                                   // the headline card
+        #expect(board.allQuotes.map(\.ticker) == ["ECX", "BTC", "BCH", "BTCB2"])   // and first in the table
         #expect(abs((board.ecx?.price ?? 0) - 31.4254965) < 1e-6)
     }
 
