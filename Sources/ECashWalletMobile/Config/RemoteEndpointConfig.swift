@@ -5,8 +5,13 @@
 import Foundation
 import WalletService
 
-/// The decoded network-config payload served from `https://drivechain.dev/config`
-/// (`RemoteEndpointConfigService`).
+/// The decoded network-config payload served from `https://dev.ecash.com/config`
+/// (`RemoteEndpointConfigService`; `drivechain.dev/config` until 2026-11-09 — same schema).
+///
+/// **The eCash.com config lists only the eCash networks** (`ecash`, `betanet`). Bitcoin and L2L
+/// Signet are simply absent, and absence applies nothing: resolution is additive, so those two keep
+/// whatever was applied last (the drivechain.dev entries on an upgraded install) or the bundled
+/// `NetworkRegistry` defaults on a fresh one. Nothing here ever clears a previously applied value.
 ///
 /// This carries **rotatable, non-consensus data only** — backend endpoints, explorer tx-URL
 /// templates, and faucet/CoinNews service URLs. Consensus/derivation params (coin-type, HRP, unit
@@ -123,9 +128,10 @@ struct RemoteEndpointConfig: Equatable, Sendable {
     struct RemoteServices: Equatable, Sendable {
         let faucet: RemoteFaucet?
         let coinnews: RemoteService?
-        /// The network's hosted BIP300 enforcer (`services.enforcer.url`). BitWindow's own catalog
-        /// carries this field; the published config doesn't yet, so today it's always nil and
-        /// `EnforcerEndpointRegistry`'s bundled default applies.
+        /// The network's hosted BIP300 enforcer. The published config carries it as an ARRAY
+        /// (`"enforcer": [{"url": …}]`, first entry preferred); BitWindow's catalog as one object.
+        /// Both decode (2026-11-09 — the array shape was silently dropped before, so the bundled
+        /// `EnforcerEndpointRegistry` default always applied). Absent → bundled default.
         let enforcer: RemoteService?
     }
 
@@ -449,7 +455,14 @@ extension RemoteEndpointConfig.RemoteServices: Decodable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         self.faucet = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteFaucet.self, forKey: .faucet)
         self.coinnews = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteService.self, forKey: .coinnews)
-        self.enforcer = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteService.self, forKey: .enforcer)
+        // Object or array — the live config publishes an array; take the first entry with a URL.
+        if let one = try? c.decodeIfPresent(RemoteEndpointConfig.RemoteService.self, forKey: .enforcer) {
+            self.enforcer = one
+        } else if let many = try? c.decodeIfPresent([RemoteEndpointConfig.RemoteService].self, forKey: .enforcer) {
+            self.enforcer = many.first { !($0.url ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        } else {
+            self.enforcer = nil
+        }
     }
 }
 

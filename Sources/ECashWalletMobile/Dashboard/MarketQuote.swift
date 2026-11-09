@@ -22,15 +22,13 @@ struct MarketQuote: Equatable, Codable, Sendable, Identifiable {
     let source: String
 }
 
-/// The market section: the comparison table. There is no ECX quote yet — real ECX is not listed on
-/// any keyless venue (Gate.io and NonKYC checked 2026-10-29), and the Betanet wbECX row (Solana, ×50
-/// implied price) was dropped with Betanet when the dashboard moved to mainnet (2026-10-29).
+/// The market section: the ECX price plus the comparison table of Bitcoin forks.
 struct MarketBoard: Equatable, Codable, Sendable {
     /// BTC, BCH, BSV, BTCB2 — whichever loaded, in that order.
     let quotes: [MarketQuote]
-    /// ECX, as the wECX / USDC Orca pool on Solana prices it (GeckoTerminal; the pool CoinMarketCap
-    /// quotes). The Dashboard's headline card. Nil when the pool call failed. Optional so a cached
-    /// board written before this field decodes.
+    /// ECX from eCash.com's price API (volume-weighted across the ECX markets it tracks). The
+    /// Dashboard's headline card. Nil when that call failed. Optional so a cached board written
+    /// before this field decodes.
     var ecx: MarketQuote? = nil
 
     /// Every row for the markets table: ECX first (it is the coin this app is for), then the

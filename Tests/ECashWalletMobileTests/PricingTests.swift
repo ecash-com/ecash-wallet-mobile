@@ -63,7 +63,7 @@ import WalletService
 
     @Test func bitcoinIsPricedTestnetsAreNot() {
         #expect(PriceProviderRegistry.supportsPricing(.bitcoin))
-        #expect(PriceProviderRegistry.supportsPricing(.ecashMainnet))   // wECX on Orca, USD only (2026-11-05)
+        #expect(PriceProviderRegistry.supportsPricing(.ecashMainnet))   // eCash.com price API, USD only (2026-11-09)
         #expect(!PriceProviderRegistry.supportsPricing(.signet))
     }
 

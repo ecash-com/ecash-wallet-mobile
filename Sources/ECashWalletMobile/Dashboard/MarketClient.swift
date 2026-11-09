@@ -9,8 +9,9 @@ import Foundation
 ///   * **Gate.io** — BTC, BCH, BSV, XEC (`/api/v4/spot/tickers?currency_pair=…_USDT`)
 ///   * **NonKYC** — BTCB2 (`/api/v2/market/getbysymbol/BTCB2_USDT`)
 ///
-/// No ECX row yet: real ECX is not listed on either venue (checked 2026-10-29), and the Betanet
-/// wbECX row (Jupiter + Orca, Solana) went when the dashboard moved to mainnet — see §10.
+/// ECX comes from eCash.com's own price API (`EcashPriceProvider`, since 2026-11-09; the wECX Orca
+/// pool via GeckoTerminal before that, and before that nothing — see §10). It is the headline card
+/// and the first row of the table.
 ///
 /// Not CoinGecko (product decision). Each asset is fetched on its own and a failure only drops that
 /// row, so one venue being down never blanks the table; `board()` throws only when nothing loaded.
@@ -33,7 +34,7 @@ struct MarketClient: Sendable {
         async let bch = try? gate(assets[1])
         async let bsv = try? gate(assets[2])
         async let btcb2 = try? nonKYCBTCB2()
-        async let ecx = try? ecxFromOrca()
+        async let ecx = try? ecxFromEcashCom()
         let quotes: [MarketQuote?] = [await btc, await bch, await bsv, await btcb2]
         let loaded = quotes.compactMap { $0 }
         let ecxQuote = await ecx
@@ -41,20 +42,21 @@ struct MarketClient: Sendable {
         return MarketBoard(quotes: loaded, ecx: ecxQuote)
     }
 
-    // MARK: - ECX (wECX / USDC on Orca, via GeckoTerminal — keyless)
+    // MARK: - ECX (eCash.com price API — keyless)
 
-    static let ecxPoolURL = GeckoTerminalPriceProvider.endpoint
+    static let ecxPriceURL = EcashPriceProvider.endpoint
 
-    func ecxFromOrca() async throws -> MarketQuote {
-        guard let url = URL(string: Self.ecxPoolURL) else { throw DashboardError.malformed("orca: url") }
+    func ecxFromEcashCom() async throws -> MarketQuote {
+        guard let url = URL(string: Self.ecxPriceURL) else { throw DashboardError.malformed("ecash.com: url") }
         let data = try await DashboardHTTP.get(url, using: fetch)
-        guard let pool = try? GeckoTerminalPriceProvider.parse(data) else { throw DashboardError.malformed("orca") }
-        return Self.quote(pool: pool)
+        guard let quote = try? EcashPriceProvider.parse(data) else { throw DashboardError.malformed("ecash.com") }
+        return Self.quote(ecx: quote)
     }
 
-    static func quote(pool: GeckoTerminalPriceProvider.PoolQuote) -> MarketQuote {
-        MarketQuote(id: "ecx", name: "eCash", ticker: "ECX", price: pool.priceUSD,
-                    change24h: pool.change24h, volume24h: pool.volume24hUSD, source: "Orca")
+    /// No 24h change: the API doesn't publish one, and the row/card simply omit it.
+    static func quote(ecx: EcashPriceProvider.Quote) -> MarketQuote {
+        MarketQuote(id: "ecx", name: "eCash", ticker: "ECX", price: ecx.priceUSD,
+                    change24h: nil, volume24h: ecx.volume24hUSD, source: "eCash.com")
     }
 
     // MARK: - Gate.io

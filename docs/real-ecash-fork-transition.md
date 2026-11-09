@@ -1,6 +1,6 @@
 # Moving to the real eCash fork
 
-**Status:** 🟢 LIVE IN CONFIG 2026-10-26 — drivechain.dev/config publishes the real fork as id **`ecash`**
+**Status:** 🟢 LIVE IN CONFIG 2026-10-26 — the remote config publishes the real fork as id **`ecash`** (served from **`https://dev.ecash.com/config`** since 2026-11-09, `drivechain.dev/config` before; same schema, but the eCash.com config lists only `ecash` + `betanet`, so Bitcoin / Signet keep their last-applied or bundled endpoints)
 (not the staged `ecash-mainnet`; 1.4.4 only knew the staged spelling, 1.4.5 maps both). `WalletNetwork.ecashMainnet`
 was added 2026-10-22, gated on the remote config (below). Alphanet retired from the pickers 2026-10-26. Written 2026-09-29 ahead of the real fork. Alphanet and betanet are test generations;
 **betanet keeps running beside the real fork** (Jake, 2026-10-22) and its case is never repurposed.
@@ -117,7 +117,7 @@ exhaustive `switch` on purpose:
 | `EnforcerEndpointRegistry` | `https://seed.ecash.eu.com/enforcer` is BitWindow's default for real ECX (not live as of 2026-09-29) | config `services.enforcer.url` |
 | `CoinNewsAvailability` / `CoinNewsEndpointRegistry` | real-fork CoinNews indexer? | config |
 | `FaucetRegistry` | **nil**: no faucet on real money | settled |
-| `PriceProviderRegistry` | ✅ wECX / USDC Orca pool via GeckoTerminal (keyless, USD), 2026-11-05 | done |
+| `PriceProviderRegistry` | ✅ eCash.com price API `dev.ecash.com/price` (keyless, USD, volume-weighted), 2026-11-09 — was the wECX Orca pool via GeckoTerminal 2026-11-05 | done |
 | `NetworkChipStyle` + a colorset | the real fork's chip colour. It must read as *real money* and never be confused with the test forks' teal | design |
 | `PaymentLink` wrong-network copy | covered by the `.ecash, .ecashBeta` group; add the new case | trivial |
 | `RemoteEndpointConfig.walletNetwork` | map the real fork's config `id` to the new case (after §0) | config id |

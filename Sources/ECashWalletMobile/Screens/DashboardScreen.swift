@@ -6,8 +6,8 @@ import SwiftUI
 import WalletService
 
 /// The Dashboard tab (`docs/dashboard-plan.md`): the eCash network at a glance — chain health, news
-/// (on-chain CoinNews and eCash.com), markets, releases. ECX price = the wECX Orca pool (keyless)
-/// somewhere keyless (the Betanet wbECX card went with Betanet, 2026-10-29).
+/// (on-chain CoinNews and eCash.com), markets, releases. ECX price = eCash.com's price API (keyless;
+/// the Betanet wbECX card went with Betanet, 2026-10-29).
 ///
 /// Reports on `AppState.dashboard.network` (eCash mainnet; a config `dashboard` block can override),
 /// not the selected wallet's network. CoinNews is the exception: reading and posting are per-network and need a wallet
@@ -202,8 +202,8 @@ struct DashboardScreen: View {
 
     // MARK: - 1. Price
 
-    /// ECX as the wECX / USDC Orca pool prices it (the pool CoinMarketCap quotes). Labelled for what
-    /// it is — a wrapped token on Solana — never presented as an exchange rate for native ECX.
+    /// ECX as eCash.com's price API quotes it: the last price on each ECX market it tracks, weighted
+    /// by 24h volume. The API carries no 24h change, so the card shows none.
     private var priceCard: some View {
         let section = app.dashboard.markets
         return VStack(alignment: .leading, spacing: Theme.Space.x2) {
@@ -221,8 +221,8 @@ struct DashboardScreen: View {
                             .foregroundStyle(change < 0 ? Theme.Colors.negative : Theme.Colors.positive)
                     }
                 }
-                Text("wECX, wrapped ECX on Solana", bundle: .module,
-                     comment: "dashboard price card: what the headline price is")
+                Text("Volume-weighted across ECX markets", bundle: .module,
+                     comment: "dashboard price card: how the headline price is computed")
                     .textStyle(.xs)
                     .foregroundStyle(Theme.Colors.text1)
                 DashboardFreshness(updatedAt: section.updatedAt, stale: section.lastAttemptFailed,

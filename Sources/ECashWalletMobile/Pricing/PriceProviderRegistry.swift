@@ -23,9 +23,9 @@ enum PriceProviderRegistry {
         case .ecashBeta:
             return nil   // betanet coins have no market either
         case .ecashMainnet:
-            // The wECX / USDC Orca pool via GeckoTerminal (keyless) — the same pool CoinMarketCap's
-            // ECX page quotes. USD only; labelled as wECX wherever it shows (Jake, 2026-11-05).
-            return GeckoTerminalPriceProvider()
+            // eCash.com's own price API (keyless, USD only; Jake, 2026-11-09). Before that, the wECX /
+            // USDC Orca pool via GeckoTerminal (2026-11-05).
+            return EcashPriceProvider()
         case .thunder:
             return nil   // Thunder (test) coins have no fiat price
         }
