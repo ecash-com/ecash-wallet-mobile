@@ -12,6 +12,15 @@ final class WalletAccountModelTests: XCTestCase {
     private let ext = "wpkh([d34db33f/84'/0'/0']xpub6C/0/*)#aaaaaaaa"
     private let int = "wpkh([d34db33f/84'/0'/0']xpub6C/1/*)#bbbbbbbb"
 
+    func testRetiredNetworksAreTheOnesOutsideThePickerAndTheirSidechains() {
+        XCTAssertFalse(WalletNetwork.ecashMainnet.isRetired)
+        XCTAssertFalse(WalletNetwork.bitcoin.isRetired)
+        XCTAssertFalse(WalletNetwork.signet.isRetired)
+        XCTAssertTrue(WalletNetwork.ecash.isRetired)       // alphanet
+        XCTAssertTrue(WalletNetwork.ecashBeta.isRetired)   // betanet
+        XCTAssertTrue(WalletNetwork.thunder.isRetired)     // Thunder betanet: its parent is retired
+    }
+
     func testAccountIdAndStoreNames() {
         XCTAssertEqual(WalletAccount.accountId(network: WalletNetwork.ecashMainnet, scriptType: ScriptType.bip84, accountIndex: Int32(0)),
                        "ecashMainnet-bip84-0")

@@ -269,6 +269,13 @@ struct WalletHomeScreen: View {
                 backupNudge
             }
 
+            // Retired-network nudge: this wallet is open on alphanet / betanet / Thunder betanet.
+            // The same seed opens on eCash in one tap (deriving the account if it has none — the
+            // switch path handles the device-auth gate), which beats merely hiding the wallet.
+            if app.selectedWalletIsOnRetiredNetwork {
+                retiredNetworkNudge(wallet: wallet, networkName: params.displayName)
+            }
+
             // Claimed-key nudge: a single-key (WIF) wallet holding funds. Gated on keyType rather
             // than the "ECX Claim" label so renaming the wallet can't hide it, and so a key
             // imported the long way (Advanced → Private key) gets the same offer.
@@ -529,6 +536,30 @@ struct WalletHomeScreen: View {
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
                     .stroke(Theme.Colors.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func retiredNetworkNudge(wallet: ManagedWallet, networkName: String) -> some View {
+        Button {
+            Task { _ = await app.switchNetwork(walletId: wallet.id, to: WalletNetwork.currentEcash) }
+        } label: {
+            VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                Text("This wallet is on a retired network", bundle: .module, comment: "home retired-network nudge title")
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.text0)
+                Text("\(networkName) was a test network before the eCash fork. Tap to open this wallet on eCash.",
+                     bundle: .module, comment: "home retired-network nudge body")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.x4)
+            .background(Theme.Colors.accentTint, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                    .stroke(Theme.Colors.accent.opacity(0.4), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

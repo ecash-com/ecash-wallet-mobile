@@ -177,6 +177,17 @@ each script type is its own BDK wallet, own sqlite store, own sync. Consequences
   account's network exactly as they follow the selected wallet's network today.
 - **Settings → Network:** lists `selectable` plus any network that **any account** is on (so a
   retired chain's endpoint stays editable).
+- **Hide retired networks** (Settings → Network toggle, **on by default** — Jake, 2026-11-09;
+  `RetiredNetworks`, `WalletNetwork.isRetired` = not in `selectable` and not a sidechain of an
+  offered mainchain: alphanet, betanet, Thunder betanet). Display only — nothing is deleted,
+  re-keyed, or stops syncing. With it on: retired entries leave the switcher (the account the wallet
+  is open on always stays), retired balance lines leave the wallet rows, and a wallet whose accounts
+  are **all** retired leaves the list and is never auto-selected (if the selected wallet becomes
+  hidden, selection moves to the first visible one). Two guard rails: **the list is never empty** —
+  if every wallet is retired-only nothing is hidden, and the list says so (the welcome screen is for
+  people with no wallets); and the list footer states how many wallets are hidden. Home shows a
+  nudge on a retired account — "open this wallet on eCash" — which is just `switchNetwork` to
+  `currentEcash` (deriving the account on first use, behind the device-auth gate).
 
 ### 4.1 Flows that must survive unchanged (non-negotiable — Jake, 2026-11-04)
 

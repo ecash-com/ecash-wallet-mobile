@@ -216,7 +216,7 @@ struct SettingsScreen: View {
                 Text("Fiat values appear on mainnet wallets only, priced via Bitfinex.",
                      bundle: .module, comment: "fiat currency section explainer")
             }
-            Section(header: sectionHeader(Text("Network", bundle: .module, comment: "settings section: network"))) {
+            Section {
                 NavigationLink {
                     NetworkSettingsScreen()
                 } label: {
@@ -224,6 +224,20 @@ struct SettingsScreen: View {
                         .textStyle(.body)
                         .foregroundStyle(Theme.Colors.text0)
                 }
+                // Alphanet / betanet / Thunder betanet: finished test networks. Hiding is display
+                // only (`RetiredNetworks`); the wallets and their chain data stay on the device.
+                Toggle(isOn: Binding(
+                    get: { app.hideRetiredNetworks },
+                    set: { app.hideRetiredNetworks = $0 })) {
+                    Text("Hide retired networks", bundle: .module, comment: "settings: hide retired-network wallets toggle")
+                        .textStyle(.body)
+                        .foregroundStyle(Theme.Colors.text0)
+                }
+            } header: {
+                sectionHeader(Text("Network", bundle: .module, comment: "settings section: network"))
+            } footer: {
+                Text("Alphanet, Betanet and Thunder Betanet were test networks before the eCash fork. Hiding them takes their wallets and balances out of the list and the network switcher — nothing is deleted, and turning this off brings them back.",
+                     bundle: .module, comment: "hide retired networks explainer")
             }
             Section(header: sectionHeader(Text("About", bundle: .module, comment: "settings section: about"))) {
                 Text(versionString)

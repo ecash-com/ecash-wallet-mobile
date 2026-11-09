@@ -250,6 +250,17 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
 
     public var isSidechain: Bool { parentChain != nil }
 
+    /// **Retired**: no longer offered for new wallets (`selectable`) and not a sidechain of an offered
+    /// mainchain — the cases kept only so existing wallets load: alphanet, betanet, Thunder betanet.
+    /// Drives the app's "Hide retired networks" setting (on by default, 2026-11-09). Presentation
+    /// only: a retired account still syncs, sends and spends exactly as before.
+    public var isRetired: Bool {
+        let offered = WalletNetwork.selectable
+        if offered.contains(self) { return false }
+        if let parent = parentChain { return !offered.contains(parent) }
+        return true
+    }
+
     /// The sidechains that settle to `mainchain`, in declaration order. Empty for Bitcoin.
     public static func sidechains(of mainchain: WalletNetwork) -> [WalletNetwork] {
         WalletNetwork.allCases.filter { $0.parentChain == mainchain }

@@ -28,9 +28,20 @@ struct WalletManagerSheet: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                Section("Wallets") {
-                    ForEach(app.wallets) { wallet in
+                Section {
+                    ForEach(app.visibleWallets) { wallet in
                         walletRow(wallet)
+                    }
+                } header: {
+                    Text("Wallets", bundle: .module, comment: "wallet list section header")
+                } footer: {
+                    // Say when something is being hidden, so a wallet is never just "gone".
+                    if app.hiddenWalletCount > 0 {
+                        Text("\(app.hiddenWalletCount) on retired networks hidden. Show them in Settings → Network.",
+                             bundle: .module, comment: "wallet list footer: count of retired-network wallets hidden")
+                    } else if app.isShowingRetiredFallback {
+                        Text("All of these are on retired networks, so none are hidden. Open one on eCash from Home.",
+                             bundle: .module, comment: "wallet list footer: every wallet is on a retired network")
                     }
                 }
                 // The investor claim gets its own prominent card ABOVE the ordinary actions.
@@ -167,7 +178,7 @@ struct WalletManagerSheet: View {
                         // plus any other with a balance — each in THAT chain's unit and chip, so a
                         // wallet reads as a seed across networks, not as whatever was viewed last
                         // (docs/seed-container-model.md §4). Backup state is Home's banner, not here.
-                        ForEach(app.accountBalances(for: wallet)) { line in
+                        ForEach(app.visibleAccountBalances(for: wallet)) { line in
                             HStack(spacing: Theme.Space.x2) {
                                 WalletBalanceLabel(balance: line.balance,
                                                    unitLabel: NetworkRegistry.params(for: line.network).unitLabel)

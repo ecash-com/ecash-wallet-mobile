@@ -56,6 +56,16 @@ final class AppState {
         didSet { UserDefaults.standard.set(balanceHidden, forKey: "balanceHidden") }
     }
 
+    /// Hide alphanet / betanet / Thunder-betanet wallets and accounts (`RetiredNetworks`). Default
+    /// ON. Flipping it never changes data, only what the list and switcher show — and, if the
+    /// selected wallet just became hidden, which wallet is selected.
+    var hideRetiredNetworks: Bool {
+        didSet {
+            UserDefaults.standard.set(hideRetiredNetworks, forKey: RetiredNetworks.defaultsKey)
+            enforceVisibleSelection()
+        }
+    }
+
     /// Recovery-phrase length (12 or 24) for NEW wallets. Chosen ONCE in Settings, not per-wallet —
     /// the create flow reads this so creating a wallet stays a single tap. Persisted; default 12
     /// (plenty for most wallets; 24 adds entropy). Anything other than 24 normalizes to 12.
@@ -182,6 +192,8 @@ final class AppState {
                 }),
             isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network == .thunder })
         balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
+        // Unset reads as ON (`object(forKey:) as? Bool`, not `bool(forKey:)`'s false).
+        hideRetiredNetworks = UserDefaults.standard.object(forKey: RetiredNetworks.defaultsKey) as? Bool ?? true
         // New-wallet seed length: 24 if explicitly chosen, otherwise 12 (covers unset → default 12).
         newWalletWordCount = (UserDefaults.standard.object(forKey: Self.newWalletWordCountKey) as? Int) == 24 ? 24 : 12
         // Restore the active wallet across launches. The saved id goes INTO load so the one-time
@@ -228,6 +240,8 @@ final class AppState {
         coinNewsByNetwork[initialNetwork] = initialFeed
         coinNewsNetwork = initialNetwork
         refresh()
+        // A hidden (retired-only) wallet is never the selected one: move to the first visible.
+        enforceVisibleSelection()
         // Best-effort: pull the latest backend endpoints and apply them over the bundled defaults.
         // Fire-and-forget — a failure leaves last-known-good/bundled endpoints untouched (never
         // blocks launch). Runs after the initial `load()`, so a changed endpoint evicts engines and
@@ -326,6 +340,32 @@ final class AppState {
     var selectedWallet: ManagedWallet? {
         guard let id = selectedWalletId else { return nil }
         return wallets.first { $0.id == id }
+    }
+
+    // MARK: Retired networks (`RetiredNetworks`; Settings → "Hide retired networks")
+
+    /// The wallets the list shows. `wallets` itself stays complete: `hasWallets`, onboarding and
+    /// every money path read the real set.
+    var visibleWallets: [ManagedWallet] { RetiredNetworks.visibleWallets(wallets, hiding: hideRetiredNetworks) }
+    var hiddenWalletCount: Int { RetiredNetworks.hiddenCount(wallets, hiding: hideRetiredNetworks) }
+    /// Hiding is on but every wallet is retired-only, so the list shows them anyway.
+    var isShowingRetiredFallback: Bool { RetiredNetworks.isShowingRetiredFallback(wallets, hiding: hideRetiredNetworks) }
+    /// The selected wallet is open on a retired network — Home offers to open it on eCash.
+    var selectedWalletIsOnRetiredNetwork: Bool { selectedWallet?.network.isRetired ?? false }
+
+    /// If the selected wallet is hidden, select the first visible one. A selection change only —
+    /// the same path as tapping a wallet in the list.
+    private func enforceVisibleSelection() {
+        guard let target = RetiredNetworks.selection(current: selectedWalletId, visible: visibleWallets),
+              target != selectedWalletId else { return }
+        selectWallet(id: target)
+    }
+
+    /// `accountBalances(for:)` minus retired chains (the current one always stays).
+    func visibleAccountBalances(for wallet: ManagedWallet) -> [WalletAccountBalance] {
+        let lines = accountBalances(for: wallet)
+        guard hideRetiredNetworks, !isShowingRetiredFallback else { return lines }
+        return lines.filter { !$0.network.isRetired || $0.network == wallet.network }
     }
 
     /// The most recent transactions for the Home preview (full list lives on the Activity tab).
@@ -478,10 +518,19 @@ final class AppState {
 
     /// Whether the wallet has anywhere else to go — drives the "Switch network…" entries.
     func canSwitchNetwork(_ wallet: ManagedWallet) -> Bool {
-        manager.availableMainchains(for: wallet.id).count + manager.availableSidechains(for: wallet.id).count > 1
+        availableMainchains(for: wallet.id).count + availableSidechains(for: wallet.id).count > 1
     }
-    func availableMainchains(for walletId: String) -> [WalletNetwork] { manager.availableMainchains(for: walletId) }
-    func availableSidechains(for walletId: String) -> [WalletNetwork] { manager.availableSidechains(for: walletId) }
+    /// The switcher's entries, minus retired networks when hiding is on (the current one stays).
+    func availableMainchains(for walletId: String) -> [WalletNetwork] {
+        RetiredNetworks.visibleNetworks(manager.availableMainchains(for: walletId),
+                                        current: wallets.first { $0.id == walletId }?.network,
+                                        hiding: hideRetiredNetworks)
+    }
+    func availableSidechains(for walletId: String) -> [WalletNetwork] {
+        RetiredNetworks.visibleNetworks(manager.availableSidechains(for: walletId),
+                                        current: wallets.first { $0.id == walletId }?.network,
+                                        hiding: hideRetiredNetworks)
+    }
     func hasAccount(walletId: String, network: WalletNetwork) -> Bool { manager.hasAccount(walletId: walletId, network: network) }
     /// Why the last `switchNetwork` failed, for the switcher sheet. User-safe (a `WalletError` message).
     private(set) var networkSwitchMessage: String? = nil
