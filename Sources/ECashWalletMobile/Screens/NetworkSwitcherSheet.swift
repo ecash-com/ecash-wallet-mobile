@@ -88,13 +88,11 @@ struct NetworkSwitcherSheet: View {
                     .textStyle(.body)
                     .foregroundStyle(Theme.Colors.text0)
                 Spacer()
+                // No glyph for "no account here yet" (a lock read as unavailable — Jake,
+                // 2026-11-09): the device-auth prompt on first open says what it needs itself.
                 if isCurrent {
                     Image(icon: Icon.check)
                         .foregroundStyle(Theme.Colors.accent)
-                } else if !app.hasAccount(walletId: walletId, network: network) {
-                    // First time on this chain: deriving its keys asks for device auth.
-                    Image(icon: Icon.lock)
-                        .foregroundStyle(Theme.Colors.text2)
                 }
             }
             .padding(.leading, nested ? Theme.Space.x4 : 0)
