@@ -21,7 +21,7 @@ Read from the node (github.com/ecash-com/bitcoin master) and from L2L's catalog 
 | magic `eca5dcb7`, HRP `bc`, prefixes = Bitcoin | BDK `Network.bitcoin`, coin-type `0'`, ECX/szat | node `chainparams.cpp` |
 | chip = the eCash brand **amber**; alphanet moved to **slate** | `NetworkChipStyle`, `netEcashLegacy` colorset | design (amber now means real ECX) |
 | real money: `isMainnet == true` | extra send confirm + warnings ("Real eCash") | §2 |
-| bundled endpoints `esplora.ecash.ninja` / `explorer.ecash.ninja` / `seed.ecash.eu.com/enforcer` | offline fallback ONLY — unverified pattern guesses | config overrides them |
+| bundled endpoints `esplora.ecash.ninja` / `explorer.ecash.ninja` / `seed.ecash.eu.com/enforcer` | offline fallback until the config lands — Esplora + explorer match the `ecash` entry the config published 2026-10-26 and are live (`NetworkRegistry.swift:~140-152`); the enforcer URL's reachability is still unverified | config overrides them |
 
 **The two gates (`EcashMainnetLaunch`, WalletService):**
 1. **Offered** — since 1.4.6 build 44 (2026-10-29) **compiled on** (`EcashMainnetLaunch.offeredInThisBuild`):
@@ -44,13 +44,15 @@ betanet wallet → betanet, mainnet wallet → mainnet — and anything else (Bi
 the hours before the fork still lands on mainnet. The Dashboard moved to mainnet the same day
 (`docs/dashboard-plan.md` §11).
 
-**Still open:** Thunder on mainnet (`.thunder` is wired to betanet's index; needs its own case +
-index URL, and the config carries nothing about Thunder — §1 table); a fiat price provider for real
-ECX (`PriceProviderRegistry`, product choice); sidechain deposits on real money stay behind the
-on-chain proof (§2); migration nudge "open this betanet wallet on eCash" (§4); alphanet is DONE —
+**Still open:** ~~Thunder on mainnet~~ DONE 2026-11-10 (`.thunderMainnet` → `seed.ecash.eu.com/thunder`;
+the config still carries only Thunder's QUIC peer address, so the index URL is bundled); ~~a fiat price provider for real
+ECX~~ DONE 2026-11-09 (`PriceProviderRegistry.swift:~28` → `EcashPriceProvider`, `dev.ecash.com/price`); sidechain deposits on real money stay behind the
+on-chain proof (§2); ~~migration nudge "open this betanet wallet on eCash"~~ BUILT (`WalletHomeScreen.swift:~272-276`,
+`retiredNetworkNudge` — switches the wallet to `currentEcash`, §4); alphanet is DONE —
 retired from `selectable` 2026-10-26, and **betanet + Thunder betanet followed 2026-10-30** (cases
-kept for existing wallets, which still load/sync/send; no new creation, import, or copy-to-network;
-Settings → Network keeps a retired chain's endpoint row while a wallet is still on it).
+kept for existing wallets, which still load/sync/send; no new creation or import — since the seed-container
+model (2026-11-05) a retired chain is just an account the switcher won't add; a Settings toggle hides retired
+networks, on by default; Settings → Network keeps a retired chain's endpoint row while a wallet is still on it).
 
 ---
 
@@ -98,7 +100,8 @@ entry is enough.
 A wallet's network is fixed at creation and persisted as `WalletNetwork.rawValue` (and enforced by
 BDK's `check_network`). Pointing `.ecashBeta` at the real fork would silently move every betanet
 wallet onto real money. So: **a new case**, e.g. `case ecashMain` with raw value `"ecash-main"`
-(anything not already used; `"ecash"` is taken by alphanet).
+(anything not already used; `"ecash"` is taken by alphanet). *(Historical: the case shipped as
+`WalletNetwork.ecashMainnet` on 2026-10-22 — `Models.swift:~150` — and the config id is `ecash`.)*
 
 Adding it makes the compiler list most of the work, because every per-network decision is an
 exhaustive `switch` on purpose:
@@ -106,14 +109,14 @@ exhaustive `switch` on purpose:
 | Where | Decision for the real fork | Source of truth |
 |---|---|---|
 | `NetworkRegistry.bundledParams` (WalletService) | Esplora/Electrum default, explorer template, unit `ECX`, sub-unit `szat`, display name | config + L2L |
-| `NetworkRegistry` fork height | **964,000**? (CLAUDE.md §1 says activation at 964,000; the config's `fork_height` wins) | config `fork_height` |
+| `NetworkRegistry` fork height | ✅ **973,728** (node `consensus.EcashHeight`; the config's `fork_height` wins; the earlier 964,000 figure was superseded) | config `fork_height` |
 | `NetworkRegistry` nLockTime replay marker | **`499_999_998`**: one lower than the test forks' `499_999_999` (`LOCKTIME_THRESHOLD - 1`). Set it in `replayProtectionLockHeight(for:)`, and update `docs/coin-splitting.md` §2 | L2L (decided) |
 | `BDKSeam.network` | `Network.bitcoin` (eCash = Bitcoin params, `docs/key-derivation.md`) | settled |
 | `WalletNetwork.keyFamily` / `sharesKeys` | same family as Bitcoin + the test forks (coin-type `0'`) | settled |
 | `WalletNetwork.supportsCoinSplit` | **true**: this is the chain where splitting real coins matters most | settled |
 | `WalletNetwork.selectable` | add; decide whether alphanet/betanet stay creatable | product |
 | `WalletNetwork.currentEcash` | point at the new case, so new wallets, imports and claims go to real ECX | the switch-over itself |
-| `Drivechain.opcode(for:)` (WalletService) | `0xb4` (NOP5) or `0xb7` (NOP8)? **Not decided upstream**: the enforcer has no real-fork preset yet, only a `--op-drivechain` flag. Betanet trialled NOP8 "at mainnet scale". **Confirm; never guess.** A wrong byte makes deposits anyone-can-spend | L2L / enforcer preset |
+| `Drivechain.opcode(for:)` (WalletService) | ✅ **NOP8 (`0xb7`)** — read from ecash-com/bitcoin `script.h` (`OP_DRIVECHAIN = OP_NOP8`) 2026-10-21, wired in `Drivechain.swift:~31`. (Was: NOP5 or NOP8, undecided upstream; a wrong byte makes deposits anyone-can-spend) | node `script.h` |
 | `EnforcerEndpointRegistry` | `https://seed.ecash.eu.com/enforcer` is BitWindow's default for real ECX (not live as of 2026-09-29) | config `services.enforcer.url` |
 | `CoinNewsAvailability` / `CoinNewsEndpointRegistry` | real-fork CoinNews indexer? | config |
 | `FaucetRegistry` | **nil**: no faucet on real money | settled |
@@ -121,7 +124,7 @@ exhaustive `switch` on purpose:
 | `NetworkChipStyle` + a colorset | the real fork's chip colour. It must read as *real money* and never be confused with the test forks' teal | design |
 | `PaymentLink` wrong-network copy | covered by the `.ecash, .ecashBeta` group; add the new case | trivial |
 | `RemoteEndpointConfig.walletNetwork` | map the real fork's config `id` to the new case (after §0) | config id |
-| Thunder (`.thunder`, `NetworkRegistry`) | Thunder is hard-wired to the **betanet** index (`seed.beta.ecash.eu.com/thunder`). Real-fork Thunder needs its own index, and probably its own network case for the same persisted-rawValue reason | L2L |
+| Thunder (`.thunder`, `NetworkRegistry`) | ✅ Resolved 2026-11-10: `.thunder` stays the **betanet** index (`seed.beta.ecash.eu.com/thunder`, retired); the real fork's Thunder is its own case `.thunderMainnet` (slot 9) on `seed.ecash.eu.com/thunder` (`NetworkRegistry.swift:~183-198`), nested under eCash in the switcher | L2L |
 
 ## 2. Real money: treat it like Bitcoin mainnet
 
@@ -154,10 +157,40 @@ What already carries over, and what doesn't:
   lost funds. They were test coins.
 - **Same seed, real coins:** every eCash generation derives identical addresses from one seed
   (coin-type `0'`, `bc`). A user's betanet wallet's seed **is** their real-ECX wallet's seed.
-  "Copy wallet to network" (`docs/copy-wallet-to-network.md`) already exists; offer it as
-  "Open this wallet on real eCash" rather than asking users to re-import.
-- The alphanet burn credit is paid on real ECX (`docs/alphanet-burn.md`), and copy-to-network is how
-  users reach it.
+  Since the seed-container model (2026-11-05, `docs/seed-container-model.md` §4) the wallet simply
+  **switches network** to eCash mainnet (`switchNetwork` to `currentEcash`); the Home nudge on a
+  retired-chain wallet does exactly that (`retiredNetworkNudge`). Copy-to-network was the earlier
+  mechanism and is gone.
+- The alphanet burn credit is paid on real ECX, and switching the wallet's network to eCash mainnet
+  is how users reach it (same seed, same index-0 address). The burn transaction itself is below.
+
+### 4a. The alphanet burn transaction (folded in from the removed `docs/alphanet-burn.md`, 2026-11-10)
+
+Alphanet (`.ecash`) is retired and **the in-app burn feature was never built**; this records the
+protocol in case it is ever needed. Whether L2L still honours the credit is **unconfirmed**.
+
+From `sidechain-orchestrator/wallet/ecx_burn.go` and `commands/wallet_burn_ecx.go`:
+
+| output | value | script |
+|---|---|---|
+| burn | the burned amount `B` | P2PKH to `1BitcoinEaterAddressDontSendf59kuE` = `76a914759d6677091e973b9e9d99f19c68fbf43e3f05f988ac` |
+| claim | `0` | `OP_RETURN <push: ASCII bytes of the claim address>` |
+| change | any | back to the burning wallet (optional) |
+
+Rules BitWindow enforces before it signs (`checkBurnPreview`):
+
+- **Exactly one** burn output with value `B`, **exactly one** claim output with value 0, and nothing
+  else except the wallet's own change.
+- **Replay protection** required: `nLockTime == 499_999_999` and no input at `SEQUENCE_FINAL` (our
+  `WalletEngine.applyingReplayProtection` already does this for `.ecash`).
+- **Minimum** `B` = 100,000,000,000 sats = 1,000 alphanet coins (exactly the minimum is accepted).
+- **Credit** = `ceil(B / 100)` ECX sats — 1,000 coins burned → 10 ECX.
+- **Claim address**: the burning wallet's first receive address (external index 0) as its ASCII
+  string; BitWindow's detector accepts any mainnet-format address in a single push except P2PK.
+
+The claim address is inside the signed transaction, so the payout can't be redirected; and because
+every eCash generation shares Bitcoin's parameters (coin-type `0'`, `bc`), the credit lands at the
+same index-0 address the user already holds on eCash mainnet.
 - Once a test fork is gone, hide it from `selectable` (keep the case, so the rawValue still resolves).
 
 ## 5. Order of operations
@@ -177,11 +210,11 @@ What already carries over, and what doesn't:
 
 ## 6. Questions for L2L
 
-1. The real fork's config `id` and `display_name`.
-2. Its `OP_DRIVECHAIN` opcode (NOP5 or NOP8).
+1. ~~The real fork's config `id` and `display_name`.~~ Answered: id `ecash`, display "eCash" (published 2026-10-26).
+2. ~~Its `OP_DRIVECHAIN` opcode (NOP5 or NOP8).~~ Answered: NOP8 (`0xb7`), from the node's `script.h`.
 3. ~~Fork height: 964,000 (CLAUDE.md §1), or has it moved?~~ Answered: 973,728 (node `consensus.EcashHeight`).
 4. ~~The nLockTime replay-protection marker.~~ Decided: `499_999_998` (one below the test forks).
 5. Hosted enforcer, Esplora, Electrum, explorer and CoinNews URLs; is the enforcer public for
    mobile use?
-6. Real-fork Thunder: index URL, and whether its addresses and keys differ from betanet Thunder's.
+6. ~~Real-fork Thunder~~ — resolved 2026-11-10: index at `seed.ecash.eu.com/thunder`; addresses and keys are identical to betanet Thunder's (same slot-9 derivation, no network in the path).
 7. When are alphanet and betanet shut down?

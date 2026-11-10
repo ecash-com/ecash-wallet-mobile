@@ -35,7 +35,8 @@ Sources, all read or probed on 2026-09-29:
 
 **Moving to the real fork** (opcode, enforcer URL, config id): `docs/real-ecash-fork-transition.md`.
 
-Supersedes the deposit half of `docs/thunder-deposit-withdraw.md` (§2, §5.4, open question 1).
+Supersedes the deposit half of the former `docs/thunder-deposit-withdraw.md` (its content is folded
+into `docs/thunder-sidechain-support.md`, 2026-11-10).
 
 ---
 
@@ -72,6 +73,7 @@ treasury without recreating it is rejected (`TreasurySpentWithoutNewCtip`); one 
 | L2L Signet | `OP_NOP5` | `0xb4` | `NetworkParams::for_network` |
 | Alphanet (`.ecash`) | `OP_NOP5` | `0xb4` | `NetworkParams::alphanet` |
 | Betanet (`.ecashBeta`) | `OP_NOP8` | `0xb7` | `NetworkParams::betanet` — verified on-chain, §2c |
+| eCash mainnet (`.ecashMainnet`) | `OP_NOP8` | `0xb7` | ecash-com/bitcoin `script.h` (`OP_DRIVECHAIN = OP_NOP8`); `Drivechain.swift:~31` |
 | Bitcoin mainnet | — | — | No BIP300; no deposits. |
 
 This goes in the compiled `NetworkRegistry`, **never** remote config (Golden Rules §1/§4): a wrong
@@ -129,9 +131,10 @@ The Thunder index credits it: `/deposit/f83c5c7a…` returns the sidechain outpu
 | The CTIP's full tx (for the PSBT `nonWitnessUtxo`) | mainchain Esplora `GET /tx/{txid}/hex` | ✅ `esplora.beta.ecash.ninja` |
 | Has someone already spent the CTIP? | mainchain Esplora `GET /tx/{txid}/outspend/{vout}` | ✅ answers `{"spent":false}`; mempool visibility still to confirm |
 | Did the sidechain credit it? (Thunder) | `GET {thunder-index}/deposit/{mainchain_txid}` | ✅ |
-| Display metadata (description, version) | `drivechain.dev/config` → `networks[].sidechains[]` | ✅ |
+| Display metadata (description, version) | `dev.ecash.com/config` (was `drivechain.dev/config` until 2026-11-09) → `networks[].sidechains[]` | ✅ |
 
-`{thunder-index}` today is `https://seed.beta.ecash.eu.com/thunder` (betanet). The `/drivechain/*`
+`{thunder-index}` is `https://seed.beta.ecash.eu.com/thunder` on betanet and
+`https://seed.ecash.eu.com/thunder` on eCash mainnet (`.thunderMainnet`, 2026-11-10). The `/drivechain/*`
 routes read the **mainchain** through the enforcer behind the index, not Thunder's own chain, so
 they answer for **every** slot even though the host is Thunder's.
 
@@ -176,7 +179,7 @@ to us:
 | `GetChainTip` | `{}` | height and hash the enforcer has validated. Use it to refuse deposits while the enforcer lags the wallet's backend (BitWindow's `depositTreasuryReady`) | ✅ height 970,659 |
 | `GetChainInfo` | `{}` | `network`, `bip300Constants` (withdrawal max age / threshold, activation height). This is **real data for the withdrawal timescale copy**, not hardcoded months | ✅ |
 | `GetSidechainProposals` | `{}` | slots being voted in right now (e.g. **slot 8 "Solana", 808 votes**), for a "coming soon" view | ✅ |
-| `GetWithdrawalBundleProposals` | `{"sidechainId":9}` | pending M6 bundles with `voteCount`. This is the withdrawal-status source (`thunder-deposit-withdraw.md` §5.3) | ✅ 1 bundle, 121 votes |
+| `GetWithdrawalBundleProposals` | `{"sidechainId":9}` | pending M6 bundles with `voteCount`. This is the withdrawal-status source (`docs/thunder-sidechain-support.md`) | ✅ 1 bundle, 121 votes |
 | `SubscribeEvents` | `{"sidechainId":9}` (streaming) | connect/disconnect block events carrying **deposits and withdrawal-bundle events** per slot | ⚠️ stream opens (200) but sent nothing in 25 s. Expected between blocks, but not proven |
 
 Field names use proto3 JSON camelCase (`sidechainNumber` for GetCtip, but `sidechainId` for the
@@ -197,10 +200,10 @@ most of the time.
 |---|---|---|
 | Betanet | `seed.beta.ecash.eu.com/enforcer` | ✅ live |
 | Alphanet | `seed.alpha.ecash.eu.com/enforcer` | ❌ **serves betanet**: identical tip hash, `activationHeight` 967,680 (betanet's fork, not alphanet's 963,648). Same misrouting as its `/drivechain` index |
-| Real ECX | `seed.ecash.eu.com/enforcer` (BitWindow's default) | not up (connection fails) |
+| Real ECX | `seed.ecash.eu.com/enforcer` (BitWindow's default; bundled for `.ecashMainnet` in `EnforcerEndpointRegistry.swift:~25-30`, config `services.enforcer.url` overrides) | was not up 2026-09-29 / 2026-10-22; reachability still unverified (2026-11-10) |
 | L2L Signet | none found (`node.signet.drivechain.info/enforcer` is the website) | ❌ |
 
-**It isn't in `drivechain.dev/config`.** BitWindow has `services.enforcer.url` in its *embedded*
+**It wasn't in `drivechain.dev/config`** (now `dev.ecash.com/config`). BitWindow has `services.enforcer.url` in its *embedded*
 catalog (`netcatalog/networks.json`), but the live config omits it. Ask L2L to publish it. Until
 then, a per-network default in our registry, marked as a service URL (not consensus), with the
 config able to override it.
@@ -222,7 +225,7 @@ Read in `drivechain-frontends` (2026-09-29):
   Connect/gRPC, URL from `services.enforcer.url` in its catalog
   (`https://seed.beta.ecash.eu.com/enforcer`, `…alpha…/enforcer`; `config/remote_enforcer.go`). Not
   plain HTTP (a bare GET answers 403), so not something we'd call from the phone.
-- **It does not use `drivechain.dev/config`'s `sidechains[]` at all.** Its catalog decoder
+- **It does not use `dev.ecash.com/config`'s `sidechains[]` at all.** Its catalog decoder
   (`sidechain-orchestrator/config/netcatalog`) never reads that field. The array is apparently for
   the node launcher/presentation, which is why it can lag the enforcer's real active set (§3a).
 - **An HTTP escrow client exists but isn't wired yet:** `escrow_index.go` reads `<base>/sidechains`
@@ -232,9 +235,9 @@ Read in `drivechain-frontends` (2026-09-29):
   snapshot. That's the direction L2L is heading, and it's what we'd use — so we're aligned, not
   inventing a dependency.
 - Note BitWindow's box URLs are **hardcoded** per eCash generation in `config/network.go`, not read
-  from `drivechain.dev/config`. We'd rather they be published there (§8 Q2).
+  from `dev.ecash.com/config`. We'd rather they be published there (§8 Q2).
 
-### 3a. drivechain.dev/config vs the index — they disagree
+### 3a. dev.ecash.com/config vs the index — they disagree
 
 The config lists **only Thunder** under betanet; the index reports **eight** active slots on the same
 network (including `130 FreeBank`, which the config doesn't list anywhere). So:
@@ -294,7 +297,8 @@ Options, in order of preference:
 
 Recommendation: **ship on (2), file (1) in parallel, delete (2) when the binding catches up.**
 
-> **Update 2026-09-29: the binding already caught up.** bdk-ffi **3.0.0** (2026-06-09) exposes
+> **Update 2026-09-29 (still true 2026-11-10 — pinned to 2.3.1; the upgrade is planned in
+> `docs/bdk-upgrade.md`): the binding already caught up.** bdk-ffi **3.0.0** (2026-06-09) exposes
 > `TxBuilder.ordering(TxOrdering)`, including `Untouched` (insertion order), and 3.1.0 is current. So
 > option (1) is "upgrade", not "file a request". We're pinned to 2.3.1, and 3.0 has breaking changes
 > that touch key derivation (`DescriptorSecretKey::new` no longer adds a wildcard; `Descriptor` and
@@ -351,7 +355,7 @@ Test vectors: the real betanet tx in §2c, plus the enforcer's own `handle_m5_m6
   Deposit-to-self is the common case and removes a paste step.
 - **Review (Golden Rule §7):** network chip, **sidechain name + slot**, destination, amount, fee,
   and a plain statement that the coins leave the mainchain and **coming back is a withdrawal measured
-  in weeks to months** (`docs/thunder-deposit-withdraw.md` §3). Mainnet-weight confirmation — this is
+  in weeks to months** (`docs/thunder-sidechain-support.md`). Mainnet-weight confirmation — this is
   real ECX.
 - **Activity:** the classifier (`WalletTx`, like `coinNewsKind`) can recognise a deposit from the
   treasury-script output alone — unlike BitWindow, which has to keep a local record because it
@@ -360,7 +364,7 @@ Test vectors: the real betanet tx in §2c, plus the enforcer's own `handle_m5_m6
 
 ## 7. Build order
 
-1. **Registry + pure logic, tested.** `NetworkParams.drivechainOpcode` (nil on Bitcoin); deposit
+1. ✅ **BUILT — registry + pure logic, tested.** `Drivechain.opcode(for:)` (nil on Bitcoin / sidechains); deposit
    address decoder; treasury-script builder; the §5 validator. All pure, all fast tests, vectors
    from §2c and the enforcer.
 2. ✅ **BUILT 2026-09-29 — read layer.** `Sources/ECashWalletMobile/Drivechain/` (`EnforcerClient`,
@@ -371,20 +375,21 @@ Test vectors: the real betanet tx in §2c, plus the enforcer's own `handle_m5_m6
    enforcer (§3a′), refetching on a new tip hash. `{box}/drivechain` is the fallback. Enforcer URL
    per network: ask L2L to publish `services.enforcer.url`; until then use a registry default,
    overridable by config.
-3. **Engine.** `WalletEngine.depositToSidechain(slot:address:amount:feeRate:)` — foreign CTIP input,
+3. ✅ **BUILT — engine.** `WalletEngine.depositToSidechain(slot:address:amount:feeRate:)` — foreign CTIP input,
    ordering via §4a option 2, validator gate, sign, broadcast, `applyBroadcast`. Bridged surface via
    `WalletManager`, signed types only (CLAUDE.md §5).
-4. **Real-BDK integration tests** on iOS sim + Android emulator: foreign-input signing (§4b), shape,
-   first-deposit (`treasury: null`) path.
-5. **UI** per §6.
-6. **On-chain proof on betanet** with a small amount, confirmed credited via `/deposit/{txid}`,
-   before any release — the same bar split-coins had to clear.
+4. ✅ **BUILT — real-BDK tests** (`DepositEngineTests`, host-only real BDK — not yet run as an
+   Android instrumented suite): foreign-input signing (§4b), shape, first-deposit (`treasury: null`) path.
+5. ✅ **BUILT — UI** per §6 (`SidechainDepositScreen`, `SidechainDetailScreen`, `SidechainsScreen`).
+6. ⬜ **On-chain proof on betanet** with a small amount, confirmed credited via `/deposit/{txid}`,
+   before any release — the same bar split-coins had to clear. **NOT done (2026-11-10):** deposits
+   are built but unproven on-chain, so the feature stays behind this bar on real money.
 
 ## 8. Open questions
 
 1. Does mainchain Esplora's `/outspend` report **mempool** spends? Decides whether we can chain onto
    pending deposits or must wait for confirmation.
-2. Will L2L add a first-class drivechain/enforcer URL to `drivechain.dev/config`, and reconcile the
+2. Will L2L add a first-class drivechain/enforcer URL to `dev.ecash.com/config`, and reconcile the
    config's sidechain lists with the enforcer's active set (§3a)?
 3. Minimum deposit: is there a sidechain-side dust floor below which a deposit is credited but
    unspendable?

@@ -51,7 +51,12 @@ Every transaction in a tidy timeline: what came in, what went out, when it confi
 Choose slow, normal, or fast before you send, and always see the total before you confirm. No surprises, no guesswork.
 
 ### Live prices
-See what your balance is worth in your local currency, updated as you go.
+See what your balance is worth in US dollars, updated as you go.
+
+<!-- Copy note (2026-11-10): the eCash (ECX) price comes from eCash.com's own price API and is USD
+     only (`EcashPriceProvider`); a Bitcoin wallet can pick USD / EUR / GBP / JPY (`FiatCurrency`).
+     Don't promise "local currency" for ECX. -->
+
 
 ---
 
@@ -75,7 +80,12 @@ The wallet's core is powered by the same battle-tested open-source engine truste
 
 Testing something out, or moving real value? The wallet always tells you which network you're on with a clear, color-coded badge on every screen that touches money. Real coins and practice coins never get confused — a small thing that saves real headaches.
 
-**Just trying it out?** Spin up a practice wallet and grab free test coins from the built-in faucet — play money with no real value, perfect for learning the ropes before you hold the real thing.
+**Just trying it out?** Switch any wallet to L2L Signet and grab free test coins from the built-in faucet — play money with no real value, perfect for learning the ropes before you hold the real thing.
+
+<!-- Copy note (2026-11-10): there is no separate "practice wallet" — a wallet is a seed and the
+     network is switched inside it (eCash mainnet / Bitcoin / L2L Signet). The faucet exists only on
+     L2L Signet (`FaucetRegistry`). -->
+
 
 ---
 

@@ -255,8 +255,8 @@ The shell is a stock `TabView` (Wallet · Activity · Settings); multi-step flow
 `NavigationStack`. Top-level screens own their own layout (no large-title nav bar on Home).
 
 - **Onboarding (`Welcome`)** — first launch with no wallets: logo + Create / Import. (No "choose
-  network" step — new wallets default to Testnet/Signet; network is a switchable view, not asked at
-  creation, per `docs/wallet-and-network-model.md`.)
+  network" step — a new wallet opens on eCash mainnet and the network is switched inside the
+  wallet, per `docs/seed-container-model.md`.)
 - **Home (`WalletHomeScreen`)** — switcher pill (top-left) · `NetworkBadge` · balance + eye privacy
   toggle · 4-circle action row (**Send/Receive** live, **Swap/Buy** disabled ghosts) · "not backed
   up" nudge · recent activity. No nav title, no FAB.

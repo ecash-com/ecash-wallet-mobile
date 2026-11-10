@@ -66,8 +66,9 @@ to fresh addresses. No forked binding.
 
 ## 4. Data model — "denial jobs" (app-owned metadata)
 
-BDK stores none of this; it lives in `WalletStore` (JSON), namespaced per (wallet × network), like
-coin-control freeze/labels:
+BDK stores none of this; it lives in `WalletStore` (JSON), namespaced per account — (wallet ×
+network × scriptType × accountIndex), the `WalletAccount` unit since the seed-container model
+(2026-11-05) — like coin-control freeze/labels:
 
 ```
 DenialJob {
@@ -108,7 +109,8 @@ wallet cannot reliably do that:
 ## 6. Cost
 
 Every hop is an on-chain tx → a fee. **Negligible on L2L Signet** (the right place to build/test
-this), **real money on Bitcoin mainnet** — K hops × M UTXOs compounds. The "Start" screen must show
+this), **real money on Bitcoin mainnet and on eCash mainnet** (the default network for every new
+wallet since the fork) — K hops × M UTXOs compounds. The "Start" screen must show
 an **estimated total fee** across all planned hops before the user commits, and respect the same
 low-fee-when-cheap logic as consolidation.
 

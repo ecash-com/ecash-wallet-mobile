@@ -3,7 +3,7 @@
 > **Status: PROPOSED (design only — not built).** Decision record for adding BIP39-passphrase
 > hidden wallets so a user can reveal a believable wallet under coercion while keeping real funds
 > in a wallet that leaves no trace on the device. Builds on [[key-storage-model]] and
-> [[wallet-and-network-model]]. CLAUDE.md §2 (Golden Rules — secret scrub, wallet isolation) binds
+> `docs/seed-container-model.md` (wallet = seed, network switched inside it). CLAUDE.md §2 (Golden Rules — secret scrub, wallet isolation) binds
 > this feature especially hard.
 
 ## 1. What & why
@@ -38,12 +38,19 @@ anything behind a passphrase.
 public convenience init(network: Network, mnemonic: Mnemonic, password: String?)
 ```
 
-`password:` is the BIP39 passphrase. We already call this in exactly **two** places in
-`BDKWalletEngineFactory`, both currently passing `password: nil`:
-- `walletKeys(network:mnemonic:)` — derives the **public** descriptors stored at create/import.
-- the `signPsbt` closure — re-derives the **private** key to sign a send.
+`password:` is the BIP39 passphrase. We call this in **two** places in `BDKWalletEngineFactory`, both
+currently passing `password: nil`:
+- `walletKeys(network:mnemonic:scriptType:)` (`~373`) — derives the **public** descriptors stored per
+  account at create/import (one per offered mainchain since the seed-container model).
+- the `signPsbt` closure (`~199`) — re-derives the **private** key to sign a send.
 
-Threading a passphrase into both is the entire crypto change. The passphrase changes the derived
+**Two more sites derive from the same phrase and also need the passphrase (2026-11-10):**
+- `CoinNewsIdentity.swift:~35` — the BIP-340 posting identity. Without it a hidden wallet would post
+  under the **standard** wallet's CoinNews identity — a deniability leak that links the two.
+- `ThunderWallet.swift:~21` — the Thunder (ristretto255) seed via `Bip39Seed.seed(mnemonic:passphrase:)`,
+  today always `""`.
+
+Threading a passphrase into all four is the entire crypto change. The passphrase changes the derived
 xpub, so the public descriptors (and thus the wallet's addresses) differ — a passphrase wallet is a
 genuinely separate wallet, not a view of the standard one.
 
@@ -56,7 +63,10 @@ Nothing derived from the passphrase may persist:
 2. **Hidden wallet is never in the `FileWalletStore`** — if it shows in the wallet list, it isn't
    hidden. It cannot be a normal persisted `ManagedWallet`.
 3. **No hidden chain data on disk** (v1) — a second BDK SQLite store full of a stash's
-   addresses/balances is a tell. The hidden wallet is synced fresh in memory and dropped.
+   addresses/balances is a tell. The hidden wallet is synced fresh in memory and dropped. The same
+   goes for the **Thunder account key**, which the standard wallet persists per `walletId` in
+   `UserDefaults` (`ThunderAccountKeyStore.swift:~27`, key `thunder.accountKey.v018.<id>`) — a hidden
+   wallet must never write it (2026-11-10).
 4. **No "hidden wallet enabled" flag anywhere** — the flag itself is the leak. The affordance to
    enter a passphrase must be **always present**, even for users with no hidden wallet, because any
    passphrase derives *a* valid (possibly empty) wallet. Its presence reveals nothing.
@@ -90,7 +100,7 @@ was, conveniently, the right foundation:
 
 | Piece | Today | With passphrase |
 |---|---|---|
-| Public descriptors | derived once at create/import, **stored** | derived live with the passphrase, **in-memory only** |
+| Public descriptors | derived once at create/import, **stored** per account across all mainchains | derived live with the passphrase, **in-memory only** |
 | Everyday engine | watch-only from stored descriptors | watch-only from the in-memory descriptors |
 | Signing | `signPsbt` re-derives (`password: nil`) | `signPsbt` re-derives (`password: passphrase`) |
 | Sync | persisted checkpoint + revealed-spks | no checkpoint → full scan each open |
@@ -98,7 +108,7 @@ was, conveniently, the right foundation:
 
 New surface: a passphrase-entry flow, an *ephemeral wallet* representation in `AppState`/
 `WalletManager` (parallel to `ManagedWallet` but never persisted), and routing the passphrase into
-the two derivation points.
+the four derivation points (§2).
 
 ## 6. Tradeoffs / footguns
 
@@ -115,8 +125,9 @@ the two derivation points.
 
 ## 7. v1 scope (when greenlit)
 
-- [ ] Thread `passphrase: String?` into `walletKeys` + the `signPsbt` closure (the two `nil` sites);
-      `passphrase == nil`/empty stays byte-identical to today's standard wallet.
+- [ ] Thread `passphrase: String?` into `walletKeys` + the `signPsbt` closure + `CoinNewsIdentity` +
+      the Thunder seed (the four sites in §2); `passphrase == nil`/empty stays byte-identical to
+      today's standard wallet.
 - [ ] Ephemeral wallet representation (in-memory, never in `FileWalletStore`).
 - [ ] "Open passphrase wallet" affordance — always present (no persisted enable flag); passphrase
       entry; mounts the ephemeral wallet for the session; "close" tears it down.

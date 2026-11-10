@@ -40,9 +40,10 @@ options, split by half:
     `aes-gcm` and regenerate the Swift+Kotlin bindings — the "do the crypto once in Rust" pattern of
     CLAUDE.md §12. **Recommended for this feature** given it's the highest-stakes data in the app and
     yields one audited impl for both platforms.
-- **Don't assume `swift-crypto` builds under Fuse** — its BoringSSL C-interop works on server-Linux,
-  but **verify with `skip export`** on the Android target before committing. (The Rust-binding route
-  sidesteps this risk entirely, since the crypto compiles in the existing bdk-ffi pipeline.)
+- **`swift-crypto` under Fuse — RESOLVED (2026-11-10):** it is already an app dependency
+  (`Package.swift`, product `Crypto`, pulled in for Thunder's ed25519) and builds for both platforms
+  under Fuse (verified by `skip export`). The AES-GCM/HKDF half needs no new dependency. (The
+  Rust-binding route is still the path to Argon2id.)
 - We already pull in `swift-secp256k1` (P256K) and BDK (PBKDF2 internally for BIP39), but **neither
   exposes a general AES/KDF API**, so they don't help here.
 
@@ -52,8 +53,10 @@ options, split by half:
   defeats the entire scheme). Consequence to accept up front: **forgot password = no cloud restore**
   (fall back to the words). Don't add a "recover without password" path — that would mean the cloud
   account alone unlocks funds.
-- **Blob contents:** the mnemonic (+ minimal metadata to rebuild the `ManagedWallet`: label, network,
-  birthday/height for faster rescan). Per-wallet (each wallet = its own seed), keyed by `walletId`.
+- **Blob contents:** the mnemonic (+ minimal metadata to rebuild the `ManagedWallet`: label, its
+  accounts / selected network — network is no longer per-wallet since the seed-container model
+  (2026-11-05) — birthday/height for faster rescan). Per-wallet (each wallet = its own seed), keyed
+  by `walletId`.
 - **No private descriptors / xprv** in the blob — just the mnemonic, like `KeyStore` (re-derive on
   restore via the existing import path).
 
@@ -78,8 +81,9 @@ Seamless "back up" / "restore" buttons that read & write the user's cloud direct
   Keychain behavior.
 - **Android / Google Drive:** the hidden **`AppDataFolder`** via the Drive REST API — pulls in
   **Google Sign-In + Play Services + Drive SDK**, and needs an **OAuth client + Drive API enablement
-  in Google Cloud Console** (a CEO/account-level ask, like the Firebase one declined in
-  `docs/notifications.md`).
+  in Google Cloud Console** (a CEO/account-level ask). Note (2026-11-10): Firebase is already in use
+  for push (`skip-firebase` FCM, `docs/notifications.md` — its earlier decline is superseded), so the
+  Google Cloud project exists; Drive still needs its own OAuth client + Drive API enablement.
 - **Pros:** seamless restore on a new device.
 - **Cons:** two separate, heavier platform integrations (Skip won't abstract them — `PlatformBridge`
   seam, but with big SDKs); account/entitlement setup on both stores; more attack surface; ties Android
@@ -101,7 +105,8 @@ Seamless "back up" / "restore" buttons that read & write the user's cloud direct
 - **BDK is irrelevant** — this is purely mnemonic storage/restore; reuse the import flow.
 - **Crypto** belongs in a small, testable module (KDF + AEAD), platform-agnostic Swift; spec-vector
   tested. Don't scatter it.
-- **Per (wallet × network)** isolation unchanged; restore re-derives everything from the seed.
+- **Per-account** isolation unchanged (a wallet = a seed holding one `WalletAccount` per
+  network/script type); restore re-derives everything from the seed.
 - **Capture-aversion:** the password-entry + any seed-adjacent screen should stay screenshot-averse
   (note: we *did* allow screenshots on the Backup word screens — revisit for the password step).
 

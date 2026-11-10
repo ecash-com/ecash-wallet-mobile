@@ -21,6 +21,12 @@ a per-network override (kind + url + optional SOCKS5) threads through `WalletMan
 `engine(…, backendKind:backendURL:backendProxy:…)` → `WalletEngine` (the old single-string
 `electrumURLOverride` param was generalized to these backend primitives).
 
+Bundled defaults are also overridable by the **remote config** at `https://dev.ecash.com/config`
+(`RemoteEndpointConfigService`; moved from `drivechain.dev/config` 2026-11-09). It lists only the
+eCash networks — Bitcoin and L2L Signet fall back to the bundled `NetworkRegistry` values — and it
+sits *below* the user's Settings override: resolution is user override → remote default → bundled
+(`WalletManager.resolvedBackend`).
+
 **Electrum ≠ full-node RPC.** An Electrum server (electrs/Fulcrum/ElectrumX) is an **address-indexing
 server in front of** a full node — it maintains a `scriptPubKey → history` index BDK can query.
 Bitcoin Core's JSON-RPC has **no general address index**, so a descriptor wallet can't sync off raw
@@ -34,7 +40,7 @@ The FFI binding exposes three clients — **no bitcoind-RPC client**:
 | Backend | Client | URL form | Notes |
 |---|---|---|---|
 | **Electrum** ← shipped | `ElectrumClient(url:, socks5:)` | `ssl://host:port`, `tcp://host:port` | index server; SOCKS5 (Tor) supported |
-| **Esplora** | `EsploraClient(url:, proxy:)` | `https://host/...` (HTTP API) | index server; proxy (Tor) supported |
+| **Esplora** ← shipped | `EsploraClient(url:, proxy:)` | `https://host/...` (HTTP API) | index server; proxy (Tor) supported |
 | **CBF** (v2) | `CbfBuilder`/`CbfClient` | P2P peers | compact block filters (BIP157/158), trustless, no index server, SOCKS5/Tor |
 
 The two index clients differ at exactly three call sites (so the engine branches there):
@@ -69,7 +75,10 @@ struct WalletBackend { let kind: WalletBackendKind; let url: String }
 > an explicit "Thunder never reaches BDK" arm rather than a `default`. See
 > `docs/thunder-sidechain-support.md` §8e.
 
-- `NetworkRegistry` `defaultBackend` becomes a `WalletBackend` (kind + url). Kind can also be inferred
+- `NetworkRegistry` `defaultBackend` becomes a `WalletBackend` (kind + url). **As built (2026-11-10):**
+  `NetworkParams` carries two strings instead — `defaultBackend` (url) + `defaultBackendKind`
+  (`"electrum"`/`"esplora"`, defaulting to Electrum) — so the bridged surface stays primitive; the
+  typed `WalletBackend` is assembled in `WalletManager.resolvedBackend`. Kind can also be inferred
   from the scheme (`ssl://`/`tcp://` → Electrum, `http(s)://` → Esplora) so a single string stays the
   canonical form if preferred.
 - `WalletEngine` holds a `WalletBackend` and branches at the three call sites above. (Implementation

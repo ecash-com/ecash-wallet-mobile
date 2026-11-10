@@ -76,9 +76,10 @@ use this to verify) and shows up immediately. **A campaign** targets the app or 
 topic (reaches everyone) but is the "Notifications" composer with a Review/Publish flow.
 
 **Quick test send (one device, recommended for verifying):**
-1. Get the device's FCM token: in the app **Settings**, in the developer section, tap **Register
-   for push notifications** if not already registered, then **Copy push token** (the token is shown
-   below the button).
+1. Get the device's FCM token. The Settings developer-section **Register for push notifications** /
+   **Copy push token** controls have been **commented out since 2026-07-21** (`SettingsScreen.swift`,
+   the `TEMP` block) — restore that block in a dev build to copy a token, or skip the test send and
+   use a campaign (below).
 2. Firebase console → project **`ecash-wallet-3b5c9`** → left nav **Run → Messaging** (a.k.a. Cloud
    Messaging).
 3. Click **Create your first campaign** / **New campaign** → choose **Firebase Notification
@@ -94,8 +95,10 @@ topic (reaches everyone) but is the "Notifications" composer with a Review/Publi
 **Campaign send (all devices — the real announcement path):**
 1. Console → **Messaging** → **New campaign** → **Firebase Notification messages**.
 2. **Notification:** fill title + text (tray text).
-3. **Target:** **App** = `com.layertwolabs.mobile.ecashwallet` (iOS) / `ecash.wallet.mobile`
-   (Android). Optionally narrow to the **`announcements`** topic (every install subscribes to it).
+3. **Target:** **App** = `com.ecash.mobile.wallet` on both platforms (`PRODUCT_BUNDLE_IDENTIFIER`
+   in `Skip.env` is the iOS bundle id and the Android `applicationId`; `ecash.wallet.mobile` is only
+   the Kotlin package name). Optionally narrow to the **`announcements`** topic (every install
+   subscribes to it).
 4. **Scheduling:** **Now**.
 5. **Additional options (optional):** expand → **Custom data** → add the `kind` / `title` / `body`
    rows (the table below). This is what drives the rich in-app sheet.

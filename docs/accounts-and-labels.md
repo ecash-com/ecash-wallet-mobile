@@ -27,12 +27,19 @@ each UTXO its `outpoint (txid:vout)`, each tx its `txid`.
 separate branch: own xpub, own gap-scan, own balance/history. Our `Descriptors.accountPath(for:account:)`
 already takes the account index (we just always pass `0` today).
 
-**Data-model change** (today we conflate seed and account — one `ManagedWallet` = one mnemonic = one
-account):
+**Data-model change** — **DONE in shape (2026-11-10, seed-container 2026-11-05):** the seed/account
+split below is now the real model. A `ManagedWallet` *is* the seed and holds one `WalletAccount` per
+`(network, scriptType, accountIndex)` (`Packages/WalletService/Sources/WalletService/Models.swift`,
+`WalletAccount`), each with its own BDK store. What is *not* done: `accountIndex` is always `0`
+today (no "add account to this seed" UI), and no labels / BIP-329 / freeze flags exist yet.
 
-- **Seed** — the mnemonic (KeyStore, keyed by `seedId`). The unit you back up. `isBackedUp` lives here.
-- **Account** — `{ id, seedId, accountIndex, label, network, externalDescriptor, internalDescriptor }`;
-  each gets its own BDK `Wallet` + per-account `Persister` (own balance/history/addresses).
+- **Seed** — the mnemonic (KeyStore, keyed by the wallet id). The unit you back up. `isBackedUp`
+  lives here (`ManagedWallet`).
+- **Account** — as built: `WalletAccount { id, network, scriptType, accountIndex: Int32,
+  externalDescriptor, internalDescriptor, storeName }` (the id is
+  `"<network>-<scriptType>-<accountIndex>"`, unique within its wallet, so the `seedId` is the
+  enclosing wallet's id); each gets its own BDK `Wallet` + per-account `Persister` (own
+  balance/history/addresses). A per-account `label` is still not stored.
 - **Remove** has two levels: remove an account (its data) vs remove the seed (all its accounts + the
   mnemonic).
 - **Restore discovery:** importing a mnemonic scans account `0'`, and if it has history, `1'`, … by an
@@ -42,7 +49,7 @@ account):
 compromise exposes every account; separate mnemonics = stronger isolation, more backups. Offer
 both: "add account to this seed" vs "add new wallet".
 
-> **DECIDED 2026-06-12 (`docs/wallet-and-network-model.md`):** the **default** is separate seeds —
+> **DECIDED 2026-06-12 (now `docs/seed-container-model.md` §1a):** the **default** is separate seeds —
 > a "Wallet" = its own mnemonic (savings/checking/inheritance = three phrases; inheritance
 > especially wants isolation). **Accounts-under-one-seed is the opt-in, later feature** described
 > here, not the default and not v1.
@@ -86,9 +93,11 @@ Decision deferred; lean toward shipping local labels first, BIP-329 export as a 
 
 - **Not v1 build.** v1 ships multiple independent wallets (each its own seed). Multi-account-per-seed
   and labels/coin-control are post-v1 (CLAUDE.md §12).
-- **But shape the schema now.** Add `seedId` + `accountIndex` to the wallet/account record from the
-  start (even if v1 only ever creates one account per seed), exactly like we built multi-wallet/
-  multi-network from day one — retrofitting stored data later is the painful path.
+- **But shape the schema now.** ✅ **DONE (2026-11-10):** the record is shaped — `WalletAccount`
+  carries `accountIndex` (and is keyed under its wallet = seed), even though every account is
+  `0` today — exactly like we built multi-wallet/multi-network from day one; retrofitting stored
+  data later would have been the painful path. `Descriptors.accountPath(for:account:)` still
+  defaults to `0`.
 
 ## 6. Open decisions
 
