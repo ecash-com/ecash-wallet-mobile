@@ -74,7 +74,7 @@ struct SplitCheckStore {
         return stored > 0 ? stored : nil
     }
 
-    /// Wallets owed their one automatic check: set on import / copy-to-network, cleared once a check
+    /// Wallets owed their one automatic check: set on import / first eCash account open, cleared once a check
     /// gets an answer from Bitcoin for every coin. Kept until then so an import made offline (or while
     /// the explorer is down) is still checked on a later sync, not silently skipped.
     func markNeedsInitialCheck(walletId: String) {

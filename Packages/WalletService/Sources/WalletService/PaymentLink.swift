@@ -123,7 +123,7 @@ public enum PaymentLink {
         case .bitcoin: return "This is a Bitcoin payment request. You don't have a Bitcoin wallet."
         case .ecash, .ecashBeta, .ecashMainnet: return "This is an eCash payment request. You don't have an eCash wallet."
         case .signet: return "You don't have a signet wallet."
-        case .thunder: return "No wallet can pay this request."
+        case .thunder, .thunderMainnet: return "No wallet can pay this request."
         }
     }
 }

@@ -100,12 +100,12 @@ public enum NetworkRegistry {
                 explorerTxTemplate: "https://explorer.signet.drivechain.info/tx/{txid}",
                 displayName: "L2L Signet")
         case .ecash:
-            // The eCash fork, currently the **drynet3** dry-run chain (drynet2 was decommissioned
-            // 2026-07-23). Byte-identical to Bitcoin (mainnet `bc` HRP, coin-type `0'`) → BDK
-            // `Network.bitcoin`; separated only by backend. Default backend is the public **Esplora**
-            // (mempool-electrs) at the ROOT path (NO `/api` suffix). This is only the OFFLINE/first-
-            // launch fallback — the live endpoint comes from the remote config (`drivechain.dev/config`,
-            // `family: ecash`), which rotates across drynet ids without an app update.
+            // Alphanet — the retired first test fork (drynet2 → drynet3 → alphanet; retired from the
+            // picker 2026-10-26, case kept so old wallets load). Byte-identical to Bitcoin (mainnet
+            // `bc` HRP, coin-type `0'`) → BDK `Network.bitcoin`; separated only by backend. Default
+            // backend is the public **Esplora** (mempool-electrs) at the ROOT path (NO `/api` suffix);
+            // an offline/first-launch fallback only — the live endpoints come from the remote config
+            // (`dev.ecash.com/config`) when it still lists this chain.
             return NetworkParams(
                 coinType: Int32(0),
                 addressHRP: "bc",
@@ -152,7 +152,7 @@ public enum NetworkRegistry {
                 explorerTxTemplate: "https://explorer.ecash.ninja/tx/{txid}",
                 displayName: "eCash")
         case .thunder:
-            // Thunder sidechain — ed25519/BLAKE3, NOT BDK. `coinType`/`addressHRP` are unused fillers
+            // Thunder sidechain — FROST/ristretto255 + BLAKE3, NOT BDK. `coinType`/`addressHRP` are unused fillers
             // (the Thunder engine never derives via BDK). Unit is **ECX** — Thunder holds eCash value
             // (deposited from the eCash mainchain); thunder-rust itself uses `bitcoin::Amount`/₿ (it's
             // the generic sidechain template, no eCash branding), so the ECX label is ours.
@@ -180,6 +180,23 @@ public enum NetworkRegistry {
                 // string on both chains (no network in the derivation), so the label is what keeps
                 // users from mixing them up (docs/real-ecash-fork-transition.md §1).
                 displayName: "Thunder Betanet")
+        case .thunderMainnet:
+            // Thunder on the real fork (slot 9, active since mainnet height 978,324). Same shape as
+            // the betanet entry above — same key scheme, same wire layer — against the mainnet index
+            // on the host that also runs the mainnet enforcer (`seed.ecash.eu.com/enforcer`).
+            // Verified 2026-11-10: the index answers every route the client uses; it just held no
+            // blocks yet (no Thunder mainnet block mined), which the client reports as `.indexEmpty`.
+            // The eCash.com config publishes only the node's QUIC peer address for Thunder, so this
+            // default is ours; the Settings override chain applies as for every network.
+            return NetworkParams(
+                coinType: Int32(0),
+                addressHRP: "",
+                unitLabel: "ECX",
+                subUnitLabel: "szat",
+                defaultBackend: "https://seed.ecash.eu.com/thunder",
+                defaultBackendKind: "thunder-esplora",
+                explorerTxTemplate: "https://seed.ecash.eu.com/thunder/tx/{txid}",
+                displayName: "Thunder")
         }
     }
 
@@ -209,7 +226,7 @@ public enum NetworkRegistry {
         // config now publishes `replay_lock_time` too, but it is unsigned, and a wrong value here is
         // the difference between an eCash send and one that replays onto Bitcoin.
         case .ecashMainnet: return UInt32(499_999_998)        // LOCKTIME_THRESHOLD - 2: the real fork
-        case .bitcoin, .signet, .thunder: return nil
+        case .bitcoin, .signet, .thunder, .thunderMainnet: return nil
         }
     }
 
@@ -238,7 +255,7 @@ public enum NetworkRegistry {
         case .ecash: return Int64(963_648)       // alphanet
         case .ecashBeta: return Int64(967_680)   // betanet
         case .ecashMainnet: return Int64(973_728) // the real fork (ecash-com/bitcoin `EcashHeight`)
-        case .bitcoin, .signet, .thunder: return nil
+        case .bitcoin, .signet, .thunder, .thunderMainnet: return nil
         }
     }
 }

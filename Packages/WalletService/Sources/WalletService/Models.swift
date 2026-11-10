@@ -98,11 +98,12 @@ public struct FeeRate: Equatable, Hashable, Sendable {
 
 // MARK: - Network
 //
-// Network is a per-wallet property (Golden Rule §4). Treat this enum as non-exhaustive
-// in spirit: adding eCash later should be a NetworkRegistry entry + params, not a refactor.
+// Network is a per-account property: a wallet is a seed and holds one `WalletAccount` per
+// network it has been opened on (Golden Rule §4, `docs/seed-container-model.md`). Treat this enum
+// as non-exhaustive in spirit: a new chain is a NetworkRegistry entry + params, not a refactor.
 
-/// The network a wallet is pinned to at creation. Resolved through `NetworkRegistry`
-/// for all chain params, coin-type, backend, explorer, address HRP, and unit label.
+/// The chain an account lives on. Resolved through `NetworkRegistry` for all chain params,
+/// coin-type, backend, explorer, address HRP, and unit label.
 public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     case bitcoin
     /// L2L dev network; first-class in BDK.
@@ -142,23 +143,29 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     ///
     /// **Real money.** `isMainnet` is true, so it gets Bitcoin's extra send confirmation and warnings.
     ///
-    /// **Gated on the remote config, not a release** (`EcashMainnetLaunch`): the case is compiled in
-    /// ahead of the fork, but it is NOT offered in any picker until drivechain.dev/config publishes the
-    /// `ecash` entry (published 2026-10-26), and it does NOT become the default eCash network until the chain is
-    /// observed past the entry's `fork_height`. Betanet keeps running alongside it either way — its
-    /// case is never repurposed (a wallet's network is persisted by rawValue).
+    /// The real fork (height 973,728, activated 2026-10-29). Offered unconditionally and the default
+    /// for new wallets since 1.4.6 build 44; the remote config (`dev.ecash.com/config`, id `ecash`)
+    /// supplies its endpoints. Until 2026-10-29 it was gated on that config (`EcashMainnetLaunch`).
+    /// Betanet keeps running alongside it — its case is never repurposed (persisted by rawValue).
     case ecashMainnet
     /// The **Thunder** sidechain of eCash (LayerTwo-Labs/thunder-rust). NOT a BDK/secp256k1 chain —
     /// ed25519 keys, BLAKE3 base58 addresses, a Thunder-node RPC backend. Routed to the Fuse-native
     /// `ThunderService` (never the BDK engine); the `coinType`/`addressHRP` in its registry entry are
     /// unused fillers. Its rawValue `"thunder"` is persisted — don't rename the case.
     case thunder
+    /// **Thunder on the real eCash fork** (slot 9 — proposed at height 976,314, activated at 978,324;
+    /// enabled 2026-11-10, Jake). Same ristretto slot-9 derivation as `.thunder`, so one seed's
+    /// Thunder address is the same string on betanet and mainnet — what differs is the parent
+    /// (`.ecashMainnet`) and the index it reads (`seed.ecash.eu.com/thunder`). Offered from the
+    /// network switcher, nested under eCash; never from create/import. rawValue persisted — don't
+    /// rename.
+    case thunderMainnet
 
-    /// Networks offered in the create/import picker (`NetworkSelector`) — distinct from `allCases`
-    /// (which the backend/registry loops still walk for every case). Also the copy-to-network
-    /// targets (`WalletManager.copyTargets`). Settings → Network lists these PLUS any network an
-    /// existing wallet is on, so a retired chain's endpoint stays editable for the wallets that
-    /// remain on it.
+    /// Networks the app offers — the mainchains every new/imported seed gets an account on
+    /// (`WalletManager.mainchainsForNewWallets` drops the sidechains) and the sidechains the
+    /// switcher offers under them. Distinct from `allCases`, which the backend/registry loops still
+    /// walk for every case. Settings → Network lists these PLUS any network an existing wallet is
+    /// on, so a retired chain's endpoint stays editable for the wallets that remain on it.
     ///
     /// **Retiring a network = remove it from this list, keep the case.** The rawValue is persisted in
     /// existing wallets, which keep loading, syncing and sending; nobody can create a new one.
@@ -171,14 +178,17 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     /// failed showed no mainnet until a later resume — the Android 1.4.6 report).
     public static var selectable: [WalletNetwork] {
         // Order is the picker order: the real eCash fork first (also the default — `currentEcash`),
-        // then Bitcoin, then L2L Signet. Betanet and Thunder betanet left here 2026-10-30; to bring
-        // a Thunder mainnet back, append `.thunder` once `NetworkRegistry` points it at mainnet.
+        // then Bitcoin, then L2L Signet. Betanet and Thunder betanet left here 2026-10-30. Thunder
+        // mainnet (2026-11-10) is listed as an OFFERED sidechain: never a create/import target
+        // (`WalletManager.mainchainsForNewWallets` drops sidechains), but the switcher offers it
+        // under eCash and Settings → Network lists its endpoint.
         var out: [WalletNetwork] = []
         if EcashMainnetLaunch.isOffered {
             out.append(.ecashMainnet)
         }
         out.append(.bitcoin)
         out.append(.signet)
+        out.append(.thunderMainnet)
         return out
     }
 
@@ -209,15 +219,16 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     public var supportsCoinSplit: Bool {
         switch self {
         case .ecash, .ecashBeta, .ecashMainnet: return true
-        case .bitcoin, .signet, .thunder: return false
+        case .bitcoin, .signet, .thunder, .thunderMainnet: return false
         }
     }
 
     /// Whether one secret derives the **same keys and addresses** on this network and `other` — the
-    /// test for copying a wallet across networks (`docs/copy-wallet-to-network.md`). Bitcoin and every
-    /// eCash generation share Bitcoin's parameters (coin-type `0'`, `bc` HRP, mainnet key formats), so
-    /// a copy there is the same wallet. L2L Signet is coin-type `1'` (different addresses), and Thunder
-    /// is ed25519 — a different key system — so each stands alone.
+    /// test behind `keyFamily` (which networks a WIF key can live on) and, historically, behind the
+    /// retired copy-to-network feature. Bitcoin and every eCash generation share Bitcoin's parameters
+    /// (coin-type `0'`, `bc` HRP, mainnet key formats), so one secret is the same wallet on all of
+    /// them. L2L Signet is coin-type `1'` (different addresses), and Thunder is FROST/ristretto255 — a
+    /// different key system — so each stands alone.
     public func sharesKeys(with other: WalletNetwork) -> Bool {
         guard let mine = keyFamily, let theirs = other.keyFamily else { return false }
         return mine == theirs
@@ -230,7 +241,7 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
         switch self {
         case .bitcoin, .ecash, .ecashBeta, .ecashMainnet: return 0   // coin-type 0', `bc` addresses
         case .signet: return nil                      // coin-type 1' — only itself
-        case .thunder: return nil                     // ed25519, not BDK
+        case .thunder, .thunderMainnet: return nil    // ristretto255, not BDK
         }
     }
 
@@ -241,14 +252,19 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     /// where it belongs.
     public var parentChain: WalletNetwork? {
         switch self {
-        // The registry's Thunder entry is Thunder BETANET (`seed.beta.ecash.eu.com`), so its parent
-        // is eCash betanet. A Thunder on the real fork gets its own case with `.ecashMainnet` here.
+        // `.thunder` is Thunder BETANET (`seed.beta.ecash.eu.com`), so its parent is eCash betanet;
+        // `.thunderMainnet` is the real fork's.
         case .thunder: return .ecashBeta
+        case .thunderMainnet: return .ecashMainnet
         case .bitcoin, .signet, .ecash, .ecashBeta, .ecashMainnet: return nil
         }
     }
 
     public var isSidechain: Bool { parentChain != nil }
+
+    /// Either Thunder: served by the Fuse-native `ThunderService` (ristretto255 keys, a
+    /// drivechain-esplora index), never by BDK. The two differ only in parent chain and endpoint.
+    public var isThunder: Bool { self == .thunder || self == .thunderMainnet }
 
     /// **Retired**: no longer offered for new wallets (`selectable`) and not a sidechain of an offered
     /// mainchain — the cases kept only so existing wallets load: alphanet, betanet, Thunder betanet.
@@ -273,7 +289,9 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     /// is the only thing distinguishing them. Exhaustive so the next chain decides this explicitly.
     public var isMainnet: Bool {
         switch self {
-        case .bitcoin, .ecashMainnet: return true
+        // Thunder mainnet holds real ECX deposited from the real fork, so it carries the same
+        // weight: extra send confirmation, real-money warnings.
+        case .bitcoin, .ecashMainnet, .thunderMainnet: return true
         case .signet, .ecash, .ecashBeta, .thunder: return false
         }
     }

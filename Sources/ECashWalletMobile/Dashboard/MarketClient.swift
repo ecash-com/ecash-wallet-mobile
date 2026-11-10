@@ -6,7 +6,7 @@ import Foundation
 
 /// Reads the market section from two public, keyless tickers (`docs/dashboard-plan.md` §4.2):
 ///
-///   * **Gate.io** — BTC, BCH, BSV, XEC (`/api/v4/spot/tickers?currency_pair=…_USDT`)
+///   * **Gate.io** — BTC, BCH, BSV (`/api/v4/spot/tickers?currency_pair=…_USDT`)
 ///   * **NonKYC** — BTCB2 (`/api/v2/market/getbysymbol/BTCB2_USDT`)
 ///
 /// ECX comes from eCash.com's own price API (`EcashPriceProvider`, since 2026-11-09; the wECX Orca

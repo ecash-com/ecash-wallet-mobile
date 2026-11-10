@@ -4,8 +4,8 @@
 
 import Foundation
 
-/// One input authorization (thunder-rust `authorization::Authorization`): an ed25519 verifying key
-/// (32 bytes) and its signature (64 bytes) over `borsh(transaction)`. Borsh encoding is the two fixed
+/// One input authorization (thunder-rust `authorization::Authorization`): a ristretto255 FROST
+/// verifying key (32 bytes) and its Schnorr signature (64 bytes) over `borsh(transaction)`. Borsh encoding is the two fixed
 /// arrays back to back — 96 bytes, no length prefix. Thunder pairs authorizations to inputs BY
 /// POSITION, and separately requires `BLAKE3(verifying_key)[..20] == the spent output's address`
 /// (`authorization::get_address`, which is exactly `ThunderAddress(publicKey:)`).

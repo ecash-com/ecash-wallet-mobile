@@ -28,7 +28,7 @@ enum CoinNewsAvailability {
         case .ecashMainnet:
             // Real fork: same rule — on exactly when the config supplies a `coinnews` URL for it.
             return CoinNewsEndpointRegistry.publicEndpoint(for: .ecashMainnet) != nil
-        case .thunder: return false          // Thunder has no CoinNews
+        case .thunder, .thunderMainnet: return false   // Thunder has no CoinNews
         }
     }
 }

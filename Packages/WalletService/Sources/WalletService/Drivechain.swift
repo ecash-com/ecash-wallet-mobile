@@ -30,7 +30,7 @@ enum Drivechain {
         case .ecashBeta: return UInt8(0xb7)   // OP_NOP8: betanet (verified on-chain, tx f83c5c7a…)
         case .ecashMainnet: return UInt8(0xb7) // OP_NOP8: real fork (ecash-com/bitcoin master, script.h `OP_DRIVECHAIN = OP_NOP8`, read 2026-10-21)
         case .bitcoin: return nil             // no BIP300
-        case .thunder: return nil             // a sidechain, not a mainchain
+        case .thunder, .thunderMainnet: return nil   // sidechains, not mainchains
         }
     }
 

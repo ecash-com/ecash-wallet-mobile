@@ -150,7 +150,8 @@ public final class MockWalletEngineFactory: WalletEngineFactory {
     }
 
     /// Networks whose `restore` returns DIFFERENT descriptors, standing in for a derivation that
-    /// doesn't reproduce there — lets tests drive `copyWallet`'s mismatch guard.
+    /// doesn't reproduce there. Was for the retired copy-to-network mismatch guard; no test sets it
+    /// today — kept as a test seam.
     public var divergentRestoreNetworks: [WalletNetwork] = []
 
     public func restore(network: WalletNetwork, mnemonic: String, scriptType: ScriptType = .bip84) throws -> WalletKeys {

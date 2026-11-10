@@ -352,7 +352,7 @@ final class WalletManagerTests: XCTestCase {
         XCTAssertEqual(manager.selectedWallet?.network, WalletNetwork.ecashMainnet)
     }
 
-    func testSidechainsListOnlyExistingAccountsUnderTheCurrentMainchain() throws {
+    func testSidechainsListHeldOrOfferedAccountsUnderTheCurrentMainchain() throws {
         let ws = InMemoryWalletStore()
         // A Thunder-betanet account alongside a betanet account on one wallet (what a later manual
         // merge would produce): visible only while the wallet is on betanet.
@@ -371,7 +371,25 @@ final class WalletManagerTests: XCTestCase {
         try manager.switchAccount(walletId: "w", to: th.id)                                // on the sidechain itself
         XCTAssertEqual(manager.availableSidechains(for: "w"), [WalletNetwork.thunder])    // still listed under its parent
         try manager.switchAccount(walletId: "w", to: main.id)
-        XCTAssertTrue(manager.availableSidechains(for: "w").isEmpty)                      // mainnet has none yet
+        // Mainnet offers Thunder (2026-11-10) even before the wallet has an account on it: the
+        // switcher derives one on first tap.
+        XCTAssertEqual(manager.availableSidechains(for: "w"), [WalletNetwork.thunderMainnet])
+        // And by mainchain, whatever is selected: the switcher nests every mainchain's sidechains.
+        XCTAssertEqual(manager.availableSidechains(for: "w", under: WalletNetwork.ecashMainnet), [WalletNetwork.thunderMainnet])
+        XCTAssertEqual(manager.availableSidechains(for: "w", under: WalletNetwork.ecashBeta), [WalletNetwork.thunder])
+        XCTAssertTrue(manager.availableSidechains(for: "w", under: WalletNetwork.bitcoin).isEmpty)
+    }
+
+    func testAWifWalletIsNeverOfferedThunder() throws {
+        let ws = InMemoryWalletStore()
+        let main = WalletAccount(network: WalletNetwork.ecashMainnet, scriptType: ScriptType.bip44, accountIndex: Int32(0),
+                                 externalDescriptor: "pkh(k)", internalDescriptor: "", storeName: "k-ecashMainnet-bip44-0.sqlite")
+        try ws.commitV2([ManagedWallet(id: "k", label: "K", keyType: WalletKeyType.wif, isBackedUp: true, sortIndex: 0,
+                                       selectedAccountId: main.id, accounts: [main])])
+        let manager = WalletManager(keyStore: InMemoryKeyStore(), walletStore: ws, factory: MockWalletEngineFactory())
+        try manager.load()
+        // A single legacy key has no seed to derive a ristretto account from.
+        XCTAssertTrue(manager.availableSidechains(for: "k").isEmpty)
     }
 
     func testRemoveWalletEvictsEveryAccountEngineAndPurgesItsStores() throws {

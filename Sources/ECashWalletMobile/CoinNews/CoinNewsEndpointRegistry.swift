@@ -45,7 +45,7 @@ enum CoinNewsEndpointRegistry {
         case .ecashMainnet:
             // Real fork: nothing bundled; the config's `ecash-mainnet` entry supplies it if L2L runs one.
             return nil
-        case .thunder:
+        case .thunder, .thunderMainnet:
             return nil   // Thunder has no CoinNews indexer
         }
     }

@@ -47,7 +47,7 @@ struct NetworkChipStyle {
             // amber, Bitcoin orange, testnet violet and Thunder crimson.
             return NetworkChipStyle(background: Theme.Colors.netEcashTest,
                                     foreground: Theme.Colors.netEcashTestText)
-        case .thunder:
+        case .thunder, .thunderMainnet:
             // Thunder — crimson (#DC143C), white text. Deliberately distinct from the `negative`
             // error red so a Thunder chip reads as brand, not danger (Golden Rule §6).
             return NetworkChipStyle(background: Theme.Colors.netThunder,

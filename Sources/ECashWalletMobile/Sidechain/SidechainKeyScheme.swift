@@ -5,7 +5,7 @@
 import Foundation
 
 /// How one sidechain turns a BIP39 seed into address keys. This is the part that differs per sidechain
-/// (docs/thunder-key-port.md §3): Thunder and Coinshift use ristretto255 bip32ish on the same path shape
+/// (docs/thunder-sidechain-support.md, key scheme): Thunder and Coinshift use ristretto255 bip32ish on the same path shape
 /// but disagree on the bias fix; Truthcoin derives with secp256k1 BIP32 instead. Everything downstream —
 /// FROST signing, addresses, deposit strings — is shared.
 protocol SidechainKeyScheme {

@@ -85,11 +85,11 @@ final class WalletKeysDescriptorTests: XCTestCase {
         }
     }
 
-    // MARK: - Copy to another network (docs/copy-wallet-to-network.md)
+    // MARK: - Same keys across the coin-type-0' chains (seed-container model)
 
-    /// The premise of `WalletManager.copyWallet`: on networks that `sharesKeys`, one secret restores
-    /// to byte-identical public descriptors, for every script type. If this ever broke, copyWallet's
-    /// descriptor check would refuse every copy rather than save a wrong wallet.
+    /// The premise of deriving one account per mainchain from one seed: on networks that `sharesKeys`,
+    /// one secret restores to byte-identical public descriptors, for every script type. If this ever
+    /// broke, eCash mainnet and Bitcoin would stop being the same addresses on one wallet.
     func testSharedKeyNetworksRestoreIdenticalDescriptors() throws {
         let f = makeFactory()
         for scriptType in [ScriptType.bip44, .bip49, .bip84, .bip86] {

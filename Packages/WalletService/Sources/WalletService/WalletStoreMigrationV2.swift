@@ -135,7 +135,7 @@ enum WalletStoreMigrationV2 {
     /// mnemonic record on a BDK network with a parseable master fingerprint qualifies; WIF, Thunder,
     /// and anything already in container shape never do.
     static func mergeKey(for record: ManagedWallet) -> String? {
-        guard record.accounts.count == 1, record.keyType == .mnemonic, record.network != .thunder else {
+        guard record.accounts.count == 1, record.keyType == .mnemonic, !record.network.isThunder else {
             return nil
         }
         return record.masterFingerprint

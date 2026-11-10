@@ -23,8 +23,6 @@ struct NetworkSwitcherSheet: View {
     var body: some View {
         let wallet = app.wallets.first { $0.id == walletId }
         let current = wallet?.network
-        let mainchains = app.availableMainchains(for: walletId)
-        let sidechains = app.availableSidechains(for: walletId)
         NavigationStack {
             List {
                 if let wallet {
@@ -36,14 +34,8 @@ struct NetworkSwitcherSheet: View {
                     }
                 }
                 Section(header: Text("Network", bundle: .module, comment: "network switcher: mainchains header")) {
-                    ForEach(mainchains, id: \.self) { network in
-                        row(network, isCurrent: network == current, nested: false)
-                        // Sidechains nest under the mainchain they settle to — the one being viewed.
-                        if network == current?.parentChain ?? current {
-                            ForEach(sidechains, id: \.self) { sidechain in
-                                row(sidechain, isCurrent: sidechain == current, nested: true)
-                            }
-                        }
+                    ForEach(networkRows) { entry in
+                        row(entry.network, isCurrent: entry.network == current, nested: entry.nested)
                     }
                 }
                 if let errorMessage {
@@ -61,6 +53,29 @@ struct NetworkSwitcherSheet: View {
             .navigationTitle(Text("Switch network", bundle: .module, comment: "network switcher title"))
             .toolbar { CloseToolbarButton { dismiss() } }
         }
+    }
+
+    /// One line of the list: a mainchain, or a sidechain indented under its parent.
+    private struct NetworkRow: Identifiable {
+        let network: WalletNetwork
+        let nested: Bool
+        var id: String { network.rawValue }
+    }
+
+    /// One flat, Identifiable row list: a ForEach nested in a ForEach is exactly the shape SkipUI has
+    /// rendered as nothing on Android before (the seed-preview rows had the same lesson). Sidechains
+    /// nest under the mainchain they settle to — under EVERY mainchain that has one, not only the one
+    /// being viewed, so a wallet on Bitcoin reaches Thunder in one tap instead of eCash-then-Thunder
+    /// (Jake, 2026-11-10).
+    private var networkRows: [NetworkRow] {
+        var rows: [NetworkRow] = []
+        for mainchain in app.availableMainchains(for: walletId) {
+            rows.append(NetworkRow(network: mainchain, nested: false))
+            for sidechain in app.availableSidechains(for: walletId, under: mainchain) {
+                rows.append(NetworkRow(network: sidechain, nested: true))
+            }
+        }
+        return rows
     }
 
     private func row(_ network: WalletNetwork, isCurrent: Bool, nested: Bool) -> some View {
@@ -83,7 +98,12 @@ struct NetworkSwitcherSheet: View {
                     Image(icon: Icon.disclosure)
                         .foregroundStyle(Theme.Colors.text2)
                 }
-                NetworkBadge(network: network)
+                // A dot in the network's chip colour, then the name — not the chip itself, which
+                // repeated the name in caps (Jake, 2026-11-10). The colour is the safety cue the chip
+                // exists for (Golden Rule §6); the name is what you read.
+                Circle()
+                    .fill(NetworkChipStyle.style(for: network).background)
+                    .frame(width: 10, height: 10)
                 Text(verbatim: NetworkRegistry.params(for: network).displayName)
                     .textStyle(.body)
                     .foregroundStyle(Theme.Colors.text0)
@@ -97,6 +117,10 @@ struct NetworkSwitcherSheet: View {
             }
             .padding(.leading, nested ? Theme.Space.x4 : 0)
             .padding(.vertical, Theme.Space.x1)
+            // The whole row is the target, not just the dot and name: a plain button only hits
+            // its drawn content, so the Spacer's width was dead (Jake, 2026-11-10).
+            .frame(maxWidth: .infinity)
+            .fullRowTapTarget()
         }
         .buttonStyle(.plain)
         .disabled(isSwitching)

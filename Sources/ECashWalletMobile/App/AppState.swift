@@ -17,7 +17,7 @@ import WalletService
 final class AppState {
     private let manager: WalletManager
 
-    /// Routes per-wallet ops to the right engine: `.thunder` wallets → the Fuse-native
+    /// Routes per-wallet ops to the right engine: Thunder accounts (`isThunder`) → the Fuse-native
     /// `ThunderService`, everything else → the bridged BDK `WalletManager`. Constructed in `init`
     /// once `manager` exists. See docs/thunder-sidechain-support.md.
     private let walletOps: WalletFacade
@@ -186,11 +186,15 @@ final class AppState {
                 // (the same override chain the BDK backends use). The KIND is resolved too, not just
                 // the URL: it decides whether we speak to a drivechain-esplora index or a bare
                 // Thunder node's JSON-RPC.
-                makeBackend: { [manager] in
-                    ThunderBackendFactory.make(kind: manager.backendKind(for: .thunder),
-                                               url: manager.backendURL(for: .thunder))
+                makeBackend: { [manager] network in
+                    ThunderBackendFactory.make(kind: manager.backendKind(for: network),
+                                               url: manager.backendURL(for: network))
+                },
+                // Which Thunder a wallet is on right now (betanet or mainnet) — its selected account.
+                networkOf: { [manager] id in
+                    manager.wallets.first { $0.id == id }?.network ?? WalletNetwork.thunder
                 }),
-            isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network == .thunder })
+            isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network.isThunder ?? false })
         balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
         // Unset reads as ON (`object(forKey:) as? Bool`, not `bool(forKey:)`'s false).
         hideRetiredNetworks = UserDefaults.standard.object(forKey: RetiredNetworks.defaultsKey) as? Bool ?? true
@@ -361,7 +365,7 @@ final class AppState {
         selectWallet(id: target)
     }
 
-    /// `accountBalances(for:)` minus retired chains (the current one always stays).
+    /// `accountBalances(for:)` minus retired chains (the current one stays if it holds coins).
     func visibleAccountBalances(for wallet: ManagedWallet) -> [WalletAccountBalance] {
         let lines = accountBalances(for: wallet)
         guard hideRetiredNetworks, !isShowingRetiredFallback else { return lines }
@@ -531,6 +535,12 @@ final class AppState {
                                         current: wallets.first { $0.id == walletId }?.network,
                                         hiding: hideRetiredNetworks)
     }
+    /// The sidechains to nest under `mainchain` in the switcher, retired ones hidden per the setting.
+    func availableSidechains(for walletId: String, under mainchain: WalletNetwork) -> [WalletNetwork] {
+        RetiredNetworks.visibleNetworks(manager.availableSidechains(for: walletId, under: mainchain),
+                                        current: wallets.first { $0.id == walletId }?.network,
+                                        hiding: hideRetiredNetworks)
+    }
     func hasAccount(walletId: String, network: WalletNetwork) -> Bool { manager.hasAccount(walletId: walletId, network: network) }
     /// Why the last `switchNetwork` failed, for the switcher sheet. User-safe (a `WalletError` message).
     private(set) var networkSwitchMessage: String? = nil
@@ -655,13 +665,17 @@ final class AppState {
     /// chain data (no network, safe on the main actor), or `.unknown` when the wallet has never
     /// synced on this device and `0` would be a guess rather than a fact.
     /// One line per chain a wallet holds coins on, for the wallet list: the account it's open on
-    /// first (always shown, even at zero or unsynced), then every other account with a known
-    /// non-zero cached balance. A seed is several chains; the list says so instead of showing
-    /// whichever chain was looked at last (Jake, 2026-11-05).
+    /// first, then the others, each only with a known non-zero cached balance. A seed is several
+    /// chains; the list says so instead of showing whichever chain was looked at last (Jake,
+    /// 2026-11-05). The current chain used to be shown even at zero, which on an empty wallet
+    /// amounted to naming the last network viewed and nothing else (Jake, 2026-11-10) — now an empty
+    /// wallet has no lines and the list says "no coins seen yet" without naming a chain.
     func accountBalances(for wallet: ManagedWallet) -> [WalletAccountBalance] {
         var out: [WalletAccountBalance] = []
         let current = wallet.selectedAccount
-        out.append(WalletAccountBalance(network: current.network, balance: balanceSummary(walletId: wallet.id)))
+        if case .known(let amount) = balanceSummary(walletId: wallet.id), amount.sats > 0 {
+            out.append(WalletAccountBalance(network: current.network, balance: .known(amount)))
+        }
         for account in wallet.accounts where account.id != current.id {
             let summary = balanceSummary(walletId: wallet.id, network: account.network)
             if case .known(let amount) = summary, amount.sats > 0 {
@@ -875,7 +889,7 @@ final class AppState {
                 // Thunder addresses are BLAKE3/base58, not BDK — validate them app-side; BDK would
                 // reject every one. (The send itself still errors with `.backendUnavailable` until the
                 // Thunder RPC lands.)
-                wallet.network == .thunder
+                wallet.network.isThunder
                     ? ThunderAddress(base58: address) != nil
                     : self.manager.isValidAddress(address, network: wallet.network)
             },
@@ -1013,8 +1027,8 @@ final class AppState {
         let network = wallet.network
         let params = NetworkRegistry.params(for: network)
         let ops = walletOps
-        // The user's wallets ON THIS SIDECHAIN (betanet Thunder for betanet slot 9, nothing
-        // else today), exactly like Send's same-network list.
+        // The user's wallets ON THIS SIDECHAIN (Thunder for slot 9 on eCash, betanet Thunder for
+        // betanet's slot 9), exactly like Send's same-network list.
         let receiving = SidechainWalletNetwork.walletNetwork(forSlot: sidechain.slot, onMainchain: network)
         let destinations = manager.wallets
             .filter { receiving != nil && $0.network == receiving }
@@ -1505,8 +1519,8 @@ final class AppState {
     }
 
     /// Owe `wallet` one automatic Bitcoin check, run after its next successful sync. Only for imports
-    /// and copies on a fork network: those can hold coins inherited from Bitcoin. A newly created
-    /// seed can't, so create skips it.
+    /// and the first open of an eCash account on an existing seed: those can hold coins inherited
+    /// from Bitcoin. A newly created seed can't, so create skips it.
     private func scheduleInitialSplitCheck(for wallet: ManagedWallet) {
         guard wallet.network.supportsCoinSplit else { return }
         splitCheckStore.markNeedsInitialCheck(walletId: wallet.id)

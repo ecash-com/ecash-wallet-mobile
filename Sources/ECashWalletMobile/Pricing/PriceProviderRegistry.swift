@@ -27,7 +27,9 @@ enum PriceProviderRegistry {
             // USDC Orca pool via GeckoTerminal (2026-11-05).
             return EcashPriceProvider()
         case .thunder:
-            return nil   // Thunder (test) coins have no fiat price
+            return nil   // Thunder betanet coins have no fiat price
+        case .thunderMainnet:
+            return EcashPriceProvider()   // real ECX deposited from the fork: same price as eCash
         }
     }
 

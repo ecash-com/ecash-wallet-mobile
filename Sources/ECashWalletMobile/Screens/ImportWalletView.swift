@@ -18,7 +18,7 @@ struct ImportWalletView: View {
     @State var vm: ImportViewModel   // not `private` — Fuse bridges @State to Compose (skip-fuse rule)
     @State var walletName = ""
     // Default: the current eCash chain (`currentEcash`) — the REAL fork since 2026-10-29, so this
-    // defaults to real money by design; `.ecashMainnet` carries the real-money warnings. Changed
+    // defaults to real money by design (the mainnet-only send warnings were dropped 2026-11-10). Changed
     // from .signet 2026-08-28 — eCash is the network this app exists for. Still never Bitcoin:
     // Bitcoin mainnet stays a deliberate choice (Golden Rule §4).
     @State var network: WalletNetwork = .currentEcash

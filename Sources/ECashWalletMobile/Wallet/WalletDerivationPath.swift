@@ -13,7 +13,7 @@ import WalletService
 enum WalletDerivationPath {
     static func path(for wallet: ManagedWallet, isChange: Bool, index: Int32) -> String? {
         switch wallet.network {
-        case .thunder:
+        case .thunder, .thunderMainnet:
             return ThunderKey.scheme.derivationPath(index: index)
         case .bitcoin, .signet, .ecash, .ecashBeta, .ecashMainnet:
             return wallet.derivationPath(isChange: isChange, index: index)

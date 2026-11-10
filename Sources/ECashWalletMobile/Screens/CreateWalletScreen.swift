@@ -29,9 +29,10 @@ struct CreateWalletScreen: View {
     var body: some View {
         // The word count comes from the entropy screen, not Settings: an edited (pasted) string
         // carries its own, and deriving it at the Settings value would refuse it.
-        EntropyInputScreen(model: session.model, errorMessage: vm.errorMessage) { field, wordCount in
+        EntropyInputScreen(model: session.model, defaultName: defaultName,
+                           errorMessage: vm.errorMessage) { field, wordCount, label in
             vm.entropyField = field
-            vm.submit(label: defaultName, wordCount: wordCount)
+            vm.submit(label: label, wordCount: wordCount)
         }
         .id(session.id)
     }

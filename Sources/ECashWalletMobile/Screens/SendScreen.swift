@@ -20,7 +20,6 @@ struct SendScreen: View {
     @Environment(\.dismiss) var dismiss
     @State var vm: SendViewModel   // not `private` — Fuse bridges @State (skip-fuse rule)
     @State var path: [SendRoute] = []
-    @State var showMainnetConfirm = false   // extra explicit gate for real-money sends (Golden Rule §6/§7)
     @State var showScanner = false          // iOS camera scanner cover (Android uses an activity)
     @State var showDestinations = false     // "one of my wallets" picker sheet
 
@@ -361,51 +360,17 @@ struct SendScreen: View {
                     .stroke(Theme.Colors.border, lineWidth: 1)
             )
 
-            // Real-money sends carry an extra, visible warning on top of the auth gate.
-            if vm.isMainnet {
-                Group {
-                    if vm.network == .bitcoin {
-                        Text("Real bitcoin — this transaction is irreversible.",
-                             bundle: .module, comment: "mainnet send warning")
-                    } else {
-                        Text("Real eCash — this transaction is irreversible.",
-                             bundle: .module, comment: "eCash mainnet send warning")
-                    }
-                }
-                .textStyle(.sm)
-                .foregroundStyle(Theme.Colors.warning)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            }
-
             Spacer()
 
+            // One confirmation for every network: the review above states recipient, amount, fee and
+            // network, and Confirm runs the device-auth gate (Golden Rule §7). The former mainnet-only
+            // "Send real eCash?" alert and "irreversible" line were dropped 2026-11-10 (Jake) — every
+            // send on eCash mainnet is real money now, so the extra step was pure friction.
             WalletButton(title: "Confirm send") {
-                // Mainnet gets a second, explicit confirmation before broadcast (Golden Rule §6/§7);
-                // testnet-class networks send straight through the existing auth gate.
-                if vm.isMainnet {
-                    showMainnetConfirm = true
-                } else {
-                    Task { await vm.confirmSend() }
-                }
+                Task { await vm.confirmSend() }
             }
         }
         .padding(Theme.Space.gutter)
-        .alert(vm.network == .bitcoin
-                ? Text("Send real bitcoin?", bundle: .module, comment: "mainnet send confirmation title")
-                : Text("Send real eCash?", bundle: .module, comment: "eCash mainnet send confirmation title"),
-               isPresented: $showMainnetConfirm) {
-            Button(role: .cancel) { } label: {
-                Text("Cancel", bundle: .module, comment: "cancel mainnet send")
-            }
-            Button(role: .destructive) {
-                Task { await vm.confirmSend() }
-            } label: {
-                Text("Send", bundle: .module, comment: "confirm mainnet send")
-            }
-        } message: {
-            Text("This sends real bitcoin on \(vm.networkDisplayName). It cannot be undone.",
-                 bundle: .module, comment: "mainnet send confirmation body; %@ is the network name")
-        }
     }
 
     private func reviewRow(label: LocalizedStringKey, value: String) -> some View {

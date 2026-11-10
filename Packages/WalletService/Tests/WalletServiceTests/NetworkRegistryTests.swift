@@ -79,7 +79,7 @@ final class NetworkRegistryTests: XCTestCase {
         }
     }
 
-    /// Thunder is the ONLY network served by something other than BDK — asserted over `allCases`, not
+    /// The two Thunders are the ONLY networks served by something other than BDK — asserted over `allCases`, not
     /// `selectable`, so it holds whether or not Thunder is currently shown in the pickers (a product
     /// decision that has flipped more than once). The split itself is load-bearing: `WalletFacade`
     /// routes on it, and the four BDK call sites that switch on backend kind treat a Thunder endpoint
@@ -88,7 +88,7 @@ final class NetworkRegistryTests: XCTestCase {
         let nonBDK = WalletNetwork.allCases.filter {
             NetworkRegistry.params(for: $0).defaultBackendKind.hasPrefix("thunder")
         }
-        XCTAssertEqual(nonBDK, [WalletNetwork.thunder])
+        XCTAssertEqual(nonBDK, [WalletNetwork.thunder, WalletNetwork.thunderMainnet])
     }
 
     func testUnitLabel() {

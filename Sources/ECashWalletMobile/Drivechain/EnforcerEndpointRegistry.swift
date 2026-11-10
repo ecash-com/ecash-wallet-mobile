@@ -39,8 +39,8 @@ enum EnforcerEndpointRegistry {
             return nil
         case .bitcoin:
             return nil   // no BIP300 on Bitcoin
-        case .thunder:
-            return nil   // a sidechain itself, not a mainchain
+        case .thunder, .thunderMainnet:
+            return nil   // sidechains themselves, not mainchains
         }
     }
 

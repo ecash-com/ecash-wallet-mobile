@@ -98,7 +98,7 @@ final class ImportViewModel {
     func updateSeedPreview(network: WalletNetwork) {
         // Thunder is ed25519 with a fixed derivation — no script-type preview (the BDK preview path
         // would derive a misleading Bitcoin address). Only BDK/secp256k1 networks get a seed preview.
-        guard kind == .recoveryPhrase, network != .thunder, MnemonicInput.hasValidWordCount(phrase) else {
+        guard kind == .recoveryPhrase, !network.isThunder, MnemonicInput.hasValidWordCount(phrase) else {
             seedPreviewAddress = nil
             return
         }

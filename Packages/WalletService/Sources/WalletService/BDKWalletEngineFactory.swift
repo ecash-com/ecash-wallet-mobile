@@ -39,7 +39,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         let mnemonic = Mnemonic(wordCount: BDKSeam.wordCount(wordCount))
         // Thunder derives ed25519 keys from the SAME BIP39 mnemonic but has no BDK descriptors — the
         // Fuse-native ThunderService derives from the seed. Persist the phrase, leave descriptors empty.
-        if network == .thunder {
+        if network.isThunder {
             return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
         // New wallets always use the default (.bip84); only import exposes the script-type choice.
@@ -76,7 +76,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
             throw WalletError.invalidEntropy
         }
         // Thunder: same BIP39 phrase, no BDK descriptors (see `create`).
-        if network == .thunder {
+        if network.isThunder {
             return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
         return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
@@ -117,7 +117,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
             throw WalletError.invalidMnemonic
         }
         // Thunder: same validated BIP39 phrase, no BDK descriptors (see `create`).
-        if network == .thunder {
+        if network.isThunder {
             return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
         return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
@@ -270,7 +270,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
 
     /// Delete ALL of a wallet's BDK SQLite stores — every `(walletId × network)` file plus the
     /// legacy un-namespaced one, with `-wal`/`-shm` siblings. A wallet can hold a store per network
-    /// (chain data is namespaced by network, ready for network switching — `docs/network-switching.md`),
+    /// (chain data is namespaced per account — `docs/seed-container-model.md`),
     /// so remove-wallet must purge them all (Golden Rule §5). Best-effort.
     public func purgeChainData(for walletId: String) {
         let fm = FileManager.default
@@ -332,7 +332,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
     /// One SQLite file per `(walletId × network)` under `chainDataDirectory`, named
     /// `<walletId>-<network>.sqlite`. Network is in the path so the same seed on two chains never
     /// shares a store (their scriptPubKeys are identical on the testnet-class networks — mixing them
-    /// would corrupt UTXO accounting; see `docs/network-switching.md`).
+    /// would corrupt UTXO accounting; see `docs/seed-container-model.md`).
     ///
     /// One-time migration: wallets created before the layout change have an un-namespaced
     /// `<walletId>.sqlite`. Since each was pinned to one network, move it (and its `-wal`/`-shm`) to

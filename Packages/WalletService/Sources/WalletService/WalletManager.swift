@@ -201,11 +201,12 @@ public final class WalletManager: @unchecked Sendable {
     }
 
     /// Whether `network` can hold this key type at all: a WIF key lives only on the coin-type-0'
-    /// chains; a seed can derive anywhere BDK can.
+    /// chains; a seed can derive anywhere BDK can, plus Thunder (the app-side ristretto scheme
+    /// derives from the same phrase — the factory hands back empty descriptors for it).
     private static func keyType(_ keyType: WalletKeyType, canLiveOn network: WalletNetwork) -> Bool {
         switch keyType {
         case .wif: return network.keyFamily == 0
-        case .mnemonic: return !network.isSidechain
+        case .mnemonic: return !network.isSidechain || network.isThunder
         }
     }
 
@@ -221,14 +222,27 @@ public final class WalletManager: @unchecked Sendable {
         return offered + retired
     }
 
-    /// The sidechains nested under the wallet's CURRENT mainchain that it already has an account on.
-    /// Phase 1 never creates a sidechain account from the switcher (a Thunder mainnet entry doesn't
-    /// exist yet), so this only ever lists migrated Thunder-betanet accounts.
+    /// The sidechains nested under the wallet's CURRENT mainchain — `availableSidechains(for:under:)`
+    /// at the selected account's parent.
     public func availableSidechains(for walletId: String) -> [WalletNetwork] {
         guard let wallet = wallets.first(where: { $0.id == walletId }) else { return [] }
         let parent = wallet.selectedAccount.network.parentChain ?? wallet.selectedAccount.network
+        return availableSidechains(for: walletId, under: parent)
+    }
+
+    /// The sidechains nested under `mainchain` for this wallet: the offered ones its key type can
+    /// live on (Thunder mainnet under eCash, 2026-11-10 — the switcher derives the account on first
+    /// tap, through `enableNetwork`, like a mainchain the wallet hasn't opened yet) plus any retired
+    /// one it already has an account on (migrated Thunder-betanet accounts under betanet). Takes the
+    /// mainchain rather than reading the current one so the switcher can nest every mainchain's
+    /// sidechains at once — a wallet on Bitcoin reaches Thunder in one tap (Jake, 2026-11-10).
+    public func availableSidechains(for walletId: String, under mainchain: WalletNetwork) -> [WalletNetwork] {
+        guard let wallet = wallets.first(where: { $0.id == walletId }) else { return [] }
         let held = Set(wallet.accounts.map { $0.network })
-        return WalletNetwork.sidechains(of: parent).filter { held.contains($0) }
+        let offered = Set(WalletNetwork.selectable)
+        return WalletNetwork.sidechains(of: mainchain).filter {
+            held.contains($0) || (offered.contains($0) && Self.keyType(wallet.keyType, canLiveOn: $0))
+        }
     }
 
     /// Whether the wallet already has an account on `network` — i.e. `enableNetwork` would switch

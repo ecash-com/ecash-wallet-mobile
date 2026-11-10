@@ -19,6 +19,18 @@ final class WalletAccountModelTests: XCTestCase {
         XCTAssertTrue(WalletNetwork.ecash.isRetired)       // alphanet
         XCTAssertTrue(WalletNetwork.ecashBeta.isRetired)   // betanet
         XCTAssertTrue(WalletNetwork.thunder.isRetired)     // Thunder betanet: its parent is retired
+        XCTAssertFalse(WalletNetwork.thunderMainnet.isRetired)   // nested under an offered mainchain
+    }
+
+    func testThunderMainnetIsASidechainOfTheRealForkNeverACreateTarget() {
+        XCTAssertEqual(WalletNetwork.thunderMainnet.parentChain, WalletNetwork.ecashMainnet)
+        XCTAssertTrue(WalletNetwork.thunderMainnet.isThunder)
+        XCTAssertTrue(WalletNetwork.thunder.isThunder)
+        XCTAssertFalse(WalletNetwork.ecashMainnet.isThunder)
+        XCTAssertTrue(WalletNetwork.thunderMainnet.isMainnet)
+        XCTAssertFalse(WalletManager.mainchainsForNewWallets.contains(WalletNetwork.thunderMainnet))
+        XCTAssertEqual(WalletNetwork.sidechains(of: WalletNetwork.ecashMainnet), [WalletNetwork.thunderMainnet])
+        XCTAssertEqual(WalletNetwork(rawValue: "thunderMainnet"), WalletNetwork.thunderMainnet)
     }
 
     func testAccountIdAndStoreNames() {
@@ -95,7 +107,7 @@ final class WalletAccountModelTests: XCTestCase {
         }
         XCTAssertEqual(WalletNetwork.sidechains(of: WalletNetwork.ecashBeta), [WalletNetwork.thunder])
         XCTAssertTrue(WalletNetwork.sidechains(of: WalletNetwork.bitcoin).isEmpty)
-        XCTAssertTrue(WalletNetwork.sidechains(of: WalletNetwork.ecashMainnet).isEmpty)   // until a Thunder mainnet entry exists
+        XCTAssertEqual(WalletNetwork.sidechains(of: WalletNetwork.ecashMainnet), [WalletNetwork.thunderMainnet])   // 2026-11-10
     }
 
     func testKeyFamilyIsPublicAndUnchanged() {

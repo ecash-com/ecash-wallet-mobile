@@ -174,11 +174,18 @@ struct WalletManagerSheet: View {
                         Text(wallet.label)
                             .textStyle(.body)
                             .foregroundStyle(Theme.Colors.text0)
-                        // One line per chain the seed holds coins on — its current chain always,
-                        // plus any other with a balance — each in THAT chain's unit and chip, so a
-                        // wallet reads as a seed across networks, not as whatever was viewed last
-                        // (docs/seed-container-model.md §4). Backup state is Home's banner, not here.
-                        ForEach(app.visibleAccountBalances(for: wallet)) { line in
+                        // One line per chain the seed holds coins on, each in THAT chain's unit and
+                        // colour, so a wallet reads as a seed across networks, not as whatever was
+                        // viewed last (docs/seed-container-model.md §4). An empty wallet names no
+                        // chain at all (Jake, 2026-11-10). Backup state is Home's banner, not here.
+                        let lines = app.visibleAccountBalances(for: wallet)
+                        if lines.isEmpty {
+                            Text("No coins seen yet", bundle: .module,
+                                 comment: "wallet list row: the seed holds no coins on any chain synced so far")
+                                .textStyle(.xs)
+                                .foregroundStyle(Theme.Colors.text2)
+                        }
+                        ForEach(lines) { line in
                             HStack(spacing: Theme.Space.x2) {
                                 WalletBalanceLabel(balance: line.balance,
                                                    unitLabel: NetworkRegistry.params(for: line.network).unitLabel)

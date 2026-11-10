@@ -98,7 +98,9 @@ final class EcashMainnetTests: XCTestCase {
     /// default is `currentEcash` (also the real fork). The order is the same with and without a
     /// fetched config. Betanet and Thunder betanet were retired from the picker 2026-10-30.
     func testPickerOrderPutsTheRealForkFirst() {
-        let expected = [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin, WalletNetwork.signet]
+        // Thunder mainnet trails as the offered SIDECHAIN (2026-11-10): the switcher nests it under
+        // eCash; `mainchainsForNewWallets` drops it from create/import.
+        let expected = [WalletNetwork.ecashMainnet, WalletNetwork.bitcoin, WalletNetwork.signet, WalletNetwork.thunderMainnet]
         XCTAssertEqual(WalletNetwork.selectable, expected)
         EcashMainnetLaunch.resetForTesting(offered: true)
         XCTAssertEqual(WalletNetwork.selectable, expected)
