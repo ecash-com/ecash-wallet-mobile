@@ -16,7 +16,9 @@ import BitcoinDevKit
 /// one EXTERNAL address; BDK's `trustedPending` only trusts the internal keychain, so the change landed
 /// in `untrustedPending` and the wallet showed everything as pending — while `send` (correctly) would
 /// spend it. The balance must use the spend policy's rule: an unconfirmed output of a tx WE funded is
-/// spendable; one from someone else is pending.
+/// spendable; one from someone else is reported apart as `unconfirmedBalance` (it counts in the
+/// balance too since 2026-11-11, when incoming 0-conf became spendable — the point here is that a
+/// WIF wallet's own change never reads as an unconfirmed payment).
 final class OwnChangeBalanceTests: XCTestCase {
     /// pkh(G): the secp256k1 generator as a compressed pubkey — any valid key will do for watch-only.
     private static let descriptor = "pkh(0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798)"
@@ -100,14 +102,17 @@ final class OwnChangeBalanceTests: XCTestCase {
 
         XCTAssertEqual(try engine.balance(), Amount(sats: 3_990_000), "our own change is spendable")
         XCTAssertEqual(try engine.pendingBalance(), Amount(sats: 0), "nothing of ours is 'pending'")
+        XCTAssertEqual(try engine.unconfirmedBalance(), Amount(sats: 0), "…nor an 'unconfirmed payment'")
 
-        // Someone ELSE pays us 250,000, unconfirmed: that one IS pending, and stays out of the balance.
+        // Someone ELSE pays us 250,000, unconfirmed: spendable too (since 2026-11-11), but reported
+        // apart — this is the share the sender can still pull back.
         let incoming = try Transaction(transactionBytes: Self.rawTransaction(
             inputs: [(Data(repeating: 0x33, count: 32), 7)], outputs: [(250_000, ourScript)]))
         wallet.applyUnconfirmedTxs(unconfirmedTxs: [UnconfirmedTx(tx: incoming, lastSeen: 1_790_000_200)])
 
-        XCTAssertEqual(try engine.balance(), Amount(sats: 3_990_000))
-        XCTAssertEqual(try engine.pendingBalance(), Amount(sats: 250_000))
+        XCTAssertEqual(try engine.balance(), Amount(sats: 4_240_000))
+        XCTAssertEqual(try engine.unconfirmedBalance(), Amount(sats: 250_000), "theirs, not our change")
+        XCTAssertEqual(try engine.pendingBalance(), Amount(sats: 0))
     }
 }
 #endif

@@ -66,8 +66,9 @@ to fresh addresses. No forked binding.
 
 ## 4. Data model — "denial jobs" (app-owned metadata)
 
-BDK stores none of this; it lives in `WalletStore` (JSON), namespaced per (wallet × network), like
-coin-control freeze/labels:
+BDK stores none of this; it lives in `WalletStore` (JSON), namespaced per account — (wallet ×
+network × scriptType × accountIndex), the `WalletAccount` unit since the seed-container model
+(2026-11-05) — like coin-control freeze/labels:
 
 ```
 DenialJob {
@@ -108,7 +109,8 @@ wallet cannot reliably do that:
 ## 6. Cost
 
 Every hop is an on-chain tx → a fee. **Negligible on L2L Signet** (the right place to build/test
-this), **real money on Bitcoin mainnet** — K hops × M UTXOs compounds. The "Start" screen must show
+this), **real money on Bitcoin mainnet and on eCash mainnet** (the default network for every new
+wallet since the fork) — K hops × M UTXOs compounds. The "Start" screen must show
 an **estimated total fee** across all planned hops before the user commits, and respect the same
 low-fee-when-cheap logic as consolidation.
 
@@ -144,6 +146,8 @@ low-fee-when-cheap logic as consolidation.
 - **Dust / uneconomical coins:** churning a coin worth less than its hop fee is pure loss — flag or
   exclude (ties into coin-control's economical-coin check).
 - **Interaction with the 0-conf spend policy:** a hop's output is our own unconfirmed change →
-  already treated as spendable, so back-to-back hops work; confirm the timing model doesn't starve
-  on unconfirmed parents (long chains of unconfirmed self-spends can hit mempool ancestor limits).
+  spendable (and preferred over incoming 0-conf by the two-pass build, 2026-11-11), so back-to-back
+  hops work — unless the chain started from an incoming 0-conf coin, in which case every hop's
+  change stays untrusted (taint follows the chain) and the review warns on each; confirm the timing model doesn't starve on unconfirmed parents (long chains of
+  unconfirmed self-spends can hit mempool ancestor limits).
 </content>

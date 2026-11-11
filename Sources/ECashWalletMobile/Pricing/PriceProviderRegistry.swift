@@ -23,12 +23,13 @@ enum PriceProviderRegistry {
         case .ecashBeta:
             return nil   // betanet coins have no market either
         case .ecashMainnet:
-            // Real ECX has markets (the Dashboard's Markets card quotes them), but a per-wallet fiat
-            // line needs a provider chosen deliberately (which venue, which currencies). Product
-            // decision; nil until then — no fiat line, same as before the fork.
-            return nil
+            // eCash.com's own price API (keyless, USD only; Jake, 2026-11-09). Before that, the wECX /
+            // USDC Orca pool via GeckoTerminal (2026-11-05).
+            return EcashPriceProvider()
         case .thunder:
-            return nil   // Thunder (test) coins have no fiat price
+            return nil   // Thunder betanet coins have no fiat price
+        case .thunderMainnet:
+            return EcashPriceProvider()   // real ECX deposited from the fork: same price as eCash
         }
     }
 

@@ -2,7 +2,13 @@
 
 **To:** drivechain-esplora maintainer (`github.com/octobocto/drivechain-esplora`)
 **From:** eCash.com Wallet (mobile) · **Updated:** 2026-09-01
-**Against:** `master`, deployed at `https://seed.alpha.ecash.eu.com/thunder`
+**Against:** `master`, deployed at `https://seed.beta.ecash.eu.com/thunder` (betanet) and
+`https://seed.ecash.eu.com/thunder` (mainnet, 2026-11-10). The alphanet deployment this was first
+written against is retired.
+
+> **Status (2026-11-10):** drafted 2026-09-01. Q1 is answered since (Thunder mainnet is live — note
+> under the question); the batch-route ask and Q2–Q4 are still open. Whether the letter was actually
+> delivered to the maintainer isn't recorded here.
 
 ## Nothing here is blocking
 
@@ -71,6 +77,9 @@ on list length is fine — anything ≥ 25 covers our window.
    yet"*, while `/fee-estimates` and `/drivechain/*` work and the address routes answer zeros. We
    handle that state deliberately (an empty sync, not a connection error), but nothing on our side has
    met real indexed data yet, so it's our last gate before real funds.
+   **Answered (2026-11-10):** Thunder mainnet is live — slot 9 on the real eCash fork, its index at
+   `seed.ecash.eu.com/thunder` (every route the client uses answers; no Thunder mainnet block had been
+   mined yet on 11-10, reported as "index is empty") — and Thunder send works against the betanet index.
 2. **Rate limits.** Is ~25–30 requests in a burst of 6 concurrent, per wallet sync, comfortable? Happy
    to lower our concurrency if it's a problem.
 3. **Is the enforcer behind `/drivechain/*` permanent** for this deployment? The routes answer today,

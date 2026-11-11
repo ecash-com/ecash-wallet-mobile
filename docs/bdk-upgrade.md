@@ -9,7 +9,8 @@ Sidechain deposits need a deposit's OP_RETURN to sit **immediately after** the t
 bdk-ffi 2.3.1 always shuffles outputs, so `WalletEngine.prepareDeposit` rebuilds until the shuffle
 comes out right (≤32 attempts, rejected builds cancelled; `docs/sidechain-deposits.md` §4a).
 **bdk-ffi 3.0.0 (2026-06-09) exposes `TxBuilder.ordering(TxOrdering)`**, which removes the need
-for that loop. 3.1.0 (2026-09-11) is current.
+for that loop. 3.1.0 (2026-09-11) was current when this was written — re-check the latest bdk-ffi
+release before starting.
 
 Also useful in 3.x: foreign UTXOs with an explicit `nSequence`, Electrum client timeout/retry
 parameters, locked-outpoint APIs, and `Wallet.checkpoints`.
@@ -48,7 +49,8 @@ Both must move together (same Rust core; the seam assumes identical APIs on both
 - `DepositEngineTests`, with the ordering loop replaced by `.ordering(.untouched)` and the shape
   check kept.
 - Full WalletService suite under Robolectric, the app suite, and `skip export` for Android.
-- A real send on betanet from an existing (pre-upgrade) wallet on both iOS and Android.
+- A real send on eCash mainnet (or L2L Signet) from an existing (pre-upgrade) wallet on both iOS and
+  Android. (Was "on betanet" — betanet was retired from the picker 2026-10-30.)
 
 ## After
 

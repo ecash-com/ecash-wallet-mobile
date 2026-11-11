@@ -98,11 +98,12 @@ public struct FeeRate: Equatable, Hashable, Sendable {
 
 // MARK: - Network
 //
-// Network is a per-wallet property (Golden Rule §4). Treat this enum as non-exhaustive
-// in spirit: adding eCash later should be a NetworkRegistry entry + params, not a refactor.
+// Network is a per-account property: a wallet is a seed and holds one `WalletAccount` per
+// network it has been opened on (Golden Rule §4, `docs/seed-container-model.md`). Treat this enum
+// as non-exhaustive in spirit: a new chain is a NetworkRegistry entry + params, not a refactor.
 
-/// The network a wallet is pinned to at creation. Resolved through `NetworkRegistry`
-/// for all chain params, coin-type, backend, explorer, address HRP, and unit label.
+/// The chain an account lives on. Resolved through `NetworkRegistry` for all chain params,
+/// coin-type, backend, explorer, address HRP, and unit label.
 public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     case bitcoin
     /// L2L dev network; first-class in BDK.
@@ -142,23 +143,29 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     ///
     /// **Real money.** `isMainnet` is true, so it gets Bitcoin's extra send confirmation and warnings.
     ///
-    /// **Gated on the remote config, not a release** (`EcashMainnetLaunch`): the case is compiled in
-    /// ahead of the fork, but it is NOT offered in any picker until drivechain.dev/config publishes the
-    /// `ecash` entry (published 2026-10-26), and it does NOT become the default eCash network until the chain is
-    /// observed past the entry's `fork_height`. Betanet keeps running alongside it either way — its
-    /// case is never repurposed (a wallet's network is persisted by rawValue).
+    /// The real fork (height 973,728, activated 2026-10-29). Offered unconditionally and the default
+    /// for new wallets since 1.4.6 build 44; the remote config (`dev.ecash.com/config`, id `ecash`)
+    /// supplies its endpoints. Until 2026-10-29 it was gated on that config (`EcashMainnetLaunch`).
+    /// Betanet keeps running alongside it — its case is never repurposed (persisted by rawValue).
     case ecashMainnet
     /// The **Thunder** sidechain of eCash (LayerTwo-Labs/thunder-rust). NOT a BDK/secp256k1 chain —
     /// ed25519 keys, BLAKE3 base58 addresses, a Thunder-node RPC backend. Routed to the Fuse-native
     /// `ThunderService` (never the BDK engine); the `coinType`/`addressHRP` in its registry entry are
     /// unused fillers. Its rawValue `"thunder"` is persisted — don't rename the case.
     case thunder
+    /// **Thunder on the real eCash fork** (slot 9 — proposed at height 976,314, activated at 978,324;
+    /// enabled 2026-11-10, Jake). Same ristretto slot-9 derivation as `.thunder`, so one seed's
+    /// Thunder address is the same string on betanet and mainnet — what differs is the parent
+    /// (`.ecashMainnet`) and the index it reads (`seed.ecash.eu.com/thunder`). Offered from the
+    /// network switcher, nested under eCash; never from create/import. rawValue persisted — don't
+    /// rename.
+    case thunderMainnet
 
-    /// Networks offered in the create/import picker (`NetworkSelector`) — distinct from `allCases`
-    /// (which the backend/registry loops still walk for every case). Also the copy-to-network
-    /// targets (`WalletManager.copyTargets`). Settings → Network lists these PLUS any network an
-    /// existing wallet is on, so a retired chain's endpoint stays editable for the wallets that
-    /// remain on it.
+    /// Networks the app offers — the mainchains every new/imported seed gets an account on
+    /// (`WalletManager.mainchainsForNewWallets` drops the sidechains) and the sidechains the
+    /// switcher offers under them. Distinct from `allCases`, which the backend/registry loops still
+    /// walk for every case. Settings → Network lists these PLUS any network an existing wallet is
+    /// on, so a retired chain's endpoint stays editable for the wallets that remain on it.
     ///
     /// **Retiring a network = remove it from this list, keep the case.** The rawValue is persisted in
     /// existing wallets, which keep loading, syncing and sending; nobody can create a new one.
@@ -171,14 +178,17 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     /// failed showed no mainnet until a later resume — the Android 1.4.6 report).
     public static var selectable: [WalletNetwork] {
         // Order is the picker order: the real eCash fork first (also the default — `currentEcash`),
-        // then Bitcoin, then L2L Signet. Betanet and Thunder betanet left here 2026-10-30; to bring
-        // a Thunder mainnet back, append `.thunder` once `NetworkRegistry` points it at mainnet.
+        // then Bitcoin, then L2L Signet. Betanet and Thunder betanet left here 2026-10-30. Thunder
+        // mainnet (2026-11-10) is listed as an OFFERED sidechain: never a create/import target
+        // (`WalletManager.mainchainsForNewWallets` drops sidechains), but the switcher offers it
+        // under eCash and Settings → Network lists its endpoint.
         var out: [WalletNetwork] = []
         if EcashMainnetLaunch.isOffered {
             out.append(.ecashMainnet)
         }
         out.append(.bitcoin)
         out.append(.signet)
+        out.append(.thunderMainnet)
         return out
     }
 
@@ -209,15 +219,16 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     public var supportsCoinSplit: Bool {
         switch self {
         case .ecash, .ecashBeta, .ecashMainnet: return true
-        case .bitcoin, .signet, .thunder: return false
+        case .bitcoin, .signet, .thunder, .thunderMainnet: return false
         }
     }
 
     /// Whether one secret derives the **same keys and addresses** on this network and `other` — the
-    /// test for copying a wallet across networks (`docs/copy-wallet-to-network.md`). Bitcoin and every
-    /// eCash generation share Bitcoin's parameters (coin-type `0'`, `bc` HRP, mainnet key formats), so
-    /// a copy there is the same wallet. L2L Signet is coin-type `1'` (different addresses), and Thunder
-    /// is ed25519 — a different key system — so each stands alone.
+    /// test behind `keyFamily` (which networks a WIF key can live on) and, historically, behind the
+    /// retired copy-to-network feature. Bitcoin and every eCash generation share Bitcoin's parameters
+    /// (coin-type `0'`, `bc` HRP, mainnet key formats), so one secret is the same wallet on all of
+    /// them. L2L Signet is coin-type `1'` (different addresses), and Thunder is FROST/ristretto255 — a
+    /// different key system — so each stands alone.
     public func sharesKeys(with other: WalletNetwork) -> Bool {
         guard let mine = keyFamily, let theirs = other.keyFamily else { return false }
         return mine == theirs
@@ -226,12 +237,49 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     /// The group of networks whose keys are interchangeable, or nil for a network that shares with
     /// none. Exhaustive on purpose (see `supportsCoinSplit`): a new network won't compile until
     /// someone decides whether a copied wallet there would really be the same wallet.
-    var keyFamily: Int? {
+    public var keyFamily: Int? {
         switch self {
         case .bitcoin, .ecash, .ecashBeta, .ecashMainnet: return 0   // coin-type 0', `bc` addresses
         case .signet: return nil                      // coin-type 1' — only itself
-        case .thunder: return nil                     // ed25519, not BDK
+        case .thunder, .thunderMainnet: return nil    // ristretto255, not BDK
         }
+    }
+
+    /// The mainchain this sidechain settles to, or `nil` for a mainchain itself. The network
+    /// switcher nests sidechains under their parent (`docs/seed-container-model.md §3.1`, decided
+    /// 2026-11-04): a wallet viewing eCash sees eCash's sidechains, never another chain's. Exhaustive
+    /// on purpose, like `supportsCoinSplit`: the next chain added won't compile until someone says
+    /// where it belongs.
+    public var parentChain: WalletNetwork? {
+        switch self {
+        // `.thunder` is Thunder BETANET (`seed.beta.ecash.eu.com`), so its parent is eCash betanet;
+        // `.thunderMainnet` is the real fork's.
+        case .thunder: return .ecashBeta
+        case .thunderMainnet: return .ecashMainnet
+        case .bitcoin, .signet, .ecash, .ecashBeta, .ecashMainnet: return nil
+        }
+    }
+
+    public var isSidechain: Bool { parentChain != nil }
+
+    /// Either Thunder: served by the Fuse-native `ThunderService` (ristretto255 keys, a
+    /// drivechain-esplora index), never by BDK. The two differ only in parent chain and endpoint.
+    public var isThunder: Bool { self == .thunder || self == .thunderMainnet }
+
+    /// **Retired**: no longer offered for new wallets (`selectable`) and not a sidechain of an offered
+    /// mainchain — the cases kept only so existing wallets load: alphanet, betanet, Thunder betanet.
+    /// Drives the app's "Hide retired networks" setting (on by default, 2026-11-09). Presentation
+    /// only: a retired account still syncs, sends and spends exactly as before.
+    public var isRetired: Bool {
+        let offered = WalletNetwork.selectable
+        if offered.contains(self) { return false }
+        if let parent = parentChain { return !offered.contains(parent) }
+        return true
+    }
+
+    /// The sidechains that settle to `mainchain`, in declaration order. Empty for Bitcoin.
+    public static func sidechains(of mainchain: WalletNetwork) -> [WalletNetwork] {
+        WalletNetwork.allCases.filter { $0.parentChain == mainchain }
     }
 
     /// **Real money.** True for Bitcoin mainnet and the real eCash mainnet; drives the extra send
@@ -241,7 +289,9 @@ public enum WalletNetwork: String, Equatable, Hashable, Sendable, CaseIterable {
     /// is the only thing distinguishing them. Exhaustive so the next chain decides this explicitly.
     public var isMainnet: Bool {
         switch self {
-        case .bitcoin, .ecashMainnet: return true
+        // Thunder mainnet holds real ECX deposited from the real fork, so it carries the same
+        // weight: extra send confirmation, real-money warnings.
+        case .bitcoin, .ecashMainnet, .thunderMainnet: return true
         case .signet, .ecash, .ecashBeta, .thunder: return false
         }
     }
@@ -305,58 +355,179 @@ public enum ScriptType: String, Codable, Equatable, Hashable, Sendable, CaseIter
 
 // MARK: - Wallet & chain value types
 
-/// Metadata describing one managed wallet. Contains NO private key material
-/// (Golden Rule §5) — mnemonics live in the Keychain keyed by `id`.
-public struct ManagedWallet: Identifiable, Equatable, Hashable, Sendable {
+/// One account of a wallet: the keys ONE seed derives for one `(network, scriptType,
+/// accountIndex)`, plus where that account's BDK chain data lives. A wallet (= a seed) holds one
+/// or more of these and the user switches between them (`docs/seed-container-model.md §3`). Public
+/// descriptors only (Golden Rule §5). Bridged — signed integer fields, no `Date` (CLAUDE.md §5).
+public struct WalletAccount: Identifiable, Equatable, Hashable, Sendable {
+    /// `"<network>-<scriptType>-<accountIndex>"` (`accountId(...)`) — unique within its wallet.
     public let id: String
-    public var label: String
     public let network: WalletNetwork
-    /// Public (xpub-based) descriptors — never the private variants. For a `.wif` wallet these are
-    /// the single-key public descriptor `pkh(<pubkey>)` (external == internal — one address).
-    public var externalDescriptor: String
-    public var internalDescriptor: String
-    /// Whether this wallet is a mnemonic (HD) wallet or a single legacy private key (`.wif`).
-    /// Lets the engine pick the right construction/signing path. Defaults to `.mnemonic`.
-    public let keyType: WalletKeyType
-    /// The mnemonic wallet's derivation script type (`.bip84` default). Chosen at import so a restored
-    /// seed matches its original wallet's address kind. Ignored for `.wif` wallets. Persisted; existing
-    /// wallets default to `.bip84` (zero behavior change). Signing rebuilds the private descriptor from
-    /// this, so it MUST be honored in the sign path too (`docs/custom-derivation-path-import.md §4.2`).
     public let scriptType: ScriptType
-    /// The BIP account index (`…/account'`). `0` default; non-zero is a fast-follow (dormant today —
-    /// the derivation seams currently assume account 0). Persisted now to avoid a second migration.
+    /// The BIP account level (`…/account'`). `0` for every wallet today.
     public let accountIndex: Int32
-    public var isBackedUp: Bool
-    public var sortIndex: Int
+    /// Public (xpub-based) descriptors — never the private variants. `""` for a sidechain account
+    /// (Thunder derives outside BDK); for a `.wif` wallet the single-key `pkh(<pubkey>)` on both.
+    public let externalDescriptor: String
+    public let internalDescriptor: String
+    /// Basename of this account's BDK SQLite store in the chain-data directory. Explicit, so a
+    /// migrated account keeps the file it already has and no naming heuristic ever decides where
+    /// chain data lives (invariants I3/I5). A pre-container record's one account uses
+    /// `legacyStoreName`; an account added later uses `storeName(walletId:…)`.
+    public let storeName: String
 
-    public init(id: String, label: String, network: WalletNetwork,
-                externalDescriptor: String, internalDescriptor: String,
-                keyType: WalletKeyType = .mnemonic,
-                scriptType: ScriptType = .bip84, accountIndex: Int32 = 0,
-                isBackedUp: Bool = false, sortIndex: Int = 0) {
+    public init(id: String, network: WalletNetwork, scriptType: ScriptType, accountIndex: Int32,
+                externalDescriptor: String, internalDescriptor: String, storeName: String) {
         self.id = id
-        self.label = label
         self.network = network
-        self.externalDescriptor = externalDescriptor
-        self.internalDescriptor = internalDescriptor
-        self.keyType = keyType
         self.scriptType = scriptType
         self.accountIndex = accountIndex
-        self.isBackedUp = isBackedUp
-        self.sortIndex = sortIndex
+        self.externalDescriptor = externalDescriptor
+        self.internalDescriptor = internalDescriptor
+        self.storeName = storeName
     }
 
-    /// The full BIP32 path of one of this wallet's keys, e.g. `m/84'/1'/0'/0/5` — read from the key
-    /// origin in its (public) descriptor, so it's the path the wallet really derives at (script type,
-    /// coin type and account included), not a reconstruction. `nil` for a single-key `.wif` wallet,
-    /// which has no derivation, or a descriptor without a key origin.
+    /// Convenience: the id is derived from the triple.
+    public init(network: WalletNetwork, scriptType: ScriptType, accountIndex: Int32,
+                externalDescriptor: String, internalDescriptor: String, storeName: String) {
+        self.init(id: WalletAccount.accountId(network: network, scriptType: scriptType, accountIndex: accountIndex),
+                  network: network, scriptType: scriptType, accountIndex: accountIndex,
+                  externalDescriptor: externalDescriptor, internalDescriptor: internalDescriptor,
+                  storeName: storeName)
+    }
+
+    public static func accountId(network: WalletNetwork, scriptType: ScriptType, accountIndex: Int32) -> String {
+        "\(network.rawValue)-\(scriptType.rawValue)-\(accountIndex)"
+    }
+
+    /// `<walletId>-<network>.sqlite` — the one store a pre-container wallet has
+    /// (`BDKWalletEngineFactory.makePersister`). A migrated record keeps exactly this.
+    public static func legacyStoreName(walletId: String, network: WalletNetwork) -> String {
+        "\(walletId)-\(network.rawValue).sqlite"
+    }
+
+    /// `<walletId>-<network>-<scriptType>-<acct>.sqlite` — the store of an account added to a wallet.
+    public static func storeName(walletId: String, network: WalletNetwork,
+                                 scriptType: ScriptType, accountIndex: Int32) -> String {
+        "\(walletId)-\(network.rawValue)-\(scriptType.rawValue)-\(accountIndex).sqlite"
+    }
+
+    /// The full BIP32 path of one of this account's keys, e.g. `m/84'/1'/0'/0/5` — read from the key
+    /// origin in its (public) descriptor, so it's the path the account really derives at (script
+    /// type, coin type and account included), not a reconstruction. `nil` when the descriptor has
+    /// no key origin (a single-key `.wif` account, a sidechain account).
     public func derivationPath(isChange: Bool, index: Int32) -> String? {
-        if keyType == .wif { return nil }
         guard let origin = ManagedWallet.keyOriginPath(isChange ? internalDescriptor : externalDescriptor) else {
             return nil
         }
         return "\(origin)/\(isChange ? 1 : 0)/\(index)"
     }
+
+    /// The BIP32 master fingerprint from the descriptor's key origin — `wpkh([d34db33f/84'/0'/0']…)`
+    /// → `"d34db33f"`. The same seed yields the same fingerprint on every coin-type and script type,
+    /// which is how the seed-container migration recognises copies of one seed WITHOUT reading a
+    /// mnemonic. `nil` without an origin (WIF, sidechain) or if it isn't 8 hex digits.
+    public var masterFingerprint: String? {
+        ManagedWallet.masterFingerprint(externalDescriptor)
+    }
+}
+
+/// Metadata describing one managed wallet — **a seed** (or one WIF key), holding one or more
+/// `WalletAccount`s and the one currently selected (`docs/seed-container-model.md §3`). Contains
+/// NO private key material (Golden Rule §5) — the mnemonic lives in the Keychain keyed by `id`.
+///
+/// The pre-container shape (one record = one seed on one network) is still constructible through
+/// the `network:` initializer, which builds a one-account wallet; `network`, `externalDescriptor`,
+/// `internalDescriptor`, `scriptType` and `accountIndex` read through to the **selected account**
+/// so existing callers keep working. Phase 1 step 5 moves them to `selectedAccount.…` explicitly.
+public struct ManagedWallet: Identifiable, Equatable, Hashable, Sendable {
+    public let id: String
+    public var label: String
+    /// Whether this wallet is a mnemonic (HD) wallet or a single legacy private key (`.wif`).
+    /// Lets the engine pick the right construction/signing path. Defaults to `.mnemonic`.
+    public let keyType: WalletKeyType
+    public var isBackedUp: Bool
+    public var sortIndex: Int
+    /// The account the wallet is currently viewed on. Remembered per wallet; changed ONLY by an
+    /// explicit switch in the UI, never implicitly (invariant I8).
+    public var selectedAccountId: String
+    /// Never empty — the initializers guarantee at least one account.
+    public var accounts: [WalletAccount]
+    /// Legacy record ids the seed-container migration folded into this wallet (its own id
+    /// excluded). Report/diagnostics only.
+    public let mergedFrom: [String]
+    /// Keychain entries those merged records left behind. They hold the SAME phrase as this
+    /// wallet's own entry. The migration never deletes them (invariant I1); remove-wallet does.
+    public let orphanKeychainIds: [String]
+
+    /// The container initializer. `accounts` must not be empty.
+    public init(id: String, label: String, keyType: WalletKeyType, isBackedUp: Bool, sortIndex: Int,
+                selectedAccountId: String, accounts: [WalletAccount],
+                mergedFrom: [String] = [], orphanKeychainIds: [String] = []) {
+        precondition(!accounts.isEmpty, "a wallet needs at least one account")
+        self.id = id
+        self.label = label
+        self.keyType = keyType
+        self.isBackedUp = isBackedUp
+        self.sortIndex = sortIndex
+        self.selectedAccountId = selectedAccountId
+        self.accounts = accounts
+        self.mergedFrom = mergedFrom
+        self.orphanKeychainIds = orphanKeychainIds
+    }
+
+    /// The pre-container shape: one seed on one network. Builds a wallet with exactly one account
+    /// whose store is the legacy `<id>-<network>.sqlite`. Used by create/import today and by the
+    /// legacy `wallets.json` decoder; existing wallets decode through this unchanged.
+    public init(id: String, label: String, network: WalletNetwork,
+                externalDescriptor: String, internalDescriptor: String,
+                keyType: WalletKeyType = .mnemonic,
+                scriptType: ScriptType = .bip84, accountIndex: Int32 = 0,
+                isBackedUp: Bool = false, sortIndex: Int = 0) {
+        // Assigns directly rather than delegating to the container init: Kotlin can't pass a local
+        // (the account) into a `this(...)` constructor call, so Skip rejects the delegation.
+        let account = WalletAccount(network: network, scriptType: scriptType, accountIndex: accountIndex,
+                                    externalDescriptor: externalDescriptor,
+                                    internalDescriptor: internalDescriptor,
+                                    storeName: WalletAccount.legacyStoreName(walletId: id, network: network))
+        self.id = id
+        self.label = label
+        self.keyType = keyType
+        self.isBackedUp = isBackedUp
+        self.sortIndex = sortIndex
+        self.selectedAccountId = account.id
+        self.accounts = [account]
+        self.mergedFrom = []
+        self.orphanKeychainIds = []
+    }
+
+    /// The account `selectedAccountId` names, falling back to the first account if the id is stale
+    /// (never crashes the money surfaces over a bad selection; the chip still shows what's read).
+    public var selectedAccount: WalletAccount {
+        accounts.first { $0.id == selectedAccountId } ?? accounts[0]
+    }
+
+    public func account(id: String) -> WalletAccount? {
+        accounts.first { $0.id == id }
+    }
+
+    // MARK: Selected-account read-throughs (compat shims — see the type comment)
+
+    public var network: WalletNetwork { selectedAccount.network }
+    public var externalDescriptor: String { selectedAccount.externalDescriptor }
+    public var internalDescriptor: String { selectedAccount.internalDescriptor }
+    public var scriptType: ScriptType { selectedAccount.scriptType }
+    public var accountIndex: Int32 { selectedAccount.accountIndex }
+
+    /// The selected account's derivation path for a key (see `WalletAccount.derivationPath`). `nil`
+    /// for a single-key `.wif` wallet, which has no derivation.
+    public func derivationPath(isChange: Bool, index: Int32) -> String? {
+        if keyType == .wif { return nil }
+        return selectedAccount.derivationPath(isChange: isChange, index: index)
+    }
+
+    /// The seed's master fingerprint, read from the selected account (identical on every account).
+    var masterFingerprint: String? { selectedAccount.masterFingerprint }
 
     /// `wpkh([d34db33f/84'/1'/0']tpub…/0/*)#…` → `m/84'/1'/0'`. Hardened markers are normalised to
     /// `'` (BDK may write `h`). `nil` when there's no `[fingerprint/path]` origin.
@@ -369,6 +540,26 @@ public struct ManagedWallet: Identifiable, Equatable, Hashable, Sendable {
         guard steps.count > 1 else { return nil }
         steps.removeFirst()   // the master fingerprint
         return "m/" + steps.joined(separator: "/").replacingOccurrences(of: "h", with: "'")
+    }
+
+    /// `wpkh([D34DB33F/84'/0'/0']xpub…)` → `"d34db33f"`; `nil` without an origin or if the
+    /// fingerprint isn't 8 hex digits. Character-by-character in a plain loop: `UInt32(_:radix:)`
+    /// and `String.allSatisfy` have no Kotlin counterpart in Skip, and an `Int` radix parse would
+    /// overflow Kotlin's 32-bit Int on fingerprints above 0x7fffffff.
+    static func masterFingerprint(_ descriptor: String) -> String? {
+        let opened = descriptor.components(separatedBy: "[")
+        guard opened.count > 1 else { return nil }
+        let origin = opened[1].components(separatedBy: "]")
+        guard origin.count > 1 else { return nil }
+        let steps = origin[0].components(separatedBy: "/")
+        guard let first = steps.first else { return nil }
+        let fp = first.lowercased()
+        guard fp.count == 8 else { return nil }
+        let hexDigits = "0123456789abcdef"
+        for ch in fp {
+            if !hexDigits.contains(String(ch)) { return nil }
+        }
+        return fp
     }
 }
 
@@ -410,6 +601,25 @@ public struct Utxo: Equatable, Hashable, Sendable {
         self.txid = txid
         self.vout = vout
         self.amount = amount
+    }
+}
+
+/// What a send WOULD spend, before anything is signed or broadcast — the dry run behind the review
+/// screen (`WalletEngine.previewSend` / `previewSweep`). Built watch-only by the same two-pass coin
+/// selection the real send uses: confirmed coins (plus our own change) first, incoming unconfirmed
+/// coins only when those don't cover the amount. Bridge-safe (signed Int fields, no computed
+/// properties — the app derives "uses unconfirmed" from `unconfirmedInputSats > 0`).
+public struct SendPreview: Equatable, Sendable {
+    /// The exact fee the built transaction pays.
+    public let feeSats: Int64
+    /// Sats of inputs that are incoming payments not yet confirmed. `> 0` means this send depends
+    /// on someone else's transaction confirming: if its sender replaces or cancels it first, this
+    /// send fails with it — the coins return, nothing is lost, but the recipient is never paid.
+    public let unconfirmedInputSats: Int64
+
+    public init(feeSats: Int64, unconfirmedInputSats: Int64) {
+        self.feeSats = feeSats
+        self.unconfirmedInputSats = unconfirmedInputSats
     }
 }
 

@@ -3,7 +3,10 @@
 **Status:** 🟡 PARTLY BUILT — 2026-09-29. Built: §6 steps 1–4 (view model, list + detail screens,
 icon, Activity deposit labels), verified live on iOS + Android against betanet. Deposits (§3c) are
 now BUILT as a dedicated flow pushed from the detail screen ("Deposit to Thunder"), not yet proven
-on-chain; `s9_` paste routing in Send and deposit-to-self (§5) are not built. Real-fork transition: `docs/real-ecash-fork-transition.md`.
+on-chain. **Withdrawals are BUILT** (2026-11-10 status): `SidechainWithdrawScreen` + `WithdrawOptionsSheet`
+over `ThunderService.withdrawToMainchain` (`ThunderService.swift:~269`); the **fast withdrawal** option
+is built but switched off (`FastWithdrawalConfig.isEnabled = false` → shows "Coming soon",
+`WithdrawOptionsSheet.swift:~55`). `s9_` paste routing in Send and deposit-to-self (§5) are not built. Real-fork transition: `docs/real-ecash-fork-transition.md`.
 Originally a design-only doc. The data layer it sits on **is** built:
 `EnforcerClient` / `EnforcerFetching` / `EnforcerEndpointRegistry` (`Sources/ECashWalletMobile/Drivechain/`),
 live-verified on betanet. Deposit mechanics and the safety rules the UI enforces are in
@@ -42,16 +45,18 @@ similar names have.
 
 **Recommendation: a "Sidechains" entry on Home, not a new tab.**
 
-- Tabs are Wallet / Activity / News / Settings. A fifth tab for something most users touch rarely
-  crowds the bar on both platforms, and it would have to hide on Bitcoin and Signet, which makes the
-  tab bar change shape between wallets. News already does that; doing it twice makes the app feel
-  unstable.
+- Tabs are Wallet / Activity / Dashboard / Settings — all **permanent** now (`MainTabView.swift:~27,
+  53-80`; the old News tab that hid on Bitcoin was replaced by the Dashboard 2026-10-07). A fifth tab
+  for something most users touch rarely crowds the bar on both platforms, and it would have to hide
+  on Bitcoin and Signet, which makes the tab bar change shape between wallets — exactly what the
+  permanent-tabs rule now forbids.
 - Home already hosts contextual, per-network affordances (the faucet button, the split-coins nudge).
   A sidechains row there follows the same pattern.
 - The deposit action itself joins **Send**, because it is a send (§3).
 
 Gate every sidechain surface on `EnforcerEndpointRegistry.isAvailable(on: wallet.network)`. That
-means betanet only today; alphanet stays off while its host serves betanet's chain.
+means betanet and eCash mainnet today (`.ecashMainnet` has a bundled enforcer URL, reachability
+unverified — `docs/sidechain-deposits.md` §3); alphanet stays off while its host serves betanet's chain.
 
 ```
 ┌─────────────────────────────────┐
@@ -107,7 +112,7 @@ Reached from the Home row. One screen, two sections.
 
 - Data: `sidechains()` + `treasury(slot:)` per row + `sidechainProposals()`. The vote threshold comes
   from `bip300Constants()` (1,008 for an unused slot, 13,150 for a used one), never hardcoded.
-- Descriptions come from the enforcer (the on-chain declaration). `drivechain.dev/config`'s
+- Descriptions come from the enforcer (the on-chain declaration). `dev.ecash.com/config`'s
   `sidechains[]` can *add* presentation (a longer blurb, an icon) keyed by slot, but it never decides
   what's listed: it lags the enforcer (it lists 1 sidechain for betanet; the enforcer reports 8).
 - Proposals are informational and **not tappable into a deposit**. A deposit to a slot that isn't
@@ -232,25 +237,28 @@ link to the activity row.
 
 ## 5. Deposit-to-self and the Thunder wallet
 
-Thunder keys come from **the same BIP39 mnemonic** as the eCash wallet (ed25519, `m/1'/0'/0'/i'`,
-`docs/thunder-sidechain-support.md`). Two consequences:
+Thunder keys come from **the same BIP39 mnemonic** as the eCash wallet — since thunder-rust 0.18 that is
+**FROST ristretto255** on `m/43'/1899'/0'/9'/0'/i` (`docs/thunder-sidechain-support.md`;
+`Sidechain/SidechainKeyScheme.swift:~30-40`): the account levels are hardened, the **address index is
+non-hardened**, so addresses derive from a cached account public key, watch-only
+(`ThunderAccountKeyStore`). *(Earlier: ed25519 `m/1'/0'/0'/i'`, hardened-only.)* Two consequences:
 
 - **"My Thunder wallet" can mean this very seed.** The destination can be derived from the eCash
   wallet's own mnemonic, with no separate Thunder wallet needed.
-- **But it needs the mnemonic.** ed25519 derivation is hardened-only, so there's no xpub to derive
-  from, unlike our BIP84 watch-only model (CLAUDE.md §7). Producing that address reads the key
-  material, so it goes behind the same `DeviceAuth` gate as signing. The derived *address* (public)
-  can then be cached per wallet so later deposits don't re-prompt, the same approach as
-  `ThunderAddressIndexStore`.
+- **The phrase is read once, for the account key.** Producing the first Thunder address reads the key
+  material behind the same `DeviceAuth` gate as signing (`enableNetwork` on first tap); after that the
+  cached account key derives every address with no prompt, like our BIP84 watch-only model.
 
-That means the "My Thunder wallet" row should offer:
-1. **This wallet's Thunder account** (same seed; auth once to derive, then cached), and
-2. any separate `.thunder` wallets in the manager, when Thunder is un-hidden from the pickers.
+~~That means the "My Thunder wallet" row should offer: this wallet's Thunder account, and any
+separate `.thunder` wallets in the manager.~~ **Resolved by the seed-container model (2026-11-05 /
+2026-11-10, `docs/seed-container-model.md`):** Thunder is an **account in the same wallet** —
+`.thunderMainnet` nested under eCash in the network switcher — so "my Thunder wallet" is simply this
+wallet switched to Thunder; there are no separate Thunder wallets to list (retired `.thunder` betanet
+accounts sit under betanet for wallets that already had them).
 
-Open decision: once deposit-to-self exists, does a Thunder balance show *on the eCash wallet's
-Home* (one seed, two chains), or only in a separate Thunder wallet? Showing it on Home is closer to
-how people think ("my money"). It's also a bigger change to the one-wallet-one-network model, so
-it's deferred until deposits work end to end.
+~~Open decision: does a Thunder balance show on the eCash wallet's Home, or only in a separate Thunder
+wallet?~~ Also resolved: the one-wallet-one-network model is gone; the wallet shows whichever account
+is selected, and the wallet-list rows show a balance line per account.
 
 ## 6. Build order (UI)
 
@@ -273,4 +281,4 @@ Steps 1–4 carry no money risk and can ship while the engine's output-ordering 
    but Thunder has no wallet engine)? The recommendation is yes, since depositing works for all of
    them and a user may hold a BitNames wallet elsewhere, but lead with Thunder.
 3. Thunder balance on the eCash Home (§5)?
-4. Icon per sidechain: does `drivechain.dev/config` grow an `icon` field, or do we bundle a few?
+4. Icon per sidechain: does `dev.ecash.com/config` grow an `icon` field, or do we bundle a few?

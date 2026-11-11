@@ -7,7 +7,7 @@ import Testing
 import WalletService
 @testable import ECashWalletMobile
 
-/// Parsing + resolution of the remote network config (https://drivechain.dev/config), and the
+/// Parsing + resolution of the remote network config (https://dev.ecash.com/config), and the
 /// fail-safe fetch service. All pure/injected — no real network. Payload `networks` is an ARRAY,
 /// mapped to `WalletNetwork` by `family` (the eCash entry's id is `drynet2`, family `ecash`).
 ///
@@ -15,7 +15,7 @@ import WalletService
 /// `RemoteServiceOverrides`), so they must not run in parallel or one's `clearAll()` races another.
 @Suite(.serialized) struct RemoteEndpointConfigTests {
 
-    /// Mirrors the current https://drivechain.dev/config: an ARRAY of networks mapped by `id`
+    /// Mirrors the 2026-10 https://drivechain.dev/config (same schema as today's dev.ecash.com/config): an ARRAY of networks mapped by `id`
     /// (Bitcoin AND Signet both have `family: "bitcoin"` — so family can't identify a network),
     /// backends WITHOUT `priority` (array order = preference, esplora first), plus additive service
     /// fields we ignore (`blockbook`/`fast_withdrawal`) and per-network `assumeutxo`. Includes an
@@ -616,5 +616,97 @@ import WalletService
         #expect(!RemoteServiceOverrides.setDashboardNetwork(mainnet))   // unchanged → no rebuild
         #expect(DashboardNetwork.current == mainnet)
     }
-}
 
+    // MARK: - dev.ecash.com/config (live shape, 2026-11-09)
+
+    /// The live https://dev.ecash.com/config, trimmed: ONLY `ecash` and `betanet` (no Bitcoin, no
+    /// Signet), two priority-0 backends on `ecash` (esplora listed first), `.com` explorers, the
+    /// enforcer as an ARRAY, a Thunder `sidechains[]` entry we ignore, and no `dashboard` block.
+    private static let ecashComJSON = """
+    {
+      "schema_version": 1,
+      "networks": [
+        {
+          "id": "ecash", "family": "ecash", "display_name": "eCash", "chain": "main",
+          "currency": { "name": "eCash", "ticker": "ECX" },
+          "network_magic": "eca5dcb7", "fork_height": 973728,
+          "backends": [
+            { "kind": "esplora",  "url": "https://esplora.ecash.com",          "tls": true,  "label": "electrs", "priority": 0 },
+            { "kind": "electrum", "url": "ssl://fulcrum.ecash.com:50002",      "tls": true,  "label": "Fulcrum", "priority": 0 },
+            { "kind": "esplora",  "url": "https://esplora.ecash.ninja",        "tls": true,  "label": "electrs", "priority": 1 },
+            { "kind": "electrum", "url": "ssl://fulcrum.ecash.ninja:50002",    "tls": true,  "label": "Fulcrum", "priority": 1 },
+            { "kind": "electrum", "url": "tcp://fulcrum.ecash.com:50001",      "tls": false, "label": "Fulcrum", "priority": 2 }
+          ],
+          "explorer_tx_template": "https://explorer.ecash.com/tx/{txid}",
+          "explorer_address_template": "https://explorer.ecash.com/address/{address}",
+          "explorer_block_template": "https://explorer.ecash.com/block/{hash}",
+          "services": {
+            "faucet": { "url": null, "amount": null, "cooldown_seconds": null },
+            "coinnews": { "url": null },
+            "enforcer": [ { "url": "https://seed.ecash.eu.com/enforcer" } ],
+            "blockbook": { "url": "https://blockbook.ecash.ninja" },
+            "mining_pool": { "url": null, "stratum": null },
+            "fast_withdrawal": []
+          },
+          "sidechains": [
+            { "slot": 9, "title": "Thunder", "version": "v0.19.1",
+              "p2p": { "address": "seed.ecash.ninja:4009", "transport": "quic" }, "network_magic": null }
+          ]
+        },
+        {
+          "id": "betanet", "family": "ecash", "display_name": "Betanet", "chain": "main",
+          "fork_height": 967680,
+          "backends": [
+            { "kind": "esplora", "url": "https://esplora.beta.ecash.ninja", "tls": true, "priority": 0 }
+          ],
+          "explorer_tx_template": "https://explorer.beta.ecash.ninja/tx/{txid}",
+          "services": { "enforcer": [ { "url": "https://enforcer.beta.ecash.ninja" } ] }
+        }
+      ]
+    }
+    """
+
+    @Test func theLiveEcashComConfigResolvesTheEcashNetworksAndNothingElse() throws {
+        let config = try #require(RemoteEndpointConfig.parse(Data(Self.ecashComJSON.utf8)))
+        #expect(RemoteEndpointConfigService.productionURL == "https://dev.ecash.com/config")
+
+        // Primary: both `.com` backends are priority 0, so array order breaks the tie → esplora.
+        let backends = config.resolvedPrimaryBackends()
+        #expect(backends.map(\.network) == [WalletNetwork.ecashBeta, WalletNetwork.ecashMainnet])
+        #expect(backends.first { $0.network == .ecashMainnet }?.url == "https://esplora.ecash.com")
+        #expect(backends.first { $0.network == .ecashMainnet }?.kind == "esplora")
+        #expect(backends.first { $0.network == .ecashBeta }?.url == "https://esplora.beta.ecash.ninja")
+
+        // Bitcoin and Signet are not in this config: nothing is applied for them, nothing is cleared.
+        #expect(!backends.contains { $0.network == .bitcoin || $0.network == .signet })
+        #expect(!config.resolvedEsploraEndpoints().contains { $0.network == .bitcoin || $0.network == .signet })
+
+        #expect(config.resolvedEsploraEndpoints().first { $0.network == .ecashMainnet }?.url == "https://esplora.ecash.com")
+        #expect(config.resolvedExplorers().first { $0.network == .ecashMainnet }?.txTemplate == "https://explorer.ecash.com/tx/{txid}")
+        #expect(config.resolvedForkHeights().first { $0.network == .ecashMainnet }?.height == 973_728)
+        #expect(config.resolvedDisplayNames().first { $0.network == .ecashMainnet }?.name == "eCash")
+
+        // The enforcer arrives as an array and is read (it was dropped before 2026-11-09).
+        let enforcers = config.resolvedEnforcers()
+        #expect(enforcers.first { $0.network == .ecashMainnet }?.url == "https://seed.ecash.eu.com/enforcer")
+        #expect(enforcers.first { $0.network == .ecashBeta }?.url == "https://enforcer.beta.ecash.ninja")
+
+        // Null service URLs mean "off", not an endpoint; no dashboard block → bundled mainnet.
+        #expect(config.resolvedCoinNews().isEmpty)
+        #expect(config.resolvedFaucets().isEmpty)
+        #expect(config.resolvedDashboardNetwork() == nil)
+    }
+
+    @Test func anEnforcerObjectStillDecodesAndAnEmptyArrayMeansNone() throws {
+        let object = try #require(RemoteEndpointConfig.parse(Data("""
+        {"schema_version":1,"networks":[{"id":"ecash","backends":[{"kind":"esplora","url":"https://e.example"}],
+          "services":{"enforcer":{"url":"https://one.example/enforcer"}}}]}
+        """.utf8)))
+        #expect(object.resolvedEnforcers().first?.url == "https://one.example/enforcer")
+        let empty = try #require(RemoteEndpointConfig.parse(Data("""
+        {"schema_version":1,"networks":[{"id":"ecash","backends":[{"kind":"esplora","url":"https://e.example"}],
+          "services":{"enforcer":[]}}]}
+        """.utf8)))
+        #expect(empty.resolvedEnforcers().isEmpty)
+    }
+}

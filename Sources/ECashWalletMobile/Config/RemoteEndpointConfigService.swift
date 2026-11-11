@@ -7,7 +7,7 @@ import Foundation
 import FoundationNetworking   // URLSession lives here on Android/Linux Foundation (same as Pricing)
 #endif
 
-/// Fetches the remote `wallet-endpoints/v1.json` config and applies its per-network backend defaults.
+/// Fetches the remote network config and applies its per-network backend defaults.
 ///
 /// **Best-effort and fail-safe:** any failure — no network, a non-200, malformed JSON, an
 /// unsupported schema — is swallowed and simply leaves the previously applied (last-known-good) or
@@ -17,9 +17,11 @@ import FoundationNetworking   // URLSession lives here on Android/Linux Foundati
 ///
 /// Only backend URLs/kinds are applied — never consensus/derivation params (Golden Rule §1/§4).
 struct RemoteEndpointConfigService {
-    /// Production config URL — the L2L-hosted network config. Overridable for dev via the
-    /// `WALLET_ENDPOINTS_URL` env var (mirrors the CoinNews dev-endpoint override).
-    static let productionURL = "https://drivechain.dev/config"
+    /// Production config URL — eCash.com's network config (moved from `drivechain.dev/config` on
+    /// 2026-11-09, Jake; same schema, but it lists only the eCash networks — see
+    /// `RemoteEndpointConfig`). Overridable for dev via the `WALLET_ENDPOINTS_URL` env var (mirrors
+    /// the CoinNews dev-endpoint override).
+    static let productionURL = "https://dev.ecash.com/config"
 
     let url: URL
     private let fetch: @Sendable (URL) async throws -> Data

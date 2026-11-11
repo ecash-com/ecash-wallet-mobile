@@ -7,7 +7,7 @@ import WalletService
 
 /// The wallet manager, presented as a sheet from the Home switcher pill. One row per wallet
 /// (avatar, label, network, backup state, selected check); tap to switch. Per-row "⋯" menu →
-/// rename / copy to network / remove (remove warns extra-loudly when the wallet isn't backed up — Golden Rule §5
+/// rename / switch network / remove (remove warns extra-loudly when the wallet isn't backed up — Golden Rule §5
 /// purge). "New" and "Import" reuse the existing Create/Import flows via navigation.
 ///
 /// Dismissal: any change of the selected wallet (switch, create, import) closes the sheet —
@@ -22,15 +22,26 @@ struct WalletManagerSheet: View {
     /// Presentation is its OWN state, deliberately not derived from `removeTarget` — see
     /// `confirmationDialog` below for why deriving it silently broke removal on Android.
     @State var isRemovingWallet = false
-    @State var copyTarget: ManagedWallet? = nil
+    @State var switchTarget: ManagedWallet? = nil
     @State var path: [WalletManagerRoute] = []
 
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                Section("Wallets") {
-                    ForEach(app.wallets) { wallet in
+                Section {
+                    ForEach(app.visibleWallets) { wallet in
                         walletRow(wallet)
+                    }
+                } header: {
+                    Text("Wallets", bundle: .module, comment: "wallet list section header")
+                } footer: {
+                    // Say when something is being hidden, so a wallet is never just "gone".
+                    if app.hiddenWalletCount > 0 {
+                        Text("\(app.hiddenWalletCount) on retired networks hidden. Show them in Settings → Network.",
+                             bundle: .module, comment: "wallet list footer: count of retired-network wallets hidden")
+                    } else if app.isShowingRetiredFallback {
+                        Text("All of these are on retired networks, so none are hidden. Open one on eCash from Home.",
+                             bundle: .module, comment: "wallet list footer: every wallet is on a retired network")
                     }
                 }
                 // The investor claim gets its own prominent card ABOVE the ordinary actions.
@@ -91,8 +102,9 @@ struct WalletManagerSheet: View {
             .navigationDestination(for: WalletManagerRoute.self) { route in
                 switch route {
                 case .create:
-                    CreateConfirmView(viewModel: app.makeCreateViewModel(),
-                                      defaultName: app.nextDefaultWalletName)
+                    CreateWalletScreen(viewModel: app.makeCreateViewModel(),
+                                       defaultName: app.nextDefaultWalletName,
+                                       wordCount: app.newWalletWordCount)
                 case .importWallet:
                     ImportWalletView(viewModel: app.makeImportViewModel(),
                                      defaultName: app.nextDefaultWalletName)
@@ -110,11 +122,9 @@ struct WalletManagerSheet: View {
         .sheet(item: $renameTarget) { wallet in
             renameSheet(wallet)
         }
-        // Copy to network: a successful copy selects the new wallet, which closes this sheet too.
-        .sheet(item: $copyTarget) { wallet in
-            if let vm = app.makeCopyWalletViewModel(walletId: wallet.id) {
-                CopyWalletView(viewModel: vm)
-            }
+        // Switch network: the wallet stays the same wallet; a switch on the selected one re-roots Home.
+        .sheet(item: $switchTarget) { wallet in
+            NetworkSwitcherSheet(walletId: wallet.id)
         }
         // Remove: explicit confirmation, extra-loud when not backed up.
         // `isPresented` is a plain Bool, NOT a binding derived from `removeTarget`, because SkipUI
@@ -158,28 +168,34 @@ struct WalletManagerSheet: View {
             Button {
                 app.selectWallet(id: wallet.id)
             } label: {
+                // No initial-letter tile (Jake, 2026-11-05): it repeated the label and said nothing.
                 HStack(spacing: Theme.Space.x3) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: Theme.Radius.xs)
-                            .fill(Theme.Colors.accent)
-                        Text(String(wallet.label.prefix(1)).uppercased())
-                            .font(.satoshi(14, .bold))
-                            .foregroundStyle(Theme.Colors.accentText)
-                    }
-                    .frame(width: 30, height: 30)
-
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: Theme.Space.x1) {
                         Text(wallet.label)
                             .textStyle(.body)
                             .foregroundStyle(Theme.Colors.text0)
-                        // Balance in each wallet's OWN unit — a Bitcoin wallet and an eCash wallet
-                        // can sit next to each other here, and "BTC" on the wrong row would be a
-                        // small lie about which chain the coins are on.
-                        WalletBalanceLabel(balance: app.balanceSummary(walletId: wallet.id),
-                                           unitLabel: NetworkRegistry.params(for: wallet.network).unitLabel)
-                        Text(metaText(wallet), bundle: .module)
-                            .textStyle(.xs)
-                            .foregroundStyle(wallet.isBackedUp ? Theme.Colors.text2 : Theme.Colors.warning)
+                        // One line per chain the seed holds coins on, each in THAT chain's unit and
+                        // colour, so a wallet reads as a seed across networks, not as whatever was
+                        // viewed last (docs/seed-container-model.md §4). An empty wallet names no
+                        // chain at all (Jake, 2026-11-10). Backup state is Home's banner, not here.
+                        let lines = app.visibleAccountBalances(for: wallet)
+                        if lines.isEmpty {
+                            Text("No coins seen yet", bundle: .module,
+                                 comment: "wallet list row: the seed holds no coins on any chain synced so far")
+                                .textStyle(.xs)
+                                .foregroundStyle(Theme.Colors.text2)
+                        }
+                        ForEach(lines) { line in
+                            HStack(spacing: Theme.Space.x2) {
+                                WalletBalanceLabel(balance: line.balance,
+                                                   unitLabel: NetworkRegistry.params(for: line.network).unitLabel)
+                                // The network name in its chip colour: the same signal as the chip
+                                // (Golden Rule §6), without the chip's weight in a dense list.
+                                Text(verbatim: NetworkRegistry.params(for: line.network).displayName)
+                                    .textStyle(.xs)
+                                    .foregroundStyle(NetworkChipStyle.style(for: line.network).background)
+                            }
+                        }
                     }
                 }
             }
@@ -207,13 +223,13 @@ struct WalletManagerSheet: View {
                         Image(icon: Icon.rename)
                     }
                 }
-                // Only where the keys carry over (docs/copy-wallet-to-network.md) — not Signet/Thunder.
-                if app.canCopyToNetwork(wallet) {
-                    Button { copyTarget = wallet } label: {
+                // A wallet is a seed; it switches networks (docs/seed-container-model.md §4).
+                if app.canSwitchNetwork(wallet) {
+                    Button { switchTarget = wallet } label: {
                         Label {
-                            Text("Copy to network…", bundle: .module, comment: "wallet row menu: copy wallet to another network")
+                            Text("Switch network…", bundle: .module, comment: "wallet row menu: switch the wallet's network")
                         } icon: {
-                            Image(icon: Icon.copy)
+                            Image(icon: Icon.sort)
                         }
                     }
                 }
@@ -236,13 +252,6 @@ struct WalletManagerSheet: View {
             }
             .buttonStyle(.plain)
         }
-    }
-
-    // LocalizedStringKey rendered via Text(_, bundle:) — Fuse-compatible. Backed-up rows just show
-    // the network name; the not-backed-up suffix localizes. (%@ is the network name.)
-    private func metaText(_ wallet: ManagedWallet) -> LocalizedStringKey {
-        let network = NetworkRegistry.params(for: wallet.network).displayName
-        return wallet.isBackedUp ? "\(network)" : "\(network) · Not backed up"
     }
 
     private func actionRowLabel(icon: Icon, title: LocalizedStringKey) -> some View {

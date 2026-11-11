@@ -39,7 +39,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         let mnemonic = Mnemonic(wordCount: BDKSeam.wordCount(wordCount))
         // Thunder derives ed25519 keys from the SAME BIP39 mnemonic but has no BDK descriptors — the
         // Fuse-native ThunderService derives from the seed. Persist the phrase, leave descriptors empty.
-        if network == .thunder {
+        if network.isThunder {
             return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
         // New wallets always use the default (.bip84); only import exposes the script-type choice.
@@ -76,7 +76,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
             throw WalletError.invalidEntropy
         }
         // Thunder: same BIP39 phrase, no BDK descriptors (see `create`).
-        if network == .thunder {
+        if network.isThunder {
             return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
         return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
@@ -117,7 +117,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
             throw WalletError.invalidMnemonic
         }
         // Thunder: same validated BIP39 phrase, no BDK descriptors (see `create`).
-        if network == .thunder {
+        if network.isThunder {
             return WalletKeys(secret: "\(mnemonic)", externalDescriptor: "", internalDescriptor: "")
         }
         return try walletKeys(network: network, mnemonic: mnemonic, scriptType: scriptType)
@@ -136,7 +136,8 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         let net = BDKSeam.network(wallet.network)
         let backend = WalletBackend(kindRaw: backendKind, url: backendURL, socks5: backendProxy)
         do {
-            let persister = try makePersister(for: wallet.id, network: wallet.network)
+            let persister = try makePersister(for: wallet.id, network: wallet.selectedAccount.network,
+                                              storeName: wallet.selectedAccount.storeName)
             // `var` (not deferred `let`): assigned in every branch below — a deferred `let`
             // transpiles to a reassigned Kotlin `val`, which Kotlin rejects.
             var bdkWallet: Wallet
@@ -269,7 +270,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
 
     /// Delete ALL of a wallet's BDK SQLite stores — every `(walletId × network)` file plus the
     /// legacy un-namespaced one, with `-wal`/`-shm` siblings. A wallet can hold a store per network
-    /// (chain data is namespaced by network, ready for network switching — `docs/network-switching.md`),
+    /// (chain data is namespaced per account — `docs/seed-container-model.md`),
     /// so remove-wallet must purge them all (Golden Rule §5). Best-effort.
     public func purgeChainData(for walletId: String) {
         let fm = FileManager.default
@@ -279,25 +280,79 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
         }
     }
 
+    // MARK: - Seed-container migration support (`docs/seed-container-model.md §6`)
+
+    public func chainDataFileNames() -> [String] {
+        (try? FileManager.default.contentsOfDirectory(atPath: chainDataDirectory.path)) ?? []
+    }
+
+    public func moveChainDataStore(from: String, to: String) throws {
+        let fm = FileManager.default
+        for suffix in ["", "-wal", "-shm"] {
+            let src = chainDataDirectory.appendingPathComponent("\(from)\(suffix)")
+            let dst = chainDataDirectory.appendingPathComponent("\(to)\(suffix)")
+            guard fm.fileExists(atPath: src.path) else { continue }     // nothing to move (or done)
+            if fm.fileExists(atPath: dst.path) { throw WalletError.persistenceFailed }   // never overwrite
+            do {
+                try fm.moveItem(at: src, to: dst)
+            } catch {
+                throw WalletError.persistenceFailed
+            }
+        }
+    }
+
+    public func cachedBalance(storeName: String, account: WalletAccount, keyType: WalletKeyType) throws -> Int64 {
+        let path = chainDataDirectory.appendingPathComponent(storeName).path
+        // `Persister.newSqlite` would CREATE a missing file; a probe must never do that.
+        guard FileManager.default.fileExists(atPath: path) else { throw WalletError.persistenceFailed }
+        do {
+            let net = BDKSeam.network(account.network)
+            let persister = try Persister.newSqlite(path: path)
+            // LOAD ONLY — unlike `engine(for:)`, no fallback to constructing a fresh wallet: BDK's
+            // load checks the persisted descriptors against the ones passed, and that refusal is
+            // exactly the signal the migration relies on (invariant I3).
+            let wallet: Wallet
+            if keyType == .wif {
+                let descriptor = try Descriptor(descriptor: account.externalDescriptor, network: net)
+                wallet = try Wallet.loadSingle(descriptor: descriptor, persister: persister)
+            } else {
+                let external = try Descriptor(descriptor: account.externalDescriptor, network: net)
+                let change = try Descriptor(descriptor: account.internalDescriptor, network: net)
+                wallet = try Wallet.load(descriptor: external, changeDescriptor: change, persister: persister)
+            }
+            return Int64(wallet.balance().total.toSat())
+        } catch {
+            // Scrub: a BDK error can embed descriptor text — classify, never echo (Golden Rule §2).
+            throw WalletError.persistenceFailed
+        }
+    }
+
     // MARK: - Helpers
 
     /// One SQLite file per `(walletId × network)` under `chainDataDirectory`, named
     /// `<walletId>-<network>.sqlite`. Network is in the path so the same seed on two chains never
     /// shares a store (their scriptPubKeys are identical on the testnet-class networks — mixing them
-    /// would corrupt UTXO accounting; see `docs/network-switching.md`).
+    /// would corrupt UTXO accounting; see `docs/seed-container-model.md`).
     ///
     /// One-time migration: wallets created before the layout change have an un-namespaced
     /// `<walletId>.sqlite`. Since each was pinned to one network, move it (and its `-wal`/`-shm`) to
     /// the network-scoped path so existing chain data survives instead of forcing a full rescan.
-    private func makePersister(for walletId: String, network: WalletNetwork) throws -> Persister {
+    ///
+    /// Since the seed-container model the file name comes from the ACCOUNT (`WalletAccount.storeName`,
+    /// explicit — invariant I5): a migrated record keeps `<walletId>-<network>.sqlite`, a new account
+    /// gets `<walletId>-<network>-<scriptType>-<acct>.sqlite`. The un-namespaced migration below only
+    /// applies to a record still on the legacy name.
+    private func makePersister(for walletId: String, network: WalletNetwork, storeName: String) throws -> Persister {
         let fm = FileManager.default
         try fm.createDirectory(at: chainDataDirectory, withIntermediateDirectories: true)
-        let scoped = chainDataDirectory.appendingPathComponent("\(walletId)-\(network.rawValue).sqlite")
+        let scoped = chainDataDirectory.appendingPathComponent(storeName)
         let legacy = chainDataDirectory.appendingPathComponent("\(walletId).sqlite")
-        if !fm.fileExists(atPath: scoped.path) && fm.fileExists(atPath: legacy.path) {
+        // Exact match, not a dash count — wallet ids are UUIDs.
+        let isLegacyScopedName = storeName == WalletAccount.legacyStoreName(walletId: walletId, network: network)
+        if isLegacyScopedName && !fm.fileExists(atPath: scoped.path) && fm.fileExists(atPath: legacy.path) {
             for suffix in ["", "-wal", "-shm"] {
                 let from = chainDataDirectory.appendingPathComponent("\(walletId).sqlite\(suffix)")
-                let to = chainDataDirectory.appendingPathComponent("\(walletId)-\(network.rawValue).sqlite\(suffix)")
+                let to = chainDataDirectory.appendingPathComponent("\(storeName)\(suffix)")
                 if fm.fileExists(atPath: from.path) {
                     try? fm.moveItem(at: from, to: to)
                 }

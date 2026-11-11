@@ -29,6 +29,10 @@ import WalletService
         var errorToThrow: Error?
         var authResult = true        // device-auth gate outcome (default: approve)
         var authCallCount = 0
+        var previewResult: SendPreview? = nil   // the review's dry run (default: engine can't say)
+        var previewError: Error?
+        var previewCallCount = 0
+        var previewIsMax: Bool?
         let txToReturn: WalletTx
         init(txToReturn: WalletTx) { self.txToReturn = txToReturn }
     }
@@ -60,6 +64,12 @@ import WalletService
                 if let error = rec.errorToThrow { throw error }
                 return rec.txToReturn
             },
+            preview: { _, _, _, isMax in
+                rec.previewCallCount += 1
+                rec.previewIsMax = isMax
+                if let error = rec.previewError { throw error }
+                return rec.previewResult
+            },
             onSent: { tx in rec.onSentTx = tx },
             authorize: { _ in rec.authCallCount += 1; return rec.authResult },
             validateAddress: validate)
@@ -84,6 +94,84 @@ import WalletService
         #expect(vm.isMax)
         vm.tapDigit(5)                     // user edits → back to a literal amount
         #expect(!vm.isMax)
+    }
+
+    // MARK: - Review dry run (exact fee + the unconfirmed-input warning)
+
+    /// The review runs the dry run when it appears, not at `review()`, and reads its numbers: the
+    /// warning fires only when the build had to spend incoming unconfirmed coins.
+    @Test func reviewDryRunReportsUnconfirmedInputsAndExactFee() async {
+        let (vm, rec) = makeVM()
+        rec.previewResult = SendPreview(feeSats: 282, unconfirmedInputSats: 120_000)
+        toAmountStep(vm)
+        enterPointOhOne(vm)
+        vm.review()
+        #expect(vm.preview == nil)                 // nothing until the review appears
+        #expect(!vm.usesUnconfirmedInputs)
+        await vm.loadPreview()
+        #expect(rec.previewCallCount == 1)
+        #expect(rec.previewIsMax == false)
+        #expect(vm.usesUnconfirmedInputs)
+        #expect(vm.unconfirmedInputAmount == Amount(sats: 120_000))
+        #expect(vm.previewFee == Amount(sats: 282))
+        #expect(vm.previewMessage == nil)
+    }
+
+    /// Max previews the sweep (every coin), and a build that confirmed coins covered shows no warning.
+    @Test func maxDryRunPreviewsSweepAndConfirmedOnlyBuildShowsNoWarning() async {
+        let (vm, rec) = makeVM()
+        rec.previewResult = SendPreview(feeSats: 310, unconfirmedInputSats: 0)
+        toAmountStep(vm)
+        vm.tapMax()
+        vm.review()
+        await vm.loadPreview()
+        #expect(rec.previewIsMax == true)
+        #expect(!vm.usesUnconfirmedInputs)
+        #expect(vm.previewFee == Amount(sats: 310))
+    }
+
+    /// A dry run that fails the way the send would surfaces that message on review — and is
+    /// informational only: Confirm still runs the real send, which is the final word.
+    @Test func dryRunFailureIsShownOnReviewButDoesNotBlockConfirm() async {
+        let (vm, rec) = makeVM()
+        rec.previewError = WalletError.insufficientFunds
+        toAmountStep(vm)
+        enterPointOhOne(vm)
+        vm.review()
+        await vm.loadPreview()
+        #expect(vm.preview == nil)
+        #expect(vm.previewMessage == WalletError.insufficientFunds.userMessage)
+        await vm.confirmSend()
+        #expect(rec.callCount == 1)                // the send was still attempted
+        #expect(vm.step == .sent)
+    }
+
+    /// Going back to edit and reviewing again must not show the previous amount's fee or warning.
+    @Test func reEnteringReviewClearsTheStaleDryRun() async {
+        let (vm, rec) = makeVM()
+        rec.previewResult = SendPreview(feeSats: 282, unconfirmedInputSats: 120_000)
+        toAmountStep(vm)
+        enterPointOhOne(vm)
+        vm.review()
+        await vm.loadPreview()
+        #expect(vm.usesUnconfirmedInputs)
+        vm.back()
+        vm.review()
+        #expect(vm.preview == nil)
+        #expect(!vm.usesUnconfirmedInputs)
+        #expect(vm.previewMessage == nil)
+    }
+
+    /// A late result must never paint over another step (the user backed out before it landed).
+    @Test func dryRunResultIsDroppedIfTheUserLeftReview() async {
+        let (vm, rec) = makeVM()
+        rec.previewResult = SendPreview(feeSats: 282, unconfirmedInputSats: 120_000)
+        toAmountStep(vm)
+        enterPointOhOne(vm)
+        // Not on review → no dry run at all.
+        await vm.loadPreview()
+        #expect(rec.previewCallCount == 0)
+        #expect(vm.preview == nil)
     }
 
     // Drives recipient → amount. `enterAmount` taps 0.01 on the keypad (== default 1_000_000 balance).

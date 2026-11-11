@@ -7,14 +7,19 @@ model) and the Golden Rules (§2). Keep in sync with `KeyStore.swift` / `WalletS
 
 ## 1. What we persist
 
-**Exactly one secret: the BIP39 mnemonic phrase** (the words, as a `String`), one entry per wallet.
+**One secret per wallet: the BIP39 mnemonic phrase** (the words, as a `String`) — or, for a wallet
+imported from a legacy private key, the **WIF** in the same slot (`WalletManager.importPrivateKey`,
+`keyType: .wif`).
 
-- Stored via `KeychainKeyStore` (`KeyStore.swift`), key `ecashwallet.mnemonic.<walletId>`.
+- Stored via `KeychainKeyStore` (`KeyStore.swift`), key `ecashwallet.mnemonic.<walletId>`. A wallet
+  the seed-container migration merged may also list `orphanKeychainIds` — the merged copies' entries,
+  left in place (`WalletManager.mnemonic(for:)` falls back to them; see §7 for removal).
 - We do **NOT** persist the seed bytes, the `xprv`, or any private descriptor. BDK **derives**
   those from the mnemonic at runtime (to build descriptors / sign) and they are dropped — never
   written to disk.
-- `WalletStore` (a JSON file) holds **public data only**: label, network, xpub-based descriptors,
-  backup flag, order. No key material.
+- `WalletStore` (a JSON file) holds **public data only**: label, the wallet's `WalletAccount`s (one
+  per network × scriptType × accountIndex, each with its xpub-based descriptors and BDK store name),
+  `selectedAccountId`, backup flag, order (`Models.swift`). No key material.
 
 Rationale: the mnemonic is the minimal, standard, human-restorable secret; everything else is
 either derivable from it or public. Storing the phrase (not seed/xprv) is what the backup/reveal
@@ -33,8 +38,10 @@ device-bound on both, so the secret cannot be decrypted on another device.
 
 ## 3. Core principle: the mnemonic must be readable for normal operation
 
-Every sync / balance / send needs BDK to re-derive keys from the mnemonic, so we **cannot** put a
-biometric prompt on every read — that would prompt on routine activity. Therefore:
+Originally every sync / balance / send re-derived keys from the mnemonic. Since the watch-only engine
+(below, 2026-06-13) only **signing** reads it — BDK signing at send, and Thunder signing
+(`ThunderService` loads the mnemonic transiently to sign, then drops the derived wallet). A per-read
+biometric prompt would still land in the middle of every send, so:
 
 - The mnemonic is stored at **device-unlocked** readability (not per-read auth-gated).
 - Protection of **sensitive actions** is an **app-level gate**, not a per-read Keychain ACL — see §5.
@@ -78,8 +85,10 @@ UI/flows, **not** the KeyStore read (which stays device-unlock readable so sync 
   re-prompt. Settings toggle; default on. Failure → locked screen, no wallet data shown. A
   `PrivacyCover` hides balances from the app-switcher snapshot while backgrounded.
 - **Per-action gate — reveal seed:** biometric/passcode → reveal words → confirm N random words →
-  mark `isBackedUp`. **Screenshot-blocked:** `FLAG_SECURE` on Android, obscure-on-backgrounding on
-  iOS.
+  mark `isBackedUp`. **Screenshots are no longer blocked** (decided 2026-06-25 — the
+  `PlatformBridge.setSecureScreen`/`FLAG_SECURE` capability remains but has no callers); only the
+  app-switcher snapshot is obscured (`PrivacyCover` on iOS, `setRecentsScreenshotEnabled(false)` on
+  Android API 33+).
 - **Per-action gate — send:** biometric/passcode confirm immediately before broadcast (honors the
   same toggle). In addition to the explicit recipient/amount/fee/**network** review.
 ### Mechanism — two complementary primitives (don't conflate them)
@@ -96,23 +105,21 @@ There are **two different** auth mechanisms; we use both, for different jobs:
   mnemonic. See §6.
 
 **There is no first-party Skip biometric API** (verified: SkipKeychain is storage-only; no
-`SkipLocalAuthentication`). So (b) is a **bridge seam** in the app module, à la the BDK seam:
+`SkipLocalAuthentication`). So (b) is a **bridge seam** in the app module, à la the BDK seam.
 
-```swift
-protocol BiometricAuthenticator { func authenticate(reason: String) async -> Bool }
-```
+**As built** (`enum DeviceAuth`, `Platform/DeviceAuth.swift`; `static func authenticate(reason:) async -> Bool`):
 - **iOS** (`#if os(iOS)`, native): `LAContext().evaluatePolicy(.deviceOwnerAuthentication, …)` —
   `.deviceOwnerAuthentication` includes the **passcode fallback** (`…WithBiometrics` is bio-only).
-- **Android** (`#if SKIP` → transpiled Kotlin): `androidx.biometric.BiometricPrompt` with
-  `setAllowedAuthenticators(BIOMETRIC_STRONG | DEVICE_CREDENTIAL)` for the PIN/pattern/password
-  fallback. Add **`androidx.biometric:biometric`** to the app Gradle (via `skip.yml`). Needs the host
-  **`FragmentActivity`** (via Skip's activity accessor) and bridges its **callback → Swift `async`**
-  (continuation). `BiometricPrompt` is API 28+ — matches our floor.
-- **Availability/enrollment:** check `BiometricManager.canAuthenticate(...)` / iOS
-  `canEvaluatePolicy` first; if nothing is enrolled, fall back to device credential or block the gate
-  (don't silently pass).
-- **`MockAuthenticator`** (configurable result) so the app-lock / reveal / send view models test on
-  both platforms without real biometrics.
+- **Android**: `PlatformBridge.authenticateUser` (transpiled glue in `WalletService/Platform.swift`)
+  → the **framework** `android.hardware.biometrics.BiometricPrompt` (API 28+, no `androidx.biometric`
+  dependency) with `BIOMETRIC_WEAK | DEVICE_CREDENTIAL` for the PIN/pattern/password fallback, its
+  callback bridged to Swift `async`.
+- **Availability/enrollment:** `canEvaluatePolicy` / `BiometricManager.canAuthenticate(...)` are
+  checked first; when **nothing is enrolled the gate passes through** (a credential-less device has
+  no credential to verify — the flows behind it keep their explicit confirmation steps). This differs
+  from the original plan's "block the gate (don't silently pass)".
+- The view models take the auth as a seam (`SendViewModel.authorize`) so app-lock / reveal / send
+  test on both platforms without real biometrics.
 
 ## 6. Optional hardening — auth-bound keys (deferred; evaluate before mainnet/funds)
 
@@ -127,7 +134,8 @@ device can't read it without a recent auth.
   custom path beyond SkipKeychain.)
 
 Tradeoff: real UX friction and added complexity. Decision: ship §5 first; revisit §6 specifically
-before eCash mainnet / real funds.
+before eCash mainnet / real funds. *(2026-11-10: eCash mainnet has been live since 2026-10-29 with §5
+only — auth-bound keys remain an open item, not a gate that was met.)*
 
 ## 7. Other exposure notes
 
@@ -135,7 +143,9 @@ before eCash mainnet / real funds.
   aren't zeroed, so it lingers in memory transiently. Hard to fully mitigate in a managed runtime;
   keep the live window short (derive → use → drop references) and don't log it (Golden Rule §2).
 - **Remove = purge:** `WalletManager.removeWallet` deletes the Keychain entry + WalletStore rows +
-  the BDK chain-data SQLite (Golden Rule §5).
+  the BDK chain-data SQLite (Golden Rule §5). A merged copy's orphan Keychain entry
+  (`orphanKeychainIds`) is deleted **only if byte-identical** to the wallet's own entry; a
+  non-matching or unreadable orphan is left in the Keychain — never a secret deleted on a guess.
 
 ## 8. Status / to-dos
 
@@ -144,6 +154,7 @@ before eCash mainnet / real funds.
 - [x] iOS `WhenUnlockedThisDeviceOnly` (no iCloud, device-only).
 - [x] **Android backup exclusion** of the keychain prefs (§4) — shipped + build-verified.
 - [x] **Watch-only + sign-on-demand** engine (§3) — everyday engine reads no mnemonic; signing only.
-- [x] **App-lock + reveal/send gates + screenshot blocking** (§5) — incl. background grace + privacy cover.
+- [x] **App-lock + reveal/send gates** (§5) — incl. background grace + privacy cover. (Screenshot
+      blocking was dropped 2026-06-25.)
 - [x] **Secret-scrub audit** across logs/errors/analytics (CLAUDE.md §7) — manual pass + automated no-leak test.
-- [ ] Decide on **auth-bound keys** (§6) before mainnet/funds.
+- [ ] **Auth-bound keys** (§6) — still open; mainnet went live 2026-10-29 without them.

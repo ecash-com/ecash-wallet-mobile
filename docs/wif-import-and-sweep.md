@@ -8,8 +8,11 @@
 > **The funded ship-gate is CLEARED.** A real pre-fork P2PKH UTXO (230,854 sats, confirmed at height
 > 724,375 — below drynet3's 957,600 fork) was imported by WIF on drynet3 and successfully
 > **split** (drain-to-self), which exercised import → sync → coin selection → sign → broadcast on a
-> funded wallet end to end. **Remaining:** reveal-the-WIF in Backup, WIF QR-scan, and the
-> imported-key provenance warning (see below).
+> funded wallet end to end. **Update 2026-11-10:** reveal-the-WIF in Backup is **done**
+> (`BackupFlowView.privateKeyReveal` — a `.wif` wallet reveals its one key, no verify quiz); a WIF
+> wallet now gets accounts on **both coin-type-`0'` mainchains, eCash mainnet + Bitcoin**
+> (`WalletManager.importPrivateKey`; §5.3). **Still not built:** WIF QR-scan (the field is paste-only)
+> and the imported-key provenance warning. "Move all funds" was **dropped** — send-max covers it.
 > Original plan (2026-07-17). Feasibility **confirmed against our pinned
 > bdk-swift/bdk-android 2.3.1** — no Rust, no binding changes (§2). Companion to
 > `docs/custom-derivation-path-import.md`; both are "bring legacy Bitcoin into eCash" features but
@@ -63,13 +66,17 @@ special sweep code needed.
 ## 3. Scope
 
 **In (first cut):**
-- A distinct **"Import private key"** flow (separate from mnemonic import): paste/scan a **WIF**.
+- ~~A distinct **"Import private key"** flow (separate from mnemonic import): paste/scan a **WIF**.~~
+  **As built:** not a separate flow — **Import wallet → Advanced → Import type: Private key**
+  (`ImportWalletView.advancedSection` / `privateKeyInput`, `ImportViewModel.Kind.privateKey`); paste
+  only, no scanner.
 - It becomes a **persistent single-key wallet**: the `1…` address, balance, history, receive, and
   **send** — behaves like any other wallet in the switcher.
 - Marked **already backed up** (the user holds the WIF) → no backup nudge, consistent with imported
   seeds (`WalletManager.importWallet` sets `isBackedUp: true`).
 - Moving funds = the **normal Send flow** (send-max to any address). The user decides where — another
-  of their wallets, an exchange, a hardware wallet, wherever. **No dedicated sweep/"move all" feature.**
+  of their wallets, an exchange, a hardware wallet, wherever. **No dedicated sweep/"move all" feature**
+  (the "optional" variant mentioned in §4–§8 below was never built and is dropped).
 
 **Out (later / not needed):**
 - **P2PK** (bare-pubkey) — needs a custom signer; not what users receive. Excluded.
@@ -79,21 +86,23 @@ special sweep code needed.
 
 ## 4. UX
 
-New entry point alongside "Import wallet": **Import private key**.
+~~New entry point alongside "Import wallet": **Import private key**.~~ **As built (2026-11-10):** the
+private key lives under **Import wallet → Advanced → Import type: Private key**; there is **no network
+picker** (a WIF wallet gets accounts on eCash mainnet + Bitcoin, §5.3) and no QR scan (paste only).
 
 ```
-Import private key
-  Network              [ NetworkSelector — must match the WIF's network (§5.3) ]
-  Private key (WIF)    [ paste field + QR scan ]
-                       → detected address:  14kwDb3…dtfrxP   (read-only, derived live)
-  Label                [ e.g. "Claimed coins" ]
-  [ Import ]  → creates the single-key wallet, selects it, syncs
+Import wallet  →  Advanced  →  Import type: [ Recovery phrase | Private key ]
+  Private key (WIF)    [ paste field ]
+                       → This key's address:  14kwDb3YYj6cdhz9fxGftn1Uga5vdtfrxP   (read-only, derived live)
+  Name                 [ e.g. "Claimed coins" ]
+  [ Import ]  → creates the single-key wallet (accounts on eCash mainnet + Bitcoin), selects it, syncs
 
-Home (the new wallet, in the switcher like any other)
-  DRYNET2  ·  333.00000000 ECX
-  Receive → shows the 1… address        Send → normal send to any address
-  ⋯ menu → "Move all funds" (optional)  → pick destination → drain → sign → broadcast
+Home (the new wallet, in the switcher like any other; opens on eCash mainnet)
+  ECASH  ·  333.00000000 ECX
+  Receive → shows the 1… address        Send → normal send to any address (send-max to move everything)
 ```
+
+(The original sketch had a `NetworkSelector` row and a "⋯ → Move all funds" action; neither was built.)
 
 - **Live address preview** from the WIF is the guardrail (user sees the `1…` address before importing).
 - Receive shows the **single `1…` address** (no HD "new address" advancing — a single-key wallet has
@@ -107,7 +116,8 @@ Same shape as a mnemonic wallet, different key material:
 - `ManagedWallet` gains a **key type** (`mnemonic` | `wif`) so the factory knows how to build/sign.
   `externalDescriptor` = `internalDescriptor` = `pkh(<pubkey>)` (one key, no separate change branch —
   change returns to the same address).
-- New import API, e.g. `WalletManager.importPrivateKey(label:network:wif:)`, mirroring
+- New import API — as built `WalletManager.importPrivateKey(label:wif:selectedNetwork:)` (the
+  `selectedNetwork` defaults to `.currentEcash`; the investor claim passes its claim chain), mirroring
   `importWallet`. `previewAddress(forWIF:network:)` for the live preview.
 - Watch-only engine + sign-on-demand: the everyday engine is built from `pkh(<pubkey>)` (no secret
   read); signing loads the WIF and builds the transient `pkh(<WIF>)` private wallet
@@ -120,10 +130,14 @@ Same shape as a mnemonic wallet, different key material:
 - Backup/reveal: the "reveal recovery phrase" screen reveals **the WIF** for a WIF wallet (there's no
   mnemonic). `isBackedUp` defaults **true** on import (user already has it) → no nudge.
 
-### 5.3 Network matching
+### 5.3 Network matching — RESOLVED (seed-container model, 2026-11-05)
 A WIF carries a **network version byte** (mainnet `0x80`). eCash uses Bitcoin's mainnet bytes
-(`.ecash` → `Network.bitcoin`), so a mainnet WIF is valid on **`.ecash`** (and real `.bitcoin`), and
+(eCash → `Network.bitcoin`), so a mainnet WIF is valid on **eCash mainnet** (and real `.bitcoin`), and
 **invalid on L2L Signet**. Validate up front; reject a mismatch with a clear, non-leaky message.
+**As built:** no picker — `WalletManager.importPrivateKey` derives the one `pkh` address as an account
+on **every coin-type-`0'` mainchain, i.e. eCash mainnet + Bitcoin** (`keyType(_:canLiveOn:)` →
+`network.keyFamily == 0`); no Signet, no sidechains. The user switches between the two inside the
+wallet.
 
 ### 5.4 Compression is intrinsic
 The WIF encodes compressed (`K…`/`L…`) vs uncompressed (`5…`), which fixes the exact `1…` address.
@@ -135,10 +149,11 @@ A single-key wallet reuses its one `1…` address (receiving more, change on sen
 tradeoff inherent to a single key — acceptable for a claim-and-spend wallet; the "move all" option
 lets a user consolidate into an HD/segwit wallet if they care.
 
-### 5.6 "Move all funds" (optional)
-`drainWallet().drainTo(dest)` → sign → broadcast; fold into the destination via `applyBroadcast`
+### 5.6 "Move all funds" (optional) — NOT BUILT, dropped
+~~`drainWallet().drainTo(dest)` → sign → broadcast; fold into the destination via `applyBroadcast`
 ([[apply-broadcast-tx-to-wallet]]). Handle empty/dust-only (nothing to move → friendly message).
-If the destination is another in-app wallet, its history updates optimistically.
+If the destination is another in-app wallet, its history updates optimistically.~~
+Send-max in the normal Send flow (`WalletEngine.sweep`, the BDK drain) covers it; no wallet-menu action.
 
 ### 5.7 Sighash / replay caveat
 P2PKH signing assumes **standard Bitcoin legacy sighash, no BCH-style `SIGHASH_FORKID`**. Our notes
@@ -157,11 +172,13 @@ privately, surface a gentle "anyone with this key can take these — move them s
 - **Persist the WIF** as the wallet's secret (Keychain), same posture as a mnemonic.
 - **`pkh` (P2PKH) only for v1** — exactly what the distribution uses; multi-type is a fast-follow.
 - **`isBackedUp: true` on import** (no backup nudge) — the user already holds the key.
-- **"Move all funds" is an optional convenience**, not the default path.
+- ~~**"Move all funds" is an optional convenience**, not the default path.~~ Dropped — never built;
+  send-max is the path.
 
 ### Open (needs a product call)
-- **Which networks** to enable it on — just `.ecash`? also real `.bitcoin`? (`.signet` can't apply to
-  mainnet WIFs.) Leaning `.ecash` first.
+- ~~**Which networks** to enable it on — just `.ecash`? also real `.bitcoin`? (`.signet` can't apply to
+  mainnet WIFs.) Leaning `.ecash` first.~~ **Resolved:** both coin-type-`0'` mainchains — eCash mainnet
+  + Bitcoin — as accounts of the one WIF wallet (§5.3).
 - Whether to show the shared-key "move soon" hint by default (depends on how WIFs are distributed).
 
 ## 7. Testing (gate before ship)
@@ -173,17 +190,19 @@ privately, surface a gentle "anyone with this key can take these — move them s
 - **View-model:** import-key state machine (idle → detected → importing → done/error), network
   mismatch, live preview — via the mock engine.
 - **Integration (real BDK, iOS sim + Android emulator) — the gate:** fund a P2PKH address from a known
-  WIF on L2L Signet → import → **balance shows** → **send** a normal payment → recipient sees it; and
-  the optional **"Move all"** drains correctly. Failure cases: empty key, dust-only, network mismatch.
+  WIF on eCash mainnet or Bitcoin (a mainnet WIF can't live on L2L Signet — §5.3; the on-chain proof
+  was done on drynet3) → import → **balance shows** → **send** a normal payment → recipient sees it.
+  Failure cases: empty key, dust-only, network mismatch. (No "Move all" — dropped.)
 - **Persistence round-trip:** import WIF → cold-load → wallet + balance + signing intact (proves the
   WIF is stored/loaded correctly).
 
 ## 8. Files to touch
 
-- UI: `Screens/ImportPrivateKeyView.swift` + `ViewModels/ImportPrivateKeyViewModel.swift` (+ entry
-  point on Import/onboarding). Reuse the QR scanner. Optional "Move all" action on the wallet menu.
+- UI: as built, inside `Screens/ImportWalletView.swift` (Advanced → Private key) +
+  `ViewModels/ImportViewModel.swift` (`Kind.privateKey`) — not separate `ImportPrivateKey*` files. No
+  QR scanner on this field yet; no "Move all" action.
 - Engine/model: `Models.swift` (`ManagedWallet` key-type flag), `WalletManager`
-  (`importPrivateKey(...)`, `previewAddress(forWIF:)`, optional `moveAllFunds(...)`),
+  (`importPrivateKey(label:wif:selectedNetwork:)`, `previewAddress(forWIF:)`; no `moveAllFunds`),
   `BDKWalletEngineFactory`/`Descriptors` (single-key `pkh` public + signing), `KeyStore` (store/load a
   WIF — same interface as a mnemonic string), `WalletStore` DTO (persist key-type),
   `WalletError` (WIF-scrubbed cases).
@@ -205,5 +224,6 @@ its priority tracks whenever that distribution goes live.
 ## 10. Bottom line
 
 **Ship it on the BDK we already have.** Import the WIF → it's a normal single-key wallet → the user
-sees their coins and sends when they want. No forced sweep; "move all" is there if they want it. The
-only hard legacy piece (P2PK) is upstream and never reaches the app.
+sees their coins and sends when they want. No forced sweep; send-max moves everything if they want
+(a separate "move all" was dropped). The only hard legacy piece (P2PK) is upstream and never reaches
+the app.

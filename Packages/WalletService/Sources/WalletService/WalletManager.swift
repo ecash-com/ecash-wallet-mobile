@@ -28,8 +28,9 @@ public final class WalletManager: @unchecked Sendable {
     public private(set) var wallets: [ManagedWallet] = []
     public private(set) var selectedWalletId: String?
 
-    /// Live `WalletEngine`s, one per walletId, built lazily and reused so `balance`/`sync` don't
-    /// re-read the mnemonic + reopen the BDK SQLite store on every call. Evicted on remove. Not
+    /// Live `WalletEngine`s, one per (wallet × account) keyed by the account's store name, built
+    /// lazily and reused so `balance`/`sync` don't reopen the BDK SQLite store on every call. Evicted
+    /// on remove and on backend changes. Not
     /// bridged (the engine type is `@nobridge`); the app reaches it only through the facade below.
     private var engines: [String: WalletEngineProtocol] = [:]
 
@@ -59,13 +60,43 @@ public final class WalletManager: @unchecked Sendable {
         return wallets.first { $0.id == id }
     }
 
-    /// Load persisted wallets (call at launch). Keeps the current selection if still present,
-    /// else selects the first wallet.
-    public func load() throws {
+    /// The seed-container migration's report from this launch, if it ran (`docs/seed-container-model.md
+    /// §6`). Internal: the app reads what it needs through `migratedWalletId(forLegacy:)`.
+    private(set) var lastMigrationReport: MigrationReport?
+
+    /// Load persisted wallets (call at launch). Runs the one-time seed-container migration first
+    /// if the store is still in the legacy shape. Selection: `savedSelectedId` (the app's persisted
+    /// choice, mapped through the migration if that wallet was merged into another), else the
+    /// current selection if still present, else the first wallet.
+    public func load(savedSelectedId: String? = nil) throws {
+        let applier = WalletMigrationV2Applier(store: walletStore, factory: factory)
+        let now = Int64(Date().timeIntervalSince1970)
+        if let report = try applier.migrateIfNeeded(selectedId: savedSelectedId ?? selectedWalletId,
+                                                    nowEpochSeconds: now) {
+            lastMigrationReport = report
+            engines.removeAll()
+            if let mapped = report.selectedWalletId { selectedWalletId = mapped }
+        }
         wallets = try walletStore.allWallets()
+        if let saved = savedSelectedId, wallets.contains(where: { $0.id == saved }) {
+            selectedWalletId = saved
+        }
         if selectedWalletId == nil || !wallets.contains(where: { $0.id == selectedWalletId }) {
             selectedWalletId = wallets.first?.id
         }
+    }
+
+    /// Where a wallet id from before the seed-container migration lives now: itself, or the wallet
+    /// it was merged into. `nil` if unknown. Lets the app restore a persisted selection that named a
+    /// merged copy. Only answers for the launch on which the migration ran.
+    public func migratedWalletId(forLegacy id: String) -> String? {
+        lastMigrationReport?.walletId(forLegacy: id)
+    }
+
+    /// The legacy ids the migration folded into other wallets this launch (empty otherwise) — the
+    /// app re-keys its own per-`walletId` stores with these + `migratedWalletId(forLegacy:)`.
+    public func migrationMergedLegacyIds() -> [String] {
+        lastMigrationReport?.rekeys.map { $0.legacyId } ?? []
     }
 
     public func select(id: String) {
@@ -75,15 +106,21 @@ public final class WalletManager: @unchecked Sendable {
     }
 
     // MARK: - Create / import
+    //
+    // A wallet is a SEED (`docs/seed-container-model.md §3`): create/import take no network. While
+    // the phrase is in memory they derive an account for EVERY offered mainchain at once (coin-type
+    // 0' for eCash/Bitcoin, 1' for L2L Signet), so switching a new wallet between networks never
+    // touches the Keychain again. `selectedNetwork` only picks which of those accounts the wallet
+    // opens on (default: the current eCash chain; the investor claim passes its claim network).
 
-    /// Create a brand-new wallet on the chosen network, persist it, and select it.
-    /// `scriptType` (default `.bip84` native segwit) lets a user create e.g. a Taproot wallet. A fresh
-    /// seed has no legacy coins to match, so this is a preference, not recovery — the default stays
-    /// native segwit (broadest compatibility). Ignored for Thunder (fixed ed25519 derivation).
-    public func createWallet(label: String, network: WalletNetwork, wordCount: Int = 12,
-                             scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let keys = try factory.create(network: network, wordCount: wordCount, scriptType: scriptType)
-        return try persistNewWallet(label: label, network: network, keys: keys, scriptType: scriptType)
+    /// Create a brand-new wallet, persist it, and select it. Every new wallet is native segwit
+    /// (`scriptType` default `.bip84`; taproot etc. become on-demand address types in phase 2).
+    public func createWallet(label: String, wordCount: Int = 12, scriptType: ScriptType = .bip84,
+                             selectedNetwork: WalletNetwork = .currentEcash) throws -> ManagedWallet {
+        let first = try factory.create(network: Self.mainchainsForNewWallets[0], wordCount: wordCount, scriptType: scriptType)
+        return try persistNewWallet(label: label, secret: first.secret, keyType: .mnemonic,
+                                    scriptType: scriptType, accountIndex: 0, isBackedUp: false,
+                                    selectedNetwork: selectedNetwork)
     }
 
     /// Create a wallet from **user-supplied entropy** ("paranoid mode", `docs/user-provided-entropy.md`).
@@ -94,12 +131,14 @@ public final class WalletManager: @unchecked Sendable {
     ///
     /// Like `createWallet`, the result is marked **not** backed up: the app generated a phrase the user
     /// has not yet written down. (Contrast `importWallet`, where the seed already exists outside.)
-    public func createWallet(label: String, network: WalletNetwork, entropyField: String,
-                             wordCount: Int = 12,
-                             scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let keys = try factory.create(network: network, entropyField: entropyField,
-                                      wordCount: wordCount, scriptType: scriptType)
-        return try persistNewWallet(label: label, network: network, keys: keys, scriptType: scriptType)
+    public func createWallet(label: String, entropyField: String, wordCount: Int = 12,
+                             scriptType: ScriptType = .bip84,
+                             selectedNetwork: WalletNetwork = .currentEcash) throws -> ManagedWallet {
+        let first = try factory.create(network: Self.mainchainsForNewWallets[0], entropyField: entropyField,
+                                       wordCount: wordCount, scriptType: scriptType)
+        return try persistNewWallet(label: label, secret: first.secret, keyType: .mnemonic,
+                                    scriptType: scriptType, accountIndex: 0, isBackedUp: false,
+                                    selectedNetwork: selectedNetwork)
     }
 
     /// The mnemonic an entropy field would produce, without creating anything — for the paranoid-mode
@@ -114,22 +153,30 @@ public final class WalletManager: @unchecked Sendable {
     /// noise (no nudge, no "not backed up" banner, no remove-warning). They can still reveal it via
     /// Backup. (Contrast create, which generates a fresh seed the user has never seen → not backed up.)
     /// `scriptType` (default `.bip84`) picks the derivation, so a user restoring a seed from another
-    /// wallet can match the address kind their coins live at (`docs/custom-derivation-path-import.md`).
-    public func importWallet(label: String, network: WalletNetwork, mnemonic: String,
-                             scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let keys = try factory.restore(network: network, mnemonic: mnemonic, scriptType: scriptType)
-        return try persistNewWallet(label: label, network: network, keys: keys,
-                                    scriptType: scriptType, isBackedUp: true)
+    /// wallet can match the address kind their coins live at (`docs/custom-derivation-path-import.md`);
+    /// it applies to every account the import derives.
+    public func importWallet(label: String, mnemonic: String, scriptType: ScriptType = .bip84,
+                             accountIndex: Int32 = 0,
+                             selectedNetwork: WalletNetwork = .currentEcash) throws -> ManagedWallet {
+        // Validate once through the factory (bad checksum → .invalidMnemonic) before deriving the set.
+        _ = try factory.restore(network: Self.mainchainsForNewWallets[0], mnemonic: mnemonic, scriptType: scriptType)
+        return try persistNewWallet(label: label, secret: mnemonic, keyType: .mnemonic,
+                                    scriptType: scriptType, accountIndex: accountIndex, isBackedUp: true,
+                                    selectedNetwork: selectedNetwork)
     }
 
     /// Import a **legacy WIF private key** as a single-key wallet (throws `.invalidPrivateKey` on a
-    /// bad key / wrong network). The wallet is one `pkh(<pubkey>)` address (no derivation), and — like
-    /// a mnemonic import — is marked **already backed up** (the user holds the WIF). Send/receive/
-    /// history all work through the normal engine (`docs/wif-import-and-sweep.md`).
-    public func importPrivateKey(label: String, network: WalletNetwork, wif: String) throws -> ManagedWallet {
-        let keys = try factory.restorePrivateKey(network: network, wif: wif)
-        return try persistNewWallet(label: label, network: network, keys: keys,
-                                    keyType: .wif, isBackedUp: true)
+    /// bad key). One `pkh(<pubkey>)` address, the same on every coin-type-0' mainchain (eCash,
+    /// Bitcoin) — those are its only accounts; no Signet, no sidechains. Marked **already backed up**
+    /// (the user holds the WIF). The investor claim lands here with `selectedNetwork` = the claim
+    /// chain (`docs/seed-container-model.md §4.1`). Send/receive/history work through the normal
+    /// engine (`docs/wif-import-and-sweep.md`).
+    public func importPrivateKey(label: String, wif: String,
+                                 selectedNetwork: WalletNetwork = .currentEcash) throws -> ManagedWallet {
+        _ = try factory.restorePrivateKey(network: Self.mainchainsForNewWallets[0], wif: wif)
+        return try persistNewWallet(label: label, secret: wif, keyType: .wif,
+                                    scriptType: .bip84, accountIndex: 0, isBackedUp: true,
+                                    selectedNetwork: selectedNetwork)
     }
 
     /// The `1…` address a WIF maps to on `network`, for a live preview before import (no secret
@@ -145,79 +192,140 @@ public final class WalletManager: @unchecked Sendable {
         try factory.previewAddress(forSeed: mnemonic, scriptType: scriptType, network: network)
     }
 
-    // MARK: - Copy to another network
+    // MARK: - Accounts: switch / enable / what's offered (`docs/seed-container-model.md §4`)
 
-    /// The networks wallet `id` could be copied to: the offered networks (`WalletNetwork.selectable`)
-    /// that derive the same keys as its own, minus its own. Includes networks it's already open on;
-    /// the UI uses `existingCopy` to show those as "already open". Empty for a missing wallet.
-    public func copyTargets(for id: String) -> [WalletNetwork] {
-        guard let source = wallets.first(where: { $0.id == id }) else { return [] }
-        return WalletNetwork.selectable.filter { $0 != source.network && source.network.sharesKeys(with: $0) }
+    /// The mainchains a new wallet gets an account on, in picker order: the offered networks that
+    /// aren't sidechains. (Thunder accounts come from the sidechain level, not from create.)
+    static var mainchainsForNewWallets: [WalletNetwork] {
+        WalletNetwork.selectable.filter { !$0.isSidechain }
     }
 
-    /// The wallet that already holds `id`'s keys on `network`, if any. Matched on the public
-    /// descriptors, which on a shared-key network are identical for the same secret and derivation.
-    /// No secret is read, so this is safe to call while rendering.
-    public func existingCopy(of id: String, on network: WalletNetwork) -> ManagedWallet? {
-        guard let source = wallets.first(where: { $0.id == id }) else { return nil }
-        return wallets.first {
-            $0.id != source.id && $0.network == network
-                && $0.externalDescriptor == source.externalDescriptor
-                && $0.internalDescriptor == source.internalDescriptor
+    /// Whether `network` can hold this key type at all: a WIF key lives only on the coin-type-0'
+    /// chains; a seed can derive anywhere BDK can, plus Thunder (the app-side ristretto scheme
+    /// derives from the same phrase — the factory hands back empty descriptors for it).
+    private static func keyType(_ keyType: WalletKeyType, canLiveOn network: WalletNetwork) -> Bool {
+        switch keyType {
+        case .wif: return network.keyFamily == 0
+        case .mnemonic: return !network.isSidechain || network.isThunder
         }
     }
 
-    /// Open wallet `id` on another network: re-run the import with its stored secret and derivation,
-    /// persist the result as a NEW wallet, and select it (`docs/copy-wallet-to-network.md`).
-    ///
-    /// The copy gets its **own** walletId and its **own** Keychain entry holding the same secret, so
-    /// removing either wallet purges only its own copy — sharing one entry would put a key the other
-    /// wallet still needs one removal-path bug away from deletion.
-    ///
-    /// Before anything is saved, the new public descriptors must equal the source's. That is what
-    /// "the same wallet" means, and it catches any derivation the import path can't reproduce: the
-    /// alternative is a wallet that looks right and quietly holds nothing.
-    ///
-    /// Throws `.copyNotSupported`, `.alreadyOnNetwork`, `.keyUnavailable`, or `.copyMismatch`; on any
-    /// throw nothing is persisted and the selection is unchanged.
-    public func copyWallet(id: String, to network: WalletNetwork, label: String) throws -> ManagedWallet {
-        guard let source = wallets.first(where: { $0.id == id }),
-              copyTargets(for: id).contains(network),
-              // Import can only reproduce account 0. Every wallet is account 0 today; this keeps a
-              // future account-picker wallet from being copied to the wrong account.
-              source.accountIndex == Int32(0) else {
-            throw WalletError.copyNotSupported
-        }
-        if existingCopy(of: id, on: network) != nil { throw WalletError.alreadyOnNetwork }
-        guard let secret = try keyStore.loadMnemonic(walletId: id) else { throw WalletError.keyUnavailable }
+    /// The mainchains the switcher offers for a wallet, in PICKER order (eCash first — Jake,
+    /// 2026-11-05 — then Bitcoin, then L2L Signet): the offered mainchains its key type can live on,
+    /// then any retired mainchain it still has an account on (so an alphanet/betanet wallet stays
+    /// reachable), in enum order after the offered ones.
+    public func availableMainchains(for walletId: String) -> [WalletNetwork] {
+        guard let wallet = wallets.first(where: { $0.id == walletId }) else { return [] }
+        let held = Set(wallet.accounts.map { $0.network }.filter { !$0.isSidechain })
+        let offered = Self.mainchainsForNewWallets.filter { Self.keyType(wallet.keyType, canLiveOn: $0) }
+        let retired = WalletNetwork.allCases.filter { held.contains($0) && !offered.contains($0) }
+        return offered + retired
+    }
 
+    /// The sidechains nested under the wallet's CURRENT mainchain — `availableSidechains(for:under:)`
+    /// at the selected account's parent.
+    public func availableSidechains(for walletId: String) -> [WalletNetwork] {
+        guard let wallet = wallets.first(where: { $0.id == walletId }) else { return [] }
+        let parent = wallet.selectedAccount.network.parentChain ?? wallet.selectedAccount.network
+        return availableSidechains(for: walletId, under: parent)
+    }
+
+    /// The sidechains nested under `mainchain` for this wallet: the offered ones its key type can
+    /// live on (Thunder mainnet under eCash, 2026-11-10 — the switcher derives the account on first
+    /// tap, through `enableNetwork`, like a mainchain the wallet hasn't opened yet) plus any retired
+    /// one it already has an account on (migrated Thunder-betanet accounts under betanet). Takes the
+    /// mainchain rather than reading the current one so the switcher can nest every mainchain's
+    /// sidechains at once — a wallet on Bitcoin reaches Thunder in one tap (Jake, 2026-11-10).
+    public func availableSidechains(for walletId: String, under mainchain: WalletNetwork) -> [WalletNetwork] {
+        guard let wallet = wallets.first(where: { $0.id == walletId }) else { return [] }
+        let held = Set(wallet.accounts.map { $0.network })
+        let offered = Set(WalletNetwork.selectable)
+        return WalletNetwork.sidechains(of: mainchain).filter {
+            held.contains($0) || (offered.contains($0) && Self.keyType(wallet.keyType, canLiveOn: $0))
+        }
+    }
+
+    /// Whether the wallet already has an account on `network` — i.e. `enableNetwork` would switch
+    /// without needing the secret. The app gates the other case behind `DeviceAuth` (§3.2).
+    public func hasAccount(walletId: String, network: WalletNetwork) -> Bool {
+        wallets.first { $0.id == walletId }?.accounts.contains { $0.network == network } ?? false
+    }
+
+    /// Switch the wallet to one of its existing accounts. The ONLY way `selectedAccountId` changes
+    /// (invariant I8). Persisted; the engine for the new account is built on demand (the cache is
+    /// keyed by store, so the previous account's engine stays warm).
+    public func switchAccount(walletId: String, to accountId: String) throws {
+        guard let index = wallets.firstIndex(where: { $0.id == walletId }),
+              wallets[index].account(id: accountId) != nil else { throw WalletError.persistenceFailed }
+        if wallets[index].selectedAccountId == accountId { return }
+        var updated = wallets[index]
+        updated.selectedAccountId = accountId
+        try walletStore.upsertWallet(updated)
+        wallets[index] = updated
+    }
+
+    /// Open the wallet on `network`: switch to its account there, deriving and persisting that
+    /// account first if the wallet doesn't have one yet (a migrated wallet lacking that key family,
+    /// or a chain added later). Deriving reads the secret ONCE — the app calls this behind
+    /// `DeviceAuth` when `hasAccount` is false. Uses the wallet's primary script type and account
+    /// index. Throws `.copyNotSupported` for a network this key type can't live on, `.keyUnavailable`
+    /// if no secret is found.
+    public func enableNetwork(walletId: String, network: WalletNetwork) throws -> WalletAccount {
+        guard let index = wallets.firstIndex(where: { $0.id == walletId }) else { throw WalletError.persistenceFailed }
+        let wallet = wallets[index]
+        if let existing = wallet.accounts.first(where: { $0.network == network }) {
+            try switchAccount(walletId: walletId, to: existing.id)
+            return existing
+        }
+        guard Self.keyType(wallet.keyType, canLiveOn: network) else { throw WalletError.copyNotSupported }
+        guard let secret = try loadSecret(walletId: walletId) else { throw WalletError.keyUnavailable }
+        let primary = wallet.selectedAccount
+        let account = try deriveAccount(walletId: walletId, network: network, secret: secret,
+                                        keyType: wallet.keyType, scriptType: primary.scriptType,
+                                        accountIndex: primary.accountIndex)
+        var updated = wallet
+        updated.accounts.append(account)
+        updated.selectedAccountId = account.id
+        try walletStore.upsertWallet(updated)
+        wallets[index] = updated
+        return account
+    }
+
+    // MARK: - Persist
+
+    /// One account's public descriptors for `secret` on `network`, at the new store name.
+    private func deriveAccount(walletId: String, network: WalletNetwork, secret: String,
+                               keyType: WalletKeyType, scriptType: ScriptType, accountIndex: Int32) throws -> WalletAccount {
         let keys: WalletKeys
-        switch source.keyType {
+        switch keyType {
         case .wif: keys = try factory.restorePrivateKey(network: network, wif: secret)
-        case .mnemonic: keys = try factory.restore(network: network, mnemonic: secret, scriptType: source.scriptType)
+        case .mnemonic: keys = try factory.restore(network: network, mnemonic: secret, scriptType: scriptType)
         }
-        guard keys.externalDescriptor == source.externalDescriptor,
-              keys.internalDescriptor == source.internalDescriptor else {
-            throw WalletError.copyMismatch
-        }
-        return try persistNewWallet(label: label, network: network, keys: keys,
-                                    keyType: source.keyType, scriptType: source.scriptType,
-                                    accountIndex: source.accountIndex, isBackedUp: source.isBackedUp)
+        return WalletAccount(network: network, scriptType: scriptType, accountIndex: accountIndex,
+                             externalDescriptor: keys.externalDescriptor,
+                             internalDescriptor: keys.internalDescriptor,
+                             storeName: WalletAccount.storeName(walletId: walletId, network: network,
+                                                                scriptType: scriptType, accountIndex: accountIndex))
     }
 
-    private func persistNewWallet(label: String, network: WalletNetwork, keys: WalletKeys,
-                                  keyType: WalletKeyType = .mnemonic,
-                                  scriptType: ScriptType = .bip84, accountIndex: Int32 = 0,
-                                  isBackedUp: Bool = false) throws -> ManagedWallet {
+    /// Derive an account on every offered mainchain the key type can live on, persist secret +
+    /// metadata, select the wallet. The secret is in memory for the derivations only.
+    private func persistNewWallet(label: String, secret: String, keyType: WalletKeyType,
+                                  scriptType: ScriptType, accountIndex: Int32, isBackedUp: Bool,
+                                  selectedNetwork: WalletNetwork) throws -> ManagedWallet {
         let id = UUID().uuidString
-        let wallet = ManagedWallet(id: id, label: label, network: network,
-                                   externalDescriptor: keys.externalDescriptor,
-                                   internalDescriptor: keys.internalDescriptor,
-                                   keyType: keyType, scriptType: scriptType, accountIndex: accountIndex,
-                                   isBackedUp: isBackedUp, sortIndex: wallets.count)
+        var accounts: [WalletAccount] = []
+        for network in Self.mainchainsForNewWallets where Self.keyType(keyType, canLiveOn: network) {
+            accounts.append(try deriveAccount(walletId: id, network: network, secret: secret, keyType: keyType,
+                                              scriptType: scriptType, accountIndex: accountIndex))
+        }
+        guard let firstAccount = accounts.first else { throw WalletError.copyNotSupported }
+        let selected = accounts.first { $0.network == selectedNetwork } ?? firstAccount
+        let wallet = ManagedWallet(id: id, label: label, keyType: keyType, isBackedUp: isBackedUp,
+                                   sortIndex: wallets.count, selectedAccountId: selected.id, accounts: accounts)
         // Secret first, then public metadata. Roll back the secret if metadata write fails so we
         // never strand a secret (mnemonic or WIF) with no wallet record.
-        try keyStore.saveMnemonic(keys.secret, walletId: id)
+        try keyStore.saveMnemonic(secret, walletId: id)
         do {
             try walletStore.upsertWallet(wallet)
         } catch {
@@ -252,10 +360,27 @@ public final class WalletManager: @unchecked Sendable {
     /// chain-data store (factory), and re-selects another wallet if the removed one was selected
     /// (Golden Rule §5 — every keyed artifact). Secret first, so a later failure can't strand it.
     public func removeWallet(id: String) throws {
+        // The ONLY place the Keychain entries a merge left behind are deleted (invariant I1), and
+        // only after PROOF: an orphan entry is deleted if, and only if, its content is identical to
+        // this wallet's own entry — read and compared in memory, never logged. The merge was keyed
+        // on a 32-bit master fingerprint; a collision between unrelated seeds is ~2^-32 per pair,
+        // but this check makes deleting a different seed's only copy impossible rather than
+        // improbable. A non-matching (or unreadable) orphan entry is left in the Keychain. Never an
+        // id that is still a live wallet. Best-effort, after this wallet's own entry is gone.
+        let orphans = (wallets.first { $0.id == id }?.orphanKeychainIds ?? [])
+            .filter { orphan in !wallets.contains { $0.id == orphan } }
+        let own = try keyStore.loadMnemonic(walletId: id)
         try keyStore.deleteMnemonic(walletId: id)
+        if let own = own, !own.isEmpty {
+            for orphan in orphans {
+                if let spare = try? keyStore.loadMnemonic(walletId: orphan), spare == own {
+                    try? keyStore.deleteMnemonic(walletId: orphan)
+                }
+            }
+        }
         try walletStore.deleteWallet(id: id)
         factory.purgeChainData(for: id)
-        engines[id] = nil
+        for key in engines.keys where key.hasPrefix("\(id)-") { engines[key] = nil }   // every account's engine
         wallets.removeAll { $0.id == id }
         if selectedWalletId == id {
             selectedWalletId = wallets.first?.id
@@ -275,7 +400,21 @@ public final class WalletManager: @unchecked Sendable {
 
     /// The wallet's mnemonic, for the gated Backup reveal only. Never log this.
     public func mnemonic(for id: String) throws -> String? {
-        try keyStore.loadMnemonic(walletId: id)
+        try loadSecret(walletId: id)
+    }
+
+    /// The ONE path that reads a wallet's secret: its own Keychain entry, else the first non-empty
+    /// entry among the orphan ids a seed-container merge left on it (`orphanKeychainIds`). Those
+    /// entries hold the same phrase, written by copy-to-network — a spare copy the device already
+    /// has. If the primary entry was ever lost, the wallet still signs and still reveals; a wrong
+    /// phrase can only fail to sign. Never logs; never widens beyond this wallet's own ids.
+    private func loadSecret(walletId: String) throws -> String? {
+        if let own = try keyStore.loadMnemonic(walletId: walletId), !own.isEmpty { return own }
+        let orphans = wallets.first { $0.id == walletId }?.orphanKeychainIds ?? []
+        for orphan in orphans {
+            if let spare = try keyStore.loadMnemonic(walletId: orphan), !spare.isEmpty { return spare }
+        }
+        return nil
     }
 
     /// Build the live `WalletEngine` for a wallet (loads its mnemonic, hands it to the factory).
@@ -285,14 +424,13 @@ public final class WalletManager: @unchecked Sendable {
         // Watch-only build: the mnemonic is NOT read here. The factory's engine derives nothing
         // secret to show balance/addresses/history; the Keychain is touched only at sign time,
         // through this closure (sign-on-demand, §7 / docs/key-storage.md §3).
-        let keyStore = self.keyStore
         let walletId = wallet.id
         let backend = resolvedBackend(for: wallet.network)
         return try factory.engine(for: wallet,
                                   backendKind: backend.kind.rawValue,
                                   backendURL: backend.url,
                                   backendProxy: backend.socks5,
-                                  loadSecret: { try keyStore.loadMnemonic(walletId: walletId) })
+                                  loadSecret: { [unowned self] in try self.loadSecret(walletId: walletId) })
     }
 
     // MARK: - Chain backend & custom endpoints (bridged primitive surface)
@@ -550,14 +688,50 @@ public final class WalletManager: @unchecked Sendable {
         try factory.scriptPubKeyHex(address, network: network)
     }
 
+    /// The CACHED balance of the wallet's account on `network` (persisted chain data, no I/O) —
+    /// for lists that show a wallet on a chain it isn't currently switched to. Throws if the wallet
+    /// has no account there.
+    public func balance(walletId: String, network: WalletNetwork) throws -> Amount {
+        guard let wallet = wallets.first(where: { $0.id == walletId }),
+              let account = wallet.accounts.first(where: { $0.network == network }) else {
+            throw WalletError.persistenceFailed
+        }
+        return try liveEngine(wallet: wallet, account: account).balance()
+    }
+
+    /// The next unused receive address of the wallet's account on `network` — which need not be the
+    /// account it is viewing. "Send to one of my wallets" lists every wallet with an account on the
+    /// sending network and pays THAT account, never the one the wallet happens to be switched to
+    /// (same-network is a safety rule: `.ecashMainnet` and `.bitcoin` addresses look identical).
+    public func nextUnusedAddress(walletId: String, network: WalletNetwork) throws -> AddressInfo {
+        guard let wallet = wallets.first(where: { $0.id == walletId }),
+              let account = wallet.accounts.first(where: { $0.network == network }) else {
+            throw WalletError.persistenceFailed
+        }
+        return try liveEngine(wallet: wallet, account: account).nextUnusedAddress()
+    }
+
+    /// Get-or-build the cached engine for one of a wallet's accounts (see `engines`).
+    private func liveEngine(wallet: ManagedWallet, account: WalletAccount) throws -> WalletEngineProtocol {
+        if let cached = engines[account.storeName] { return cached }
+        var viewed = wallet
+        viewed.selectedAccountId = account.id          // the factory builds from the selected account
+        let engine = try engine(for: viewed)
+        engines[account.storeName] = engine
+        return engine
+    }
+
     /// Get-or-build the cached live engine for a walletId (see `engines`).
     private func liveEngine(walletId: String) throws -> WalletEngineProtocol {
-        if let cached = engines[walletId] { return cached }
         guard let wallet = wallets.first(where: { $0.id == walletId }) else {
             throw WalletError.persistenceFailed
         }
+        // Keyed by the SELECTED account's store (`<walletId>-…`), so each (wallet × account) has its
+        // own engine and a switch just picks another one up.
+        let key = wallet.selectedAccount.storeName
+        if let cached = engines[key] { return cached }
         let engine = try engine(for: wallet)
-        engines[walletId] = engine
+        engines[key] = engine
         return engine
     }
 
@@ -572,10 +746,16 @@ public final class WalletManager: @unchecked Sendable {
         try liveEngine(walletId: walletId).balance()
     }
 
-    /// Not-yet-spendable balance (incoming 0-conf + immature) — shown separately from the spendable
+    /// Not-yet-spendable balance (immature coinbase) — shown separately from the spendable
     /// `balance`. Cached read, no network. See README "Spendable balance".
     public func pendingBalance(walletId: String) throws -> Amount {
         try liveEngine(walletId: walletId).pendingBalance()
+    }
+
+    /// Incoming unconfirmed payments — part of `balance` (spendable since 2026-11-11), shown on
+    /// Home as the share its sender can still pull back. Cached read, no network.
+    public func unconfirmedBalance(walletId: String) throws -> Amount {
+        try liveEngine(walletId: walletId).unconfirmedBalance()
     }
 
     /// Sync the wallet against its network backend (Electrum full scan → persist), then return the
@@ -601,6 +781,10 @@ public final class WalletManager: @unchecked Sendable {
 
     public func pendingBalanceAsync(walletId: String) async throws -> Amount {
         try pendingBalance(walletId: walletId)
+    }
+
+    public func unconfirmedBalanceAsync(walletId: String) async throws -> Amount {
+        try unconfirmedBalance(walletId: walletId)
     }
 
     public func transactionsAsync(walletId: String) async throws -> [WalletTx] {
@@ -655,6 +839,22 @@ public final class WalletManager: @unchecked Sendable {
                       feeRate: FeeRate) async throws -> WalletTx {
         let engine = try liveEngine(walletId: walletId)
         return try engine.sweep(to: address, feeRate: feeRate)
+    }
+
+    /// Dry run of `send` for the review screen: the exact fee and how much of the payment rides on
+    /// incoming unconfirmed coins. No key is read and nothing is broadcast, but it builds a
+    /// transaction, so it stays off the main actor like `send`. Throws what the send would.
+    public func previewSend(walletId: String, to address: String,
+                            amount: Amount, feeRate: FeeRate) async throws -> SendPreview {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.previewSend(to: address, amount: amount, feeRate: feeRate)
+    }
+
+    /// Dry run of `sweep` ("Max").
+    public func previewSweep(walletId: String, to address: String,
+                             feeRate: FeeRate) async throws -> SendPreview {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.previewSweep(to: address, feeRate: feeRate)
     }
 
     /// Deposit into a sidechain (BIP300 M5). `address` is the BARE sidechain address (the app
@@ -743,7 +943,7 @@ public final class WalletManager: @unchecked Sendable {
     /// Derive the wallet's CoinNews identity private key on demand (never persisted — Golden Rule §2).
     private func coinNewsIdentityKey(walletId: String) throws -> Data {
         guard let wallet = wallets.first(where: { $0.id == walletId }),
-              let phrase = try keyStore.loadMnemonic(walletId: walletId) else {
+              let phrase = try loadSecret(walletId: walletId) else {
             throw WalletError.signingFailed
         }
         return try CoinNewsIdentity.privateKey(mnemonicPhrase: phrase, network: wallet.network)

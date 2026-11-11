@@ -24,6 +24,7 @@ struct WalletHomeScreen: View {
     @State var claimSweepDismissed = false
     @State var showBackup = false
     @State var showWalletManager = false
+    @State var showNetworkSwitcher = false   // the Home chip's sheet
     @State var showFaucet = false
     @State var showSplit = false           // "Split coins" sheet
     @State var splitDismissed = false      // per-session: dismiss the split nudge without splitting
@@ -111,6 +112,9 @@ struct WalletHomeScreen: View {
         }
         // Wallet manager: switch / rename / add / import / remove.
         .sheet(isPresented: $showWalletManager) { WalletManagerSheet() }
+        .sheet(isPresented: $showNetworkSwitcher) {
+            if let id = app.selectedWalletId { NetworkSwitcherSheet(walletId: id) }
+        }
         // Signet faucet: request valueless test coins (signet-only; the button is gated too).
         .sheet(isPresented: $showFaucet) {
             if let vm = app.makeFaucetViewModel() {
@@ -199,7 +203,17 @@ struct WalletHomeScreen: View {
             }
 
             VStack(spacing: Theme.Space.x2) {
-                NetworkBadge(network: wallet.network)
+                // The chip is the network switcher (docs/seed-container-model.md §4): it opens a sheet
+                // with the current network marked; nothing changes until a row is tapped there.
+                Button { showNetworkSwitcher = true } label: {
+                    HStack(spacing: Theme.Space.x1) {
+                        NetworkBadge(network: wallet.network)
+                        Image(icon: Icon.expand)
+                            .foregroundStyle(Theme.Colors.text2)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(Text("Switch network", bundle: .module, comment: "home: network chip opens the switcher"))
 
                 // Live balance with the privacy eye. JetBrains Mono is fixed-width already.
                 HStack(spacing: Theme.Space.x2) {
@@ -245,6 +259,15 @@ struct WalletHomeScreen: View {
                             .multilineTextAlignment(.center)
                     }
                 }
+                // Spendable, but not settled: incoming payments whose senders can still replace
+                // them (unconfirmed coins became spendable 2026-11-11; Send warns when a payment
+                // depends on one). Shown so the user knows which part of the balance that is.
+                if !app.balanceHidden, app.unconfirmedBalance.sats > 0 {
+                    Text("\(app.unconfirmedBalance.formattedCoin()) \(params.unitLabel) of this is unconfirmed",
+                         bundle: .module, comment: "home: share of the balance that is incoming payments not yet confirmed; %@ are amount + unit")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.warning)
+                }
                 syncStatus
             }
             .padding(.vertical, Theme.Space.x5)
@@ -253,6 +276,13 @@ struct WalletHomeScreen: View {
 
             if !wallet.isBackedUp {
                 backupNudge
+            }
+
+            // Retired-network nudge: this wallet is open on alphanet / betanet / Thunder betanet.
+            // The same seed opens on eCash in one tap (deriving the account if it has none — the
+            // switch path handles the device-auth gate), which beats merely hiding the wallet.
+            if app.selectedWalletIsOnRetiredNetwork {
+                retiredNetworkNudge(wallet: wallet, networkName: params.displayName)
             }
 
             // Claimed-key nudge: a single-key (WIF) wallet holding funds. Gated on keyType rather
@@ -515,6 +545,30 @@ struct WalletHomeScreen: View {
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
                     .stroke(Theme.Colors.border, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    private func retiredNetworkNudge(wallet: ManagedWallet, networkName: String) -> some View {
+        Button {
+            Task { _ = await app.switchNetwork(walletId: wallet.id, to: WalletNetwork.currentEcash) }
+        } label: {
+            VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                Text("This wallet is on a retired network", bundle: .module, comment: "home retired-network nudge title")
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.text0)
+                Text("\(networkName) was a test network before the eCash fork. Tap to open this wallet on eCash.",
+                     bundle: .module, comment: "home retired-network nudge body")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text1)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(Theme.Space.x4)
+            .background(Theme.Colors.accentTint, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                    .stroke(Theme.Colors.accent.opacity(0.4), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

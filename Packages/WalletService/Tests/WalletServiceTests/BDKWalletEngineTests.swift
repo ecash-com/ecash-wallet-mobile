@@ -281,7 +281,7 @@ final class BDKWalletEngineTests: XCTestCase {
 
     /// Migration: a pre-namespacing store (`<walletId>.sqlite`) is moved to the network-scoped path
     /// (`<walletId>-<network>.sqlite`) on next open, so existing chain data survives the layout
-    /// change instead of forcing a full rescan (`docs/network-switching.md`).
+    /// change instead of forcing a full rescan (`docs/seed-container-model.md`).
     func testLegacyStoreMigratesToNetworkScopedPath() throws {
         #if SKIP
         throw XCTSkip("real BDK — host only")

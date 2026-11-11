@@ -56,3 +56,10 @@ struct WalletSyncStore {
     /// Drop the marker when a wallet is removed, so a later wallet reusing the id can't inherit it.
     func forget(walletId: String) { defaults.removeObject(forKey: key(walletId)) }
 }
+
+/// A wallet-list line: one of a wallet's chains and its cached balance there (`AppState.accountBalances`).
+struct WalletAccountBalance: Identifiable, Equatable {
+    let network: WalletNetwork
+    let balance: WalletBalanceSummary
+    var id: String { network.rawValue }
+}

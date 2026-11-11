@@ -4,9 +4,14 @@
 > now has the script-type picker (BIP44/49/84/86) + read-only derivation path + live first-address
 > preview, honored in BOTH the derive and sign seams (§4.2), persisted (§4.3), with per-type
 > derivation-vector tests (§6). **Remaining:** account index ≠ 0 (manual descriptor strings, §4.1 —
-> the field is already persisted, dormant), the multi-path recovery scan (§8 phase 2, before the
-> airdrop), a real-BDK import→sign→broadcast-per-type gate (§6, needs coins), and the read-only
+> the field is already persisted, dormant), the multi-path recovery scan (§8 phase 2 — now phase 3 of `docs/seed-container-model.md`
+> §8), a real-BDK import→sign→broadcast-per-type gate (§6, needs coins), and the read-only
 > derivation display in wallet detail (§9). Original design below (Option A); keep current per CLAUDE.md.
+>
+> **2026-11-10:** import has no network picker any more — a wallet is a seed that opens on eCash
+> mainnet and switches networks inside it (`docs/seed-container-model.md`), and the chosen script type
+> applies to every account the import derives. This does not fix BitWindow imports — that's a
+> different seed, not a different path (`docs/bitwindow-import.md`).
 
 ## 1. Why (this is recovery-correctness, not a power-user toy)
 
@@ -43,16 +48,16 @@ the core value proposition.
   most airdrop-friendly UX but a bigger build; see §9.
 - Arbitrary/non-standard paths (custom purpose, non-`0/1` change branch, Electrum-style). Guard and
   reject clearly for now.
-- Exposing this for *existing* wallets ("add account"). Import-only for v1.
+- Exposing this for *existing* wallets ("add account"). Import-only for v1 — now phase 2 of
+  `docs/seed-container-model.md` §3.3 (script types on demand).
 
 ## 3. UX
 
 Import screen (`ImportWalletView` / `ImportViewModel`) gains a collapsed **Advanced** section under
-the mnemonic + network picker:
+the mnemonic input (no network picker since 2026-11-05 — import opens on eCash mainnet):
 
 ```
 Recovery phrase           [ 12/24-word input ]
-Network                   [ NetworkSelector → default L2L Signet ]
 
 ▸ Advanced
     Script type           ( Legacy · Nested · [Native] · Taproot )
@@ -63,7 +68,7 @@ Network                   [ NetworkSelector → default L2L Signet ]
 
 - Collapsed by default; defaults reproduce today's behavior exactly (Native/BIP84, account 0).
 - The derivation-path line and first-address preview update live as the user changes script type /
-  account / network — this is the guardrail against a wrong choice.
+  phrase — this is the guardrail against a wrong choice.
 - Copy should explain *why* someone would touch this ("restoring from another wallet? match its
   address type") without scaring off normal users.
 
@@ -76,8 +81,8 @@ are `(secretKey|publicKey, keychainKind, network)` — **account is fixed at 0',
 from `network`.** So:
 
 - **Script type + account 0 → use the BDK templates directly.** Trivial, clean, no string-building.
-  This already covers the biggest airdrop case: a BTC seed at `m/8x'/0'/0'` imported onto `.ecash`
-  (which is `Network.bitcoin`, coin-type `0'`) — the template yields exactly the right path.
+  This already covers the biggest airdrop case: a BTC seed at `m/8x'/0'/0'` imported onto
+  `.ecashMainnet` (which is `Network.bitcoin`, coin-type `0'`) — the template yields exactly the right path.
 - **Account index ≠ 0 → build the descriptor string manually.** The templates can't take an account,
   so we assemble `SCRIPT([fingerprint/PURPOSE'/COIN'/ACCOUNT']XPUB/branch/*)` ourselves (BDK still
   does all crypto — we only assemble the string, as `Descriptors.swift` already does for wpkh).
@@ -121,7 +126,8 @@ Bridged-surface note: keep new props signed (`Int32`) and String/enum-backed per
 2. **Hardened notation** — accept both `'` and `h`; normalize for display.
 3. **Account bounds** — clamp account to `0…2^31-1`; reject negatives/non-numeric.
 4. **Coin-type vs network** — for the four templates, coin-type = the network's (0' on `.bitcoin`/
-   `.ecash`, 1' on testnets). That's correct for the airdrop (BTC path 0' on `.ecash`). If we later
+   `.ecashMainnet`, 1' on testnets); the script type applies to every account the import creates
+   (`WalletManager.importWallet`). That's correct for the airdrop (BTC path 0' on `.ecashMainnet`). If we later
    allow a custom coin-type, it must **override** the network default with a clear guard against
    nonsensical combos. Document precedence: explicit custom > network default.
 5. **Same seed, different path = a second wallet.** Re-importing a seed at another script type creates
@@ -165,8 +171,9 @@ Per CLAUDE.md §11, WalletService + signing changes need tests in the same PR:
    persisted (§4.3) + read-only derivation display + the full test set incl. the per-type
    sign→broadcast gate (§6). Internally, script-type can land first and the account field can hide
    behind a flag if it's not ready — but plan them as one PR since they share the seam + data model.
-2. **Fast-follow — multi-path recovery scan.** Target before the airdrop (block 964,000, ~Aug 2026);
-   not a blocker for earlier releases (§9).
+2. **Fast-follow — multi-path recovery scan.** Was targeted before the fork (block 973,728, activated
+   2026-10-29); it didn't make it and is now phase 3 ("import auto-discovery") of
+   `docs/seed-container-model.md` §8.
 3. **Later — descriptor-string paste** (power users).
 
 ## 9. Decisions (resolved 2026-07-17)
@@ -180,8 +187,9 @@ Per CLAUDE.md §11, WalletService + signing changes need tests in the same PR:
 - **Multi-path recovery scan is NOT launch-blocking, but it's a high-priority fast-follow.** A1/A2
   (know-your-type manual import) is enough to *unblock* recovery for the general release. But since
   many airdrop users won't know their original derivation, the scan is the UX that actually prevents
-  "0 ECX → I lost my coins" confusion — so aim to have it by the **airdrop activation (block 964,000,
-  ~Aug 2026)**, even though it doesn't block earlier releases.
+  "0 ECX → I lost my coins" confusion — so aim to have it by the **airdrop activation (block 973,728,
+  activated 2026-10-29)**, even though it doesn't block earlier releases. *(2026-11-10: the fork
+  activated without it; the scan is phase 3 of `docs/seed-container-model.md` §8.)*
 - **Yes — display the wallet's derivation** (script type · account) read-only in wallet detail /
   Settings, once `scriptType`/`accountIndex` are persisted (§4.3). It's nearly free (data already
   stored) and helps users confirm/debug a recovery. Include it in the A1/A2 PR.

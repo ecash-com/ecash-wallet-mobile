@@ -13,8 +13,9 @@ After the one-time setup below, you just pick your iPhone in Xcode and hit Run.
 |---|---|
 | Workspace | `Project.xcworkspace` (repo root) |
 | App scheme / target | `ECashWalletMobile App` |
-| Bundle identifier | `com.layertwolabs.mobile.ecashwallet` (set in `Skip.env` → `PRODUCT_BUNDLE_IDENTIFIER`) |
+| Bundle identifier | `com.ecash.mobile.wallet` (set in `Skip.env` → `PRODUCT_BUNDLE_IDENTIFIER`) |
 | Min iOS | **26.0** — the test iPhone must be on iOS 26 or newer |
+| Fonts | the Satoshi `.ttf`s are **gitignored** (licence) — run `scripts/fetch-fonts.sh` once before an Xcode build, or the brand font silently falls back |
 
 ## Free Apple ID vs. paid Developer Program
 
@@ -22,7 +23,9 @@ You can test on your own device with either:
 
 - **Free Apple ID (Personal Team)** — fine for hands-on testing. Caveats: the app **expires
   after 7 days** (just re-run from Xcode to refresh), max ~3 sideloaded apps, no push, no
-  TestFlight, and the bundle ID may need to be unique to you (see step 5).
+  TestFlight, and the bundle ID may need to be unique to you (see step 5). Also:
+  `Darwin/Entitlements.plist` carries `aps-environment` (push), which a Personal Team **cannot
+  sign** — strip that key locally for a free-team build (don't commit the change).
 - **Apple Developer Program ($99/yr)** — no 7-day expiry, all capabilities, and unlocks
   **TestFlight** for over-the-air beta installs (the better path once you want other testers).
 
@@ -44,7 +47,7 @@ You can test on your own device with either:
 5. **Pick your Team** — choose *Your Name (Personal Team)* for a free Apple ID, or your org for a
    paid account.
    - If Xcode flags the **bundle identifier** as unavailable (common on a free team if
-     `com.layertwolabs.mobile.ecashwallet` is already registered to the L2L paid team), change it
+     `com.ecash.mobile.wallet` is already registered to the paid team), change it
      to something unique like `com.<yourname>.ecashwallet`. **Set it in `Skip.env`**
      (`PRODUCT_BUNDLE_IDENTIFIER`), not just in Xcode — the value is generated from `Skip.env` and
      a direct Xcode edit can be overwritten on the next build. Revert it before committing.
@@ -93,12 +96,12 @@ Without this file, device builds fail with "Signing requires a development team"
 don't need it). Selecting a team in Xcode's Signing UI also works, but writes it back into the
 `.pbxproj` — prefer the xcconfig file so the team stays out of source.
 
-## TestFlight / other testers (later)
+## TestFlight / other testers
 
-For beta testers who aren't on your Mac, the path is TestFlight (needs the paid program):
-`skip export --release` → signed archive → upload to App Store Connect (typically via **fastlane**;
-`Darwin/fastlane/` metadata already exists). That's the `skip-deployment` workflow — separate from
-this on-device dev-install runbook.
+For beta testers who aren't on your Mac, the path is TestFlight (needs the paid program). It is
+**connected**: `cd Darwin && fastlane beta` archives and uploads to App Store Connect (App Store
+Connect API key gitignored). The full runbook is `docs/release.md` — separate from this on-device
+dev-install runbook.
 
 ---
 

@@ -56,6 +56,32 @@ public final class MockWalletEngine: WalletEngineProtocol {
         return pendingBalanceToReturn
     }
 
+    public var unconfirmedBalanceToReturn: Amount = .zero
+
+    public func unconfirmedBalance() throws -> Amount {
+        if let error = errorToThrow { throw error }
+        return unconfirmedBalanceToReturn
+    }
+
+    /// What the send/sweep dry runs report (tests override to drive the review warning).
+    public var previewToReturn = SendPreview(feeSats: 200, unconfirmedInputSats: 0)
+    public private(set) var previewCallCount = 0
+    public private(set) var lastPreviewAddress: String?
+
+    public func previewSend(to address: String, amount: Amount, feeRate: FeeRate) throws -> SendPreview {
+        if let error = errorToThrow { throw error }
+        previewCallCount += 1
+        lastPreviewAddress = address
+        return previewToReturn
+    }
+
+    public func previewSweep(to address: String, feeRate: FeeRate) throws -> SendPreview {
+        if let error = errorToThrow { throw error }
+        previewCallCount += 1
+        lastPreviewAddress = address
+        return previewToReturn
+    }
+
     public func nextReceiveAddress() throws -> AddressInfo {
         if let error = errorToThrow { throw error }
         return addressToReturn

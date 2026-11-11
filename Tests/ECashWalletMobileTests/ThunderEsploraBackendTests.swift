@@ -105,7 +105,7 @@ import WalletService
         func service(indexStore: ThunderAddressIndexStoring = InMemoryThunderAddressIndexStore())
         -> ThunderService {
             ThunderService(loadMnemonic: { _ in ThunderEsploraBackendTests.mnemonic },
-                           makeBackend: { [self] in backend() },
+                           makeBackend: { [self] _ in backend() },
                            indexStore: indexStore,
                            firstSeenStore: InMemoryThunderFirstSeenStore(),
                            accountKeyStore: InMemoryThunderAccountKeyStore(),
@@ -484,7 +484,7 @@ import WalletService
         let submitting = Submitting()
         let service = ThunderService(
             loadMnemonic: { _ in Self.mnemonic },
-            makeBackend: {
+            makeBackend: { _ in
                 ThunderEsploraBackend(client: ThunderEsploraClient(endpoint: "https://index.example/thunder") {
                     try await submitting.fetch($0, index: index)
                 })

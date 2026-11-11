@@ -74,7 +74,7 @@ struct SplitCheckStore {
         return stored > 0 ? stored : nil
     }
 
-    /// Wallets owed their one automatic check: set on import / copy-to-network, cleared once a check
+    /// Wallets owed their one automatic check: set on import / first eCash account open, cleared once a check
     /// gets an answer from Bitcoin for every coin. Kept until then so an import made offline (or while
     /// the explorer is down) is still checked on a later sync, not silently skipped.
     func markNeedsInitialCheck(walletId: String) {
@@ -87,6 +87,28 @@ struct SplitCheckStore {
 
     func clearInitialCheck(walletId: String) {
         UserDefaults.standard.removeObject(forKey: "\(Self.pendingKey).\(walletId)")
+    }
+
+    /// Carry a merged legacy record's state over to the wallet it now lives in (the seed-container
+    /// migration, `docs/seed-container-model.md §6.2`). Results merge in (an outpoint the new id
+    /// already knows keeps its own answer); the pending-initial-check flag carries over; then the
+    /// old id is forgotten. A cache either way — a wrong merge costs one re-check, never a coin.
+    func rekey(from legacyId: String, to walletId: String) {
+        guard legacyId != walletId else { return }
+        var everything = all
+        if let old = everything[legacyId] {
+            var merged = old
+            for (key, raw) in everything[walletId] ?? [:] { merged[key] = raw }
+            everything[walletId] = merged
+        }
+        everything.removeValue(forKey: legacyId)
+        all = everything
+        if needsInitialCheck(walletId: legacyId) { markNeedsInitialCheck(walletId: walletId) }
+        if lastCheckedEpochSeconds(walletId: walletId) == nil, let old = lastCheckedEpochSeconds(walletId: legacyId) {
+            UserDefaults.standard.set(old, forKey: "\(Self.checkedAtKey).\(walletId)")
+        }
+        UserDefaults.standard.removeObject(forKey: "\(Self.checkedAtKey).\(legacyId)")
+        clearInitialCheck(walletId: legacyId)
     }
 
     /// Purge on wallet removal (Golden Rule §5).

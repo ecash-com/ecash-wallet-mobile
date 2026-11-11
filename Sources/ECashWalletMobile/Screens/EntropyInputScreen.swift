@@ -19,7 +19,14 @@ struct EntropyInputScreen: View {
     @Environment(AppState.self) var app
     @Environment(\.dismiss) var dismiss
 
-    let onComplete: (_ field: String, _ wordCount: Int) -> Void
+    /// Create the wallet: the field, its word count, and the name the user settled on.
+    let onComplete: (_ field: String, _ wordCount: Int, _ label: String) -> Void
+    /// What the name step offers before the user edits it ("Wallet 3").
+    let defaultName: String
+    /// The create view model's error, if the last submit failed. Shown on both this screen and the
+    /// name step: creation is triggered from the name step, but a failure there pops nothing, and
+    /// a user who backs out to swipe again should still see why.
+    let errorMessage: String?
 
     @State var vm: EntropyViewModel
     @State var layout: [Character] = EntropyAlphabet.shuffled()
@@ -31,8 +38,11 @@ struct EntropyInputScreen: View {
 
     /// `model` comes from the session New wallet's Continue created, which already drew this session's
     /// device randomness and timestamp.
-    init(model: EntropyViewModel, onComplete: @escaping (_ field: String, _ wordCount: Int) -> Void) {
+    init(model: EntropyViewModel, defaultName: String, errorMessage: String? = nil,
+         onComplete: @escaping (_ field: String, _ wordCount: Int, _ label: String) -> Void) {
         self.onComplete = onComplete
+        self.defaultName = defaultName
+        self.errorMessage = errorMessage
         _vm = State(initialValue: model)
     }
 
@@ -47,10 +57,12 @@ struct EntropyInputScreen: View {
         // user ever arrived.
         .onAppear { vm.beginSessionIfNeeded() }
         .sheet(isPresented: $isEditing) { editSheet }
-        // Goes to the seed preview rather than creating: the user sees the words before committing.
+        // Goes to the name step rather than creating. The words were already shown here, live, so
+        // the step after the grid is for the one thing left to decide — what to call the wallet.
         .navigationDestination(isPresented: $goToPreview) {
-            EntropySeedPreviewScreen(field: vm.field, wordCount: vm.effectiveWordCount,
-                                     onConfirm: onComplete)
+            NameWalletScreen(field: vm.field, wordCount: vm.effectiveWordCount,
+                             defaultName: defaultName, errorMessage: errorMessage,
+                             onConfirm: onComplete)
         }
         // An edited field only goes on once the user claims it. Whoever wrote the string has the
         // wallet, so a pasted one from anyone else is theirs, not the user's (#20).
@@ -69,7 +81,7 @@ struct EntropyInputScreen: View {
             Text("Anyone who has this exact string has this wallet. Continue only if you wrote it yourself and nobody else has seen it.",
                  bundle: .module, comment: "edited entropy: ownership gate body")
         }
-        // NO `.onDisappear { vm.wipe() }`. It fires when the seed preview is pushed on TOP of this
+        // NO `.onDisappear { vm.wipe() }`. It fires when the name step is pushed on TOP of this
         // screen, not only when the flow is left — so going forward to look at your words wiped them,
         // and coming back handed you a fresh session. A minute of swiping lost for having checked.
         //
@@ -84,6 +96,11 @@ struct EntropyInputScreen: View {
     /// Fixed column: nothing here scrolls, so the grid keeps every drag it receives.
     private var swipeLayout: some View {
         VStack(alignment: .leading, spacing: Theme.Space.x3) {
+            if let errorMessage {
+                Text(verbatim: errorMessage)
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.negative)
+            }
             producedString
             meter
             livePhrase
@@ -205,10 +222,14 @@ struct EntropyInputScreen: View {
     ///
     /// Watching them churn is the point: it makes visible that every character is changing the wallet,
     /// which is otherwise an article of faith. Dimmed until the bar fills — they will keep changing
-    /// while the user is still swiping, so they aren't the words to write down yet. (The real words
-    /// are shown, undimmed, on the preview screen.)
+    /// while the user is still swiping, so they aren't the words to write down yet.
+    ///
+    /// This is the only place the words appear before the wallet exists (the step after the grid names
+    /// the wallet; it does not repeat them — Jake, 2026-11-10), so they are set at a size that can be
+    /// read rather than glanced at: 14pt medium, secondary rather than faint while they churn. The
+    /// grid below gives up a little height for it, which it can afford (see its frame).
     private var livePhrase: some View {
-        VStack(alignment: .leading, spacing: Theme.Space.x1) {
+        VStack(alignment: .leading, spacing: Theme.Space.x2) {
             Text(vm.isFull
                     ? "Your recovery phrase"
                     : "Recovery phrase so far — keeps changing as you go",
@@ -216,24 +237,23 @@ struct EntropyInputScreen: View {
                 .textStyle(.overline)
                 .foregroundStyle(Theme.Colors.text2)
             Text(verbatim: phrase.isEmpty ? "…" : phrase)
-                // Deliberately small: at 24 words this wraps to about four lines, and the grid still
-                // needs the room below it.
-                .font(.jbMono(11, .regular))
-                .foregroundStyle(vm.isFull ? Theme.Colors.text0 : Theme.Colors.text2)
+                .font(.jbMono(14, .medium))
+                .lineSpacing(3)
+                .foregroundStyle(vm.isFull ? Theme.Colors.text0 : Theme.Colors.text1)
                 // Height reserved for the FULL phrase from the start. Otherwise the block grows from
                 // one line to four as the words appear, and the grid visibly shrinks under it.
                 .frame(maxWidth: .infinity, minHeight: reservedPhraseHeight,
                        alignment: .topLeading)
         }
-        .padding(Theme.Space.x2)
+        .padding(Theme.Space.x3)
         .background(Theme.Colors.bg1)
         .clipShape(RoundedRectangle(cornerRadius: Theme.Radius.sm))
     }
 
     /// Space set aside for the phrase, sized to the longest it can get at this word count — 12 words
-    /// wrap to about three lines at 11pt mono, 24 to about five.
+    /// wrap to two or three lines at 14pt mono on a phone, 24 to four or five.
     private var reservedPhraseHeight: CGFloat {
-        vm.effectiveWordCount == 24 ? 74 : 46
+        vm.effectiveWordCount == 24 ? 104 : 62
     }
 
     /// Derived through the same path that will create the wallet, so what is shown is what gets made.
@@ -245,7 +265,7 @@ struct EntropyInputScreen: View {
         Button {
             if vm.needsOwnershipAcknowledgement { showEditedGate = true } else { goToPreview = true }
         } label: {
-            Text("Use this entropy", bundle: .module, comment: "continue to the seed preview")
+            Text("Use this entropy", bundle: .module, comment: "continue to the name step")
                 .textStyle(.button)
                 .foregroundStyle(Theme.Colors.accentText)
                 .frame(maxWidth: .infinity)

@@ -1,6 +1,10 @@
 # User-provided entropy ("paranoid mode") — design
 
-> Status: **PLAN, not built** (2026-09-07). Reference: BitWindow's desktop "Paranoid mode".
+> Status: **BUILT — the only create path** (2026-11-10; designed 2026-09-07). Every "Create wallet"
+> goes `CreateWalletScreen` → `EntropyInputScreen` (the grid) → `NameWalletScreen`; there is no
+> Advanced toggle and no CSPRNG-only path (the device's CSPRNG is always mixed in — §3). Entry
+> points, caps and targets in the plan below are marked where the build diverged.
+> Reference: BitWindow's desktop "Paranoid mode".
 > Related: `docs/key-storage.md`, `docs/plausible-deniability.md`, CLAUDE.md §7.
 
 ## 1. What this is
@@ -16,8 +20,10 @@ Two requirements drive the whole design:
 2. **Auditable.** The derivation must be simple enough that a user can verify it with standard tools,
    without trusting our binary.
 
-The existing CSPRNG path stays the default. This is opt-in, behind the create flow's **Advanced**
-section, with a warning — the same posture BitWindow takes ("You must know what you are doing").
+~~The existing CSPRNG path stays the default. This is opt-in, behind the create flow's **Advanced**
+section, with a warning — the same posture BitWindow takes ("You must know what you are doing").~~
+**As built:** there is no Advanced section — every create goes through the grid, with the device
+CSPRNG mixed in (§3), so the mixed path is never weaker than the device alone.
 
 ## 2. The central tension — read this before implementing
 
@@ -322,7 +328,8 @@ character count, is what moves the meter.
 ### 6.2 Emission and recording rules
 
 - **Record every sample** at the native touch rate, so the string is a faithful record of the gesture.
-- **Cap a single run at 12 recorded samples.** A user holding one key for thirty seconds must not
+- **Cap a single run at 10 recorded samples** (`EntropyAccumulator.maxRunSamples`; the plan said
+  12). A user holding one key for thirty seconds must not
   produce three thousand characters; past the cap the run stops growing and stops crediting.
 - **Require minimum travel** (≥ one cell width) before a *transition* counts — a fingertip jittering
   across a cell boundary must not farm transitions at 1.5 bits each.
@@ -350,6 +357,10 @@ the meantime. One consequence: the paste-into-a-terminal audit has to happen on 
 (e.g. a-Shell / Termux), not via Handoff to a Mac — a seed must not transit iCloud to save a step.
 
 ### 6.2b Typed / pasted entropy — inferred, not declared
+
+> **Removed (as of 2026-11-10).** There is no `TypedEntropySource` in the code and no typed-input
+> mode; the grid (plus pasting a complete field to reproduce a wallet, §9) is the only input. The
+> design is kept below for the record.
 
 **In scope for v1.** A user who rolled dice or flipped coins off-device types the result instead of
 swiping. Same field, same derivation — only the accounting differs.
@@ -382,12 +393,16 @@ meter is presented as an estimate rather than a guarantee.
 The credit table alone does not catch a user swiping back and forth in a straight line, which produces
 a plausible-looking string from a tiny subset of the grid. Before enabling **Continue**, require:
 
-- **≥ 16 distinct characters** used (of 32).
+- **≥ 16 distinct characters** used (of the 94 printable-ASCII grid characters —
+  `EntropyAccumulator.minDistinctCharacters`).
 - **No transition bigram covering more than 15% of the runs** — catches `AB AB AB…` oscillation.
   Measured over the run sequence, not the raw string, or the repeats would swamp it.
 - **A compression sanity check** over the *run sequence*: run-length + bigram-frequency estimate must
   not indicate it is materially compressible.
-- **≥ 3 separate gestures**, so the whole target cannot come from one uninterrupted stroke.
+- ~~**≥ 3 separate gestures**, so the whole target cannot come from one uninterrupted stroke.~~
+  **Removed in the build:** 1.5 bits per transition is already the continuous-stroke rate, so one
+  unbroken sweep earns at exactly the rate that models it; lifting is *rewarded* (5 bits vs 1.5), not
+  mandated (`EntropyAccumulator`, note above the structural floor).
 
 These are cheap, pure, and unit-testable. They are a floor, not a proof.
 
@@ -406,9 +421,6 @@ bits rather than 1.5.
 Reaching the bit target in three seconds is arguably *too* easy, which
 is precisely why the §6.3 structural checks — not the bit counter — are what actually stop a lazy
 input from qualifying.
-
-**In mixed mode these targets apply to the user's contribution alone** (§3): the CSPRNG prefix does not
-count toward the gate.
 
 **In mixed mode these targets apply to the user's contribution alone** (§3): the CSPRNG prefix does not
 count toward the gate.
@@ -438,15 +450,17 @@ we should keep it.
 > against "paste this to set up your wallet": a pasted field with a perfectly valid device component
 > is still fully known to whoever supplied it.
 > (it still measures the user's swiping alone and turns green at the old target). The `shasum` recipe
-> moved to the seed-preview screen. Field format and derivation (§3–§4) are unchanged, so existing
+> moved to the step after the grid (the name step since 2026-11-10; a seed preview before). Field format and derivation (§3–§4) are unchanged, so existing
 > audits still work. The original design below is kept for history.
 
-Entry: **Create wallet → Advanced → "Provide your own entropy"**. Off by default; the CSPRNG path is
-untouched for everyone else.
+Entry: ~~**Create wallet → Advanced → "Provide your own entropy"**. Off by default; the CSPRNG path is
+untouched for everyone else.~~ **As built: "Create" pushes the grid directly** (`CreateWalletScreen` →
+`EntropyInputScreen` → `NameWalletScreen`); no Advanced toggle, every wallet is made this way.
 
 Screen layout, top to bottom:
 
-1. **Title + warning.** Space Grotesk title; a `warning`-toned callout explaining that a weak string
+1. **Title + warning.** Satoshi title (the display face since 2026-09-30; was Space Grotesk); a
+   `warning`-toned callout explaining that a weak string
    means a weak wallet, and that the app cannot verify their randomness for them.
 2. **The entropy field.** JetBrains Mono, wrapping and **scrollable** — it holds 100–260 characters
    (§6.2a), not BitWindow's 33. On `bg2` with a `border` hairline. Read-only to the system: filled by
@@ -611,15 +625,19 @@ plan:
 - **Heights above the grid are reserved**, so the grid doesn't visibly shrink on the first character.
 - **The live recovery phrase is shown while entering**, dimmed until the gate passes — watching it
   churn is what makes "every character changes the wallet" visible rather than an article of faith.
-- **A seed preview step before creation**, showing the words and the derived entropy hex. Creating
-  silently and revealing the phrase afterwards skipped the one step the user came for.
+- **The words are shown before creation**, with the derived entropy hex. Creating silently and
+  revealing the phrase afterwards skipped the one step the user came for. First as a separate seed
+  preview step; since 2026-11-10 the live phrase on the grid is the showing (set at a readable size)
+  and the step after it names the wallet instead of repeating the words (`NameWalletScreen`) — the
+  hex and the `shasum` recipe live there.
 - **Pasting a copied field reproduces its wallet** — user testing found that Copy handed over a full
   field, which when pasted was treated as a *contribution* and nested inside a fresh one, silently
   giving different words. A pasted field is now used verbatim, carries its own word count, and is
   exempt from the entropy gate for the same reason importing a recovery phrase is.
-- **Custom entropy is ON by default** — mixed mode is never weaker than the device alone, so the cost
-  is a few seconds and the gain is surviving a compromised RNG. This forced the warning copy to become
-  mode-dependent: "only use this if you understand what you're doing" cannot be said of the default.
+- **Custom entropy is mandatory** (was "ON by default"; the toggle is gone — the grid is the only
+  create path) — mixed mode is never weaker than the device alone, so the cost is a few seconds and
+  the gain is surviving a compromised RNG. This forced the warning copy to change: "only use this if
+  you understand what you're doing" cannot be said of the only path.
 - **The input is no longer wiped when the preview is pushed.** `onDisappear` fires on a forward push
   too, so going to look at your words destroyed a minute of swiping.
 
@@ -674,6 +692,13 @@ estimated bits for a 12-word wallet, 512 for 24 — so the wallet still carries 
 if the credit rates over-count by 2x. At the measured ~20 runs/second that is about 5 seconds and 10
 seconds respectively.
 
+> **Superseded (2026-10-08; code as of 2026-11-10).** The bar's target is now **guidance, not a
+> gate**: `EntropyViewModel.swipeRequiredBits12 = 1000` / `swipeRequiredBits24 = 2000` (~8× nominal,
+> roughly 20 s / 40 s of swiping) is what fills the bar, while the gate that unlocks "Use this
+> entropy" is `minimumBits = nominalBits` (128 / 256). The device's CSPRNG bits are in every field, so
+> a wallet made before the bar fills is as strong as a normal one; the bar measures only what the user
+> adds on top.
+
 **The margin is deliberately not applied to typed input.** Fifty d6 rolls really are 129 bits by
 arithmetic on `log2(6)`, not a guess about behaviour, so demanding a hundred would double someone's
 physical dice-rolling for no gain. Typed input carries its own conservatism instead: any alphabet over
@@ -713,8 +738,10 @@ hex display), plus the physical-device drag measurement.
 3. `EntropyDerivation` — pure, golden-vector tested. No UI. ✅
 4. `EntropyAccumulator` — accounting + structural checks, pure, tested. ✅
 5. `WalletManager.createWallet(entropyField:)` through `Mnemonic.fromEntropy`. ✅
-6. The grid view + input screen, behind Create → Advanced. ✅
-7. Typed entropy with an **inferred** alphabet (§6.2b) — no source to declare. ✅
+6. The grid view + input screen, ~~behind Create → Advanced~~ — **now the only create path** (the
+   Advanced toggle was removed; 2026-11-10). ✅
+7. ~~Typed entropy with an **inferred** alphabet (§6.2b) — no source to declare.~~ ✅ then **removed**:
+   `TypedEntropySource` no longer exists; the grid is the only input.
 8. Confirm-step entropy-hex display and the derivation disclosure. ✅
 
 **Screen structure (revised 2026-09-07 after using it on a device):** two screens, not one. An
@@ -722,6 +749,10 @@ hex display), plus the physical-device drag measurement.
 that is nothing but the field, the meter and the input surface. The single-screen version put three
 segmented controls, a source picker, the field, a meter, the grid and five buttons on one phone screen;
 it was unusable and the keyboard covered the parts you needed to watch.
+**Superseded (2026-11-10):** the options screen is gone with typed mode. The flow is
+`CreateWalletScreen` → `EntropyInputScreen` (field + meter + grid, words shown live) →
+`NameWalletScreen` (name + the audit recipe); the word count comes from **Settings → Recovery phrase
+length** (`SettingsScreen`).
 
 ## 12. Open questions
 
@@ -730,11 +761,14 @@ All resolved 2026-09-07.
 1. ~~Domain separation~~ — **resolved** by the field format (§3).
 2. **The input string is shown only during creation.** It is seed-equivalent and the mnemonic is the
    real backup, so there is no second copy to store, protect or leak afterwards.
-3. **Typed / pasted entropy IS in v1**, via declared sources (§6.2b).
+3. ~~**Typed / pasted entropy IS in v1**, via declared sources (§6.2b).~~ **Typed mode was later
+   removed** (no `TypedEntropySource`; 2026-11-10). Pasting a complete field still reproduces its
+   wallet (§9).
 4. ~~The 12/24 choice moves onto this screen.~~ **REVERSED 2026-09-07 — it stays in Settings → New
-   wallets**, where it already was. Moving it made the entropy screen one control busier for a
-   decision that is not per-create, and it would have left two places able to change the same
-   preference. It is surfaced read-only on the options screen, since it sets the target.
+   wallets**, where it already was (today **Settings → Recovery phrase length**, `SettingsScreen`).
+   Moving it made the entropy screen one control busier for a decision that is not per-create, and it
+   would have left two places able to change the same preference. ~~It is surfaced read-only on the
+   options screen, since it sets the target.~~ (The options screen no longer exists.)
 
 ### Remaining task (not a question)
 

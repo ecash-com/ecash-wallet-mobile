@@ -1,7 +1,8 @@
 # Fast withdrawal
 
-**Status:** 📋 Ready to build (revised 2026-10-13). The client isn't built yet; the Withdraw sheet
-shows a "Coming soon" slot for it (`WithdrawOptionsSheet`).
+**Status:** 🔧 BUILT, switched off (2026-10-21: `isEnabled = false` in `FastWithdrawalConfig.swift`;
+`WithdrawOptionsSheet` shows "Coming soon") pending a live betanet run. No mainnet service yet
+(2026-11-10).
 
 **Service:** `https://fastwithdraw.betanet.ecash.ninja` — run by the **L2L team** for **betanet**.
 Thunder → betanet L1 only. A mainnet instance is the plan (the server is designed for ECX mainnet);
@@ -90,8 +91,10 @@ length as an **8-byte big-endian** integer:
 - the quote hasn't expired, with a margin for the payment to propagate.
 
 **Key pinning:** the signing key comes from the same server it vouches for, so it proves integrity of
-a quote against that key, not who the operator is. Pin the expected key in the remote config
-(alongside the endpoint) so a swapped server or key is caught.
+a quote against that key, not who the operator is. Pinning is a **future step**: today the endpoint,
+operator and key slot are compiled into `FastWithdrawalConfig.endpoint(forSidechain:)` with
+`pinnedQuoteKeyBase64 = nil` (the key `GetServiceInfo` reports is accepted). Moving them to the remote
+config with a pinned key would catch a swapped server or key.
 
 ## 5. Payment rules (what the server accepts)
 
@@ -160,14 +163,18 @@ confirmations are the slow part; the user needn't watch.
 
 ### Configuration
 
-Endpoint, operator name, terms/support link, and the pinned signing key come from the **remote
-config** (`RemoteEndpointConfig`), per network — the same mechanism that rotates other endpoints
-without a release. Betanet: `https://fastwithdraw.betanet.ecash.ninja`, operator L2L. Hide the option
-when no entry exists for the wallet's network.
+Endpoint, operator name and the (optional) pinned signing key are **compiled** into
+`FastWithdrawalConfig.endpoint(forSidechain:)` (pin `nil`), not read from the remote config; remote
+config + pinning are a future step. Only betanet `.thunder` has an entry
+(`https://fastwithdraw.betanet.ecash.ninja`, operator L2L) — and that network is retired from the
+pickers since 2026-10-30; `.thunderMainnet` returns nil (no service, 2026-11-10). The option is hidden
+when there's no entry for the wallet's sidechain or `isEnabled` is false.
 
 ## 8. UI
 
-Lives behind **Withdraw → Fast withdrawal** on a Thunder wallet (replacing "Coming soon").
+Lives behind **Withdraw → Fast withdrawal** on a Thunder wallet — shown as "Coming soon" while
+`FastWithdrawalConfig.isEnabled` is false. Only betanet `.thunder` has a service, and that network is
+retired/hidden; `.thunderMainnet` has none (2026-11-10).
 
 1. **Amount + destination** — destination defaults to one of the user's own wallets on the mainchain
    (same-network picker as the regular withdrawal; `nextUnusedAddress`). Show min/max and "≈ fee"
@@ -176,8 +183,8 @@ Lives behind **Withdraw → Fast withdrawal** on a Thunder wallet (replacing "Co
    numbers as the truth: you pay X on Thunder, you receive Y on betanet, fee Z, expires in N minutes.
    **State the trust plainly**: "You're trusting L2L to pay you. If they don't, there's no way to get
    the coins back on-chain." Device auth, as Send.
-3. **Progress** — paid → confirming → paying out → paid, with both txids. Survives leaving the screen;
-   ongoing withdrawals also appear in Activity.
+3. **Progress** — paid → confirming → paying out → paid, with both txids. Survives leaving the screen.
+   Ongoing withdrawals in Activity: **not built** (2026-11-10).
 
 ## 9. Open questions
 

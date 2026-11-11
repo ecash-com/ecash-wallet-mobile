@@ -6,8 +6,8 @@ import SwiftUI
 import WalletService
 
 /// The Dashboard tab (`docs/dashboard-plan.md`): the eCash network at a glance — chain health, news
-/// (on-chain CoinNews and eCash.com), markets, releases. No ECX price card until real ECX is listed
-/// somewhere keyless (the Betanet wbECX card went with Betanet, 2026-10-29).
+/// (on-chain CoinNews and eCash.com), markets, releases. ECX price = eCash.com's price API (keyless;
+/// the Betanet wbECX card went with Betanet, 2026-10-29).
 ///
 /// Reports on `AppState.dashboard.network` (eCash mainnet; a config `dashboard` block can override),
 /// not the selected wallet's network. CoinNews is the exception: reading and posting are per-network and need a wallet
@@ -29,6 +29,7 @@ struct DashboardScreen: View {
             Theme.Colors.bg0.ignoresSafeArea()
             ScrollView {
                 VStack(spacing: Theme.Space.x4) {
+                    priceCard
                     networkCard
                     if showsCoinNews { coinNewsCard }
                     ecosystemNewsCard
@@ -199,6 +200,42 @@ struct DashboardScreen: View {
         }
     }
 
+    // MARK: - 1. Price
+
+    /// ECX as eCash.com's price API quotes it: the last price on each ECX market it tracks, weighted
+    /// by 24h volume. The API carries no 24h change, so the card shows none.
+    private var priceCard: some View {
+        let section = app.dashboard.markets
+        return VStack(alignment: .leading, spacing: Theme.Space.x2) {
+            DashboardSectionHeader(title: "ECX price")
+            if let quote = section.value?.ecx {
+                HStack(alignment: .firstTextBaseline, spacing: Theme.Space.x3) {
+                    Text(verbatim: DashboardFormat.usd(quote.price))
+                        .font(.jbMono(34, .medium))
+                        .foregroundStyle(Theme.Colors.text0)
+                        .lineLimit(1)
+                        .minimumScaleFactor(0.6)
+                    if let change = quote.change24h {
+                        Text(verbatim: DashboardFormat.percentChange(change))
+                            .textStyle(.sm)
+                            .foregroundStyle(change < 0 ? Theme.Colors.negative : Theme.Colors.positive)
+                    }
+                }
+                Text("Volume-weighted across ECX markets", bundle: .module,
+                     comment: "dashboard price card: how the headline price is computed")
+                    .textStyle(.xs)
+                    .foregroundStyle(Theme.Colors.text1)
+                DashboardFreshness(updatedAt: section.updatedAt, stale: section.lastAttemptFailed,
+                                   source: quote.source)
+            } else if section.display == .loading {
+                DashboardSkeleton(rows: 2)
+            } else {
+                DashboardUnavailable()
+            }
+        }
+        .dashboardCard()
+    }
+
     // MARK: - 5. Markets
 
     private var marketsCard: some View {
@@ -209,7 +246,7 @@ struct DashboardScreen: View {
             case .loading: DashboardSkeleton(rows: 4)
             case .unavailable: DashboardUnavailable()
             case .ready:
-                ForEach(section.value?.quotes ?? []) { quote in
+                ForEach(section.value?.allQuotes ?? []) { quote in
                     MarketRow(quote: quote)
                 }
             }

@@ -7,8 +7,8 @@
 > (§2) — retained so that if BitWindow interop ever becomes worthwhile (e.g. many legacy-version
 > users), the work is captured and doesn't need redoing.
 >
-> Distinct from `docs/advanced-import.md` (general script-type/path import), which remains a valid
-> future idea on its own and is unaffected by this decision.
+> Distinct from `docs/custom-derivation-path-import.md` (general script-type/path import, since
+> built as the Advanced import section), which stands on its own and is unaffected by this decision.
 
 ## 1. The problem (root cause)
 A user imported their BitWindow recovery phrase, the import "succeeded," but **no balance**. Cause:
@@ -50,8 +50,10 @@ each backup's `l1.mnemonic`. (Script lived in `/tmp`; not committed. **Do not co
 ## 3. Two implementation options
 
 ### Option A — import the `l1` phrase directly (zero code)
-Tell users to import the **`l1`** mnemonic (not `master`) on **L2L Signet**. Works **today** with the
-existing BIP84 import — the only gap is *knowing* to use the l1 phrase. Ship this as
+Tell users to import the **`l1`** mnemonic (not `master`), then switch to **L2L Signet** inside the
+wallet (import has no network picker since 2026-11-05 — the Signet account is derived automatically;
+`docs/seed-container-model.md`). Works **today** with the existing BIP84 import — the only gap is
+*knowing* to use the l1 phrase. Ship this as
 documentation/support guidance immediately; it's the unblock for the current user.
 
 ### Option B — import the `master` phrase, auto-derive l1 (the real feature)
@@ -75,12 +77,14 @@ transform, then import the derived `l1` as a normal BIP84 wallet. Nicer UX (matc
   a picker — but L1-only via the `master`→`l1` transform covers the immediate need.
 
 ## 4. Network / settings
-Import as **L2L Signet** (coin-type `1'`, BIP84, `tb1q…`) — BitWindow's default is Drivechain signet
-on the same backend (`node.signet.drivechain.info`). If a user is on a different BitWindow network,
+Use the wallet's **L2L Signet** account (coin-type `1'`, BIP84, `tb1q…`) — derived automatically on
+import, selected via the in-wallet network switcher (2026-11-10; `docs/seed-container-model.md`).
+BitWindow's default is Drivechain signet on the same backend (`node.signet.drivechain.info`). If a user is on a different BitWindow network,
 the same transform applies with that network's coin-type.
 
 ## 5. Confirm before building
-Have the user import the **`l1`** phrase (Option A) on L2L Signet and confirm the balance appears.
+Have the user import the **`l1`** phrase (Option A), switch to L2L Signet inside the wallet, and
+confirm the balance appears.
 That validates the last assumption (the enforcer/patched-Core wallet uses standard BIP84 `m/84'/1'/0'`
 on l1) before we invest in Option B.
 

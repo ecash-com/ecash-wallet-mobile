@@ -36,7 +36,7 @@ import WalletService
                                 mnemonic: String? = mnemonic) -> ThunderService {
         ThunderService(
             loadMnemonic: { _ in mnemonicReads.count += 1; return mnemonic },
-            makeBackend: {
+            makeBackend: { _ in
                 ThunderRPCBackend(client: ThunderRPCClient(endpoint: "http://127.0.0.1:6009") { request in
                     let body = request.httpBody ?? Data()
                     requests.append(body)

@@ -41,14 +41,14 @@ public enum BDKSeam {
         case .ecash, .ecashBeta, .ecashMainnet: return Network.BITCOIN
         // Thunder never touches BDK (the facade routes it to ThunderService) — unreachable; mapped
         // to BITCOIN only to keep the switch exhaustive.
-        case .thunder:  return Network.BITCOIN
+        case .thunder, .thunderMainnet:  return Network.BITCOIN
         }
         #else
         switch network {
         case .bitcoin:  return Network.bitcoin
         case .signet:   return Network.signet
         case .ecash, .ecashBeta, .ecashMainnet: return Network.bitcoin
-        case .thunder:  return Network.bitcoin   // unreachable — Thunder doesn't use BDK
+        case .thunder, .thunderMainnet:  return Network.bitcoin   // unreachable — Thunder doesn't use BDK
         }
         #endif
     }

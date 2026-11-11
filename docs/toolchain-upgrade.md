@@ -77,9 +77,11 @@ alone breaks the Android build, with no change in the repo. That is also why CI 
 - CI on `xcode-27`: [run 35896133843](https://github.com/ecash-com/ecash-wallet-mobile/actions/runs/35896133843)
   green in 37 min; its APK is 79MB with 42 native libs incl. `libswiftCore.so`, matching local.
 
-**Not yet verified:** a betanet wallet (the current eCash network, `WalletNetwork.currentEcash`)
-and a real send on either platform since the upgrade. Create or import a betanet wallet and do a
-small send on it before the next release.
+**Not yet verified (at the time):** a betanet wallet (then the current eCash network,
+`WalletNetwork.currentEcash`) and a real send on either platform since the upgrade.
+**Closed (2026-11-10):** betanet is retired and `currentEcash` is now `.ecashMainnet` (the real fork,
+since 2026-10-29); builds 26 → 46 (1.5.0) have shipped on this toolchain, so the toolchain itself is
+proven. Any remaining send check is an ordinary eCash-mainnet release check, not an upgrade item.
 
 ## Known issues after the upgrade
 
@@ -110,7 +112,7 @@ else changed in the same sitting. Nothing broke; no repo change was needed. Re-v
   (the emulator's own Bluetooth stack logs an unrelated native abort to the crash buffer).
 - `WalletService` tests: 215 host (1 skipped), 159 Robolectric, 0 failures.
 
-The betanet send in *Not yet verified* above is still open.
+The betanet send in *Not yet verified* above was still open then; closed 2026-11-10 (see there).
 
 ## Rules for the next upgrade
 

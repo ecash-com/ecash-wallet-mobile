@@ -32,7 +32,7 @@ adds spent outputs.
 |---|---|---|
 | Include specific coins | `addUtxo(outpoint)` / `addUtxos([…])` | force-include |
 | Spend only chosen coins | `manuallySelectedOnly()` | full manual selection |
-| Freeze / exclude coins | `addUnspendable` / `unspendable([…])` | **already used** for 0-conf policy |
+| Freeze / exclude coins | `addUnspendable` / `unspendable([…])` | **already used** for the 0-conf policy's first pass (`buildPreferringConfirmed`) |
 | Change handling | `changePolicy(ChangeSpendPolicy)` | allowed / only-change / forbidden |
 | Sweep / send-max | `drainWallet()` + `drainTo(script)` | consolidation building block (§5) |
 | Fees | `feeRate` / `feeAbsolute` | |
@@ -43,9 +43,10 @@ bindings. In Rust you can swap Branch-and-Bound / LargestFirst / OldestFirst or 
 selection. This is a non-issue for coin control: `manuallySelectedOnly()` + `addUtxo` gives 100%
 control when the user wants it.
 
-> **TODO (verify):** confirm the exact UniFFI method names for `addUtxo` / `manuallySelectedOnly` /
-> `changePolicy` / `drainTo` in the pinned `bdk-swift`/`bdk-android` ~2.3.x before building (we
-> already call `unspendable`; the rest need a one-time check against the binding).
+> **TODO (verify) — partly resolved (2026-11-10):** `drainWallet()` / `drainTo(script:)` are
+> confirmed in use (`WalletEngine.sweep` / `splitToSelf`) and so is `addForeignUtxo(outpoint:psbtInput:…)`
+> (the deposit path), alongside `unspendable`. `addUtxo` / `manuallySelectedOnly` / `changePolicy`
+> still need the one-time check against the pinned `bdk-swift`/`bdk-android` ~2.3.x before building.
 
 ## 3. Data-model changes
 
@@ -60,9 +61,11 @@ BDK stores **no** labels or freeze state (`metadata-is-app-owned`). So:
   - `label: String?` (where the coins came from)
   - `frozen: Bool`
   Survives across syncs; purged with the wallet. **BIP-329** is the backup/export format for labels.
-- **Frozen set → spend path:** the engine already builds an `unspendable` set (untrusted 0-conf).
-  Union the user's frozen outpoints into it on every `buildTx`, so frozen coins are never
-  auto-selected. (Frozen coins can still be *manually* added if we ever want an override — decide.)
+- **Frozen set → spend path:** the engine already builds an `unspendable` set (incoming 0-conf, on
+  the first of the two coin-selection passes — `WalletEngine.buildPreferringConfirmed`). Union the
+  user's frozen outpoints into it on BOTH passes, so frozen coins are never auto-selected even when
+  the second pass opens up the unconfirmed ones. (Frozen coins can still be *manually* added if we
+  ever want an override — decide.)
 
 ## 4. UX surfaces
 
@@ -94,7 +97,10 @@ output back to an address this wallet owns.
   than it's worth (≈ input vsize × feeRate > value). Flag those; consolidating them at a *low* fee
   can still be worth it, but spending them later at a high fee isn't. Show the math.
 - **Self-transfer UX:** it's a tx that "sends to yourself" — the review/Activity should label it as
-  a consolidation, not a normal send, so the user isn't confused (net change ≈ just the fee).
+  a consolidation, not a normal send, so the user isn't confused (net change ≈ just the fee). A
+  generic **"Sent to yourself"** row label already exists (`Components/TxRow.swift`, built for
+  split / self-sweep and showing the amount moved rather than the netted fee); a consolidation-
+  specific label would build on it.
 
 **⚠️ Privacy caveat (must warn):** consolidating merges UTXOs into one transaction, which links them
 under the common-input-ownership heuristic — coins from different sources become provably the same
@@ -111,8 +117,8 @@ opposite tradeoff from coin control's usual privacy goal of *keeping* coins sepa
   *public* data (outpoints, scripts, amounts) — the build stays watch-only; the mnemonic is still
   only loaded at `sign` (unlike Silent Payments, which breaks this — see `docs/silent-payments.md`
   if/when written). No change to the key-storage seam.
-- **Per (wallet × network)** isolation unchanged — UTXOs and their metadata are namespaced by
-  `walletId`/network like everything else.
+- **Per-account** isolation unchanged — UTXOs and their metadata are namespaced by `walletId` +
+  account (`WalletAccount`, one per network/script type) like everything else.
 - **Engine API additions:** `listUtxos()` enrichment; `buildTx`/`send` gain optional
   `selectedOutpoints: [Outpoint]` (→ `manuallySelectedOnly` + `addUtxo`) and read the frozen set;
   a `consolidate(feeRate:, outpoints:)` convenience that wraps drain-to-own-address.

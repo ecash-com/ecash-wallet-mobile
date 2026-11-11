@@ -1,8 +1,9 @@
-# CoinNews integration — design record (TO BUILD)
+# CoinNews integration — design record (BUILT)
 
 > **Status:** 🟢 SUBSTANTIALLY BUILT (read + publish, per-network) — **with one gap: we do not yet
-> verify signatures on what we display** (see §4.1). Design below is the original record. Captures how the wallet will **fetch** and **publish** CoinNews
-> once we're ready. The protocol itself is summarized in memory `coinnews-protocol`; the canonical
+> verify signatures on what we display** (see §4.1). Design below is the original record, kept as
+> written; it captures how the wallet **fetches** and **publishes** CoinNews (title changed from "TO
+> BUILD" 2026-11-10). The protocol itself is summarized in memory `coinnews-protocol`; the canonical
 > spec is the CoinNews draft (BSD-2). Reference code lives in `LayerTwo-Labs/drivechain-frontends`:
 > the wire codec at **`coinnews/codec/`** (Go) and a standalone hostable indexer+API at
 > **`coinnews/server/`** (Go, ConnectRPC) with a Next.js consumer at `coinnews/app/` — NOT the
@@ -12,7 +13,7 @@
 > encoded entirely in Bitcoin `OP_RETURN` outputs. Every indexer rebuilds the identical view by
 > scanning blocks in canonical `(block_height, tx_index, vout_index)` order. eCash is byte-identical
 > Bitcoin, so it runs on our chain. Complements `docs/backends-and-endpoints.md`, `docs/key-storage.md`,
-> and `docs/wallet-and-network-model.md`.
+> and `docs/seed-container-model.md`.
 
 ---
 
@@ -23,7 +24,7 @@ Two independent halves, very different in difficulty:
 - **Fetch (read):** show a CoinNews feed — front page (ranked Stories), threads (Comments), scores.
 - **Publish (write):** post a Story, reply with a Comment, cast an Up/Downvote, create a Topic.
 
-Both are **network-scoped** (CoinNews on Testnet4 ≠ on eCash mainnet) and resolve through the same
+Both are **network-scoped** (CoinNews on L2L Signet ≠ on eCash mainnet) and resolve through the same
 `NetworkRegistry` seam as backends/explorers — a CoinNews wallet on network X reads/writes X's board.
 
 Likely build order: **read-only feed first** (lower risk, no new signing), then publishing.
@@ -85,7 +86,8 @@ do build → sign → broadcast; this adds an `OP_RETURN` output and an author s
   (DECIDED — not the Rust/bdk-ffi route for now, though sidechain work may force that later):
   - **iOS:** `swift-secp256k1` (21-DOT-DEV, industry standard), product **`P256K`**, `~0.23.2`.
     `schnorrsig` is in its DEFAULT traits, so no trait wiring needed.
-  - **Android:** `fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.17.3` (Maven), via `skip.yml`.
+  - **Android:** `fr.acinq.secp256k1:secp256k1-kmp-jni-android:0.23.0` (Maven), via `skip.yml`
+    (was 0.17.3 when decided; pinned at 0.23.0 as of 2026-11-10).
   - Both wrap audited libsecp256k1; Golden Rule §1 (never hand-roll signing) upheld.
 - Comments/Votes sign **BIP-340 Schnorr over a per-type tagged hash**
   (`tagged_hash("CoinNews/Vote", typetag ‖ target_id)`, `tagged_hash("CoinNews/Comment", parent_id ‖
@@ -165,23 +167,32 @@ verification state in the UI when we get to B.
 - **`CoinNewsCodec`** — pure-Swift, app-module or its own SwiftPM package (no platform deps). Shared
   by reader + publisher; this is where the spec's test vectors live as unit tests.
 - **Schnorr signing + `OP_RETURN` tx build** — through the **WalletService/BDK seam** (the only place
-  with key material and consensus logic, Golden Rule §1/§3). Likely a `bdk-ffi` extension.
+  with key material and consensus logic, Golden Rule §1/§3). As built: not a `bdk-ffi` extension —
+  Schnorr uses `swift-secp256k1` (iOS) / `secp256k1-kmp` (Android) in `CoinNewsCrypto`, and the
+  `OP_RETURN` goes through BDK `TxBuilder.addData` in `WalletEngine.publishData`.
 - **`CoinNewsReader`** — an HTTP client (URLSession; remember `import FoundationNetworking` on
   Fuse-Android, memory `fuse-networking-and-pricing`). Endpoint per network via `NetworkRegistry` +
   override, mirroring backends.
 - **Identity key** — derived in `WalletService` from the seed at a fixed path; sign-on-demand.
-- **UI** — a CoinNews tab/section (feed, thread, compose). Out of scope until the data layer lands.
+- **UI** — a CoinNews tab/section (feed, thread, compose). **Built:** `NewsScreen`,
+  `CoinNewsDetailView`, and the CoinNews section of `DashboardScreen` (`Screens/`).
 
-## 6. Key unknowns to resolve before building
+## 6. Key unknowns to resolve before building (historical — answered as noted, 2026-11-10)
 
 1. **Schnorr signing primitive** — does the BDK binding expose BIP-340 signing of an arbitrary
-   tagged hash, or do we extend `bdk-ffi`? (Blocks Comment/Vote publishing.)
+   tagged hash, or do we extend `bdk-ffi`? (Blocks Comment/Vote publishing.) **ANSWERED:** BDK
+   doesn't; we use `swift-secp256k1` / `secp256k1-kmp` (§3.2).
 2. **`OP_RETURN` output via `TxBuilder`** — confirm `add_data` is in `bdk-swift` 2.3.1 or needs FFI work.
+   **ANSWERED:** it is — `TxBuilder.addData` in `WalletEngine.publishData`.
 3. **Relay `datacarriersize`** on eCash/drivechain — can 111-byte `OP_RETURN`s be broadcast on the
    default backends, or only via a permissive/own node?
 4. **Identity derivation path** — one CoinNews author key per wallet; pick a path; relation to the
-   wallet's BIP-84 keys (separate, by design).
-5. **Indexer hosting — NO public endpoint exists yet (probed 2026-06-15).** The API
+   wallet's BIP-84 keys (separate, by design). **ANSWERED:** `m/1899h/0h/0h`
+   (`CoinNewsIdentity.derivationPath`).
+5. **Indexer hosting — ANSWERED:** a public `coinnews.v1` indexer runs at
+   `https://coinnews.signet.drivechain.info` for L2L Signet (`CoinNewsEndpointRegistry`); the eCash
+   networks get one via the remote config if/when L2L runs it. Original finding, kept for the
+   record: NO public endpoint existed when probed 2026-06-15. The API
    (`coinnews/server` ConnectRPC `CoinNewsService`) and its shape are known, but a scan of L2L hosts
    found only the signet **faucet** (`node.signet.drivechain.info`) and **explorer**
    (`explorer.signet.drivechain.info`) — no live `CoinNewsService` anywhere, and `coinnews.*`/`news.*`
@@ -191,6 +202,8 @@ verification state in the UI when we get to B.
    the codec phase (Phase 1) needs no server.
 
 ## 7. Phased plan
+
+Phases 1–4 are **done** (2026-11-10); only phase 5 (client-side verification, §4.1) is open.
 
 1. **Codec + vectors.** `CoinNewsCodec` encode/decode all six types + TLV + ItemID, ported Go test
    vectors. No chain, no UI. Pure unit tests, both platforms.

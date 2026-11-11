@@ -11,7 +11,7 @@
 | # | Decision |
 |---|---|
 | D1 | The **News** tab becomes **Dashboard**. CoinNews stays, as a **section inside** the dashboard. |
-| D2 | **No eCash.com API.** Every number comes from a public source the app calls directly. |
+| D2 | ~~**No eCash.com API.**~~ Reversed 2026-11-09: **one** eCash.com source, the ECX price API (`https://dev.ecash.com/price`). Every other number comes from a public third-party source the app calls directly. |
 | D3 | The dashboard shows **one network**: **eCash mainnet** (since 1.4.6 build 44, 2026-10-29; betanet before). No picker, not tied to the selected wallet. A remote-config `dashboard` block can override it, but the live config has never carried one — so the bundled default was moved to mainnet rather than waiting on a fetch (§4.6, §10). |
 | D4 | **No CoinGecko.** Prices come from exchange/DEX tickers (§4.2). |
 
@@ -50,10 +50,10 @@ hairline `border`, `Radius.md`) — the same look as `TxDetailSheet`'s cards.
 ┌──────────────────────────────────────┐
 │ Dashboard                            │  large nav title
 │                                      │
-│ ECX                                  │  ── 1. Hero price card
-│ $128.31            ▼ 18.80%          │     implied ECX price (wbECX × ratio, §4.2), big mono
-│ wbECX $2.57 · Orca · 24h vol $4.5K   │     source line, small text2
-│ updated 15:25                    ⓘ   │
+│ ECX PRICE                            │  ── 1. Hero price card (as built 2026-11-09)
+│ $128.31                              │     ECX from eCash.com's price API, big mono — no 24h
+│ Volume-weighted across ECX markets   │     change (the API has none); explainer line, text1
+│ updated 15:25 · eCash.com            │     freshness + source
 │                                      │
 │ NETWORK · BETANET                    │  ── 2. Network metrics: 2×2 grid (header names the live
 │                                      │     network; reads MAINNET after the fork)
@@ -78,7 +78,8 @@ hairline `border`, `Radius.md`) — the same look as `TxDetailSheet`'s cards.
 │         CoinCarp · Market Data       │
 │ 02 Oct  Sidecoin Ships First …       │
 │                                      │
-│ MARKETS                        See ›│  ── 6. Compact market list (BTC, BCH, BSV, XEC, BTCB2)
+│ MARKETS                        See ›│  ── 6. Compact market list (ECX first, source "eCash.com",
+│ eCash     ECX   $0.12       —        │     then BTC, BCH, BSV, BTCB2 — XEC dropped 2026-11-05)
 │ Bitcoin   BTC   $83,196   ▼ 3.7%     │     one row each: name, ticker, price, 24h %
 │ Bitcoin Cash BCH  $301.4  ▼ 4.7%     │
 │ …                                    │
@@ -140,8 +141,9 @@ All public, keyless, HTTPS JSON (or RSS). Requests go through `URLSession` (Fuse
 
 ### 4.1 Network metrics — chain explorer (mempool-style API)
 
-Base: the **live dashboard network's** explorer — today betanet `https://explorer.beta.ecash.ninja`
-(verified), mainnet's at the fork (§4.6). Alphanet is not shown.
+Base: the **live dashboard network's** explorer — eCash mainnet `https://explorer.ecash.ninja`
+(`DashboardNetwork.mainnet`, since 2026-10-29; betanet's `explorer.beta.ecash.ninja` before, §4.6).
+Alphanet is not shown.
 
 | Metric | Endpoint | Derivation |
 |---|---|---|
@@ -160,9 +162,10 @@ every 5 min while the tab is visible (the site's cadence).
 
 | Asset | Source | Endpoint | Fields |
 |---|---|---|---|
-| BTC, BCH, BSV, XEC | **Gate.io** spot tickers | `GET https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT` (one call per pair, or one call with no pair and filter) | `last`, `change_percentage`, `quote_volume` |
+| BTC, BCH, BSV | **Gate.io** spot tickers | `GET https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT` (one call per pair, or one call with no pair and filter) | `last`, `change_percentage`, `quote_volume` |
 | BTCB2 | **NonKYC** | `GET https://api.nonkyc.io/api/v2/market/getbysymbol/BTCB2_USDT` | `lastPrice`, `yesterdayPrice` (→ 24h %), `volume` |
-| wbECX → ECX | **Jupiter** price API (+ **Orca** pool for volume / fallback price) — *DexScreener dropped the pool 2026-10-07, see §10* | `GET https://lite-api.jup.ag/price/v3?ids=EVHqNdzjCupKi4rQkbuYw52sa1m8A7jeUAMP23S9AVVq`; `GET https://api.orca.so/v2/solana/pools/nNKg814Wq3uTkoG4fM8LzvBQv4Fu2iCgKFmK2YmPQzM` | Jupiter `usdPrice`, `priceChange24h`; Orca `stats.24h.volume`, `price` (wbECX per USDC — inverted) |
+| ECX | **eCash.com** price API (since 2026-11-09, `EcashPriceProvider`) | `GET https://dev.ecash.com/price` | USD price, volume-weighted across the ECX markets it tracks, 24h volume; **no 24h change** |
+| wbECX → ECX *(superseded — §11)* | **Jupiter** price API (+ **Orca** pool for volume / fallback price) — *DexScreener dropped the pool 2026-10-07, see §10* | `GET https://lite-api.jup.ag/price/v3?ids=EVHqNdzjCupKi4rQkbuYw52sa1m8A7jeUAMP23S9AVVq`; `GET https://api.orca.so/v2/solana/pools/nNKg814Wq3uTkoG4fM8LzvBQv4Fu2iCgKFmK2YmPQzM` | Jupiter `usdPrice`, `priceChange24h`; Orca `stats.24h.volume`, `price` (wbECX per USDC — inverted) |
 
 All verified live 2026-10-07. Notes:
 
@@ -172,9 +175,11 @@ All verified live 2026-10-07. Notes:
   per chain is a project of its own. Volume and 24h % are what the tickers give us.
 - **ECX implied price** = wbECX price × ratio. The reference uses ×50 ("using 20M ECX") — **confirm
   the ratio and its meaning before shipping** (O2). Shown as the headline with the wbECX price and
-  source underneath, so the derivation is never hidden.
-- The existing `PriceProvider`/Bitfinex path (wallet fiat display) is **untouched**. The dashboard's
-  market data is separate: different assets, different purpose.
+  source underneath, so the derivation is never hidden. *(Superseded: since 2026-11-09 the headline
+  is the eCash.com price API's ECX quote, §11.)*
+- The existing `PriceProvider`/Bitfinex path (Bitcoin wallet fiat display) is **untouched**. "The
+  dashboard's market data is separate" is no longer fully true (2026-11-09): eCash mainnet and Thunder
+  mainnet fiat lines use the same `EcashPriceProvider` the dashboard card reads (`PriceProviderRegistry`).
 - Refresh: on appear + pull + every 60 s while visible. Gate allows 200 req/10 s and DexScreener
   300/min, so per-device polling is far below the limits.
 
@@ -206,7 +211,8 @@ At the fork it follows the dashboard to mainnet like everything else.
 ### 4.6 Which network, and where the URLs live
 
 One remote-config value picks the dashboard's network: `dashboard.network` in the existing config
-(`drivechain.dev/config`), bundled default **betanet**. At mainnet launch L2L sets it to the mainnet
+(`https://dev.ecash.com/config` since 2026-11-09; `drivechain.dev/config` before), bundled default
+**mainnet** (betanet until 2026-10-29). At mainnet launch L2L sets it to the mainnet
 id (plus the mainnet explorer base) and every installed app switches on its next config fetch — no
 release needed, and no window where users see betanet numbers labelled as mainnet.
 
@@ -269,7 +275,7 @@ Android emulator (fonts, bars and `List`s fail silently on Android — check by 
 | # | Question | Default if unanswered |
 |---|---|---|
 | O1 | **CoinNews on betanet:** there's no indexer, so the section is empty on the default network. Stand one up, or have the CoinNews section follow the *selected wallet's* network instead of the dashboard's network? | Follow the dashboard's network; show "not live on Betanet yet" |
-| O2 | **ECX implied price:** what exactly does "wbECX × 50, using 20M ECX" mean, and is it a number we want headlining the dashboard? | CLOSED 2026-10-29: the card and the wbECX row were removed with betanet. No ECX price until real ECX is listed on a keyless venue (Gate.io and NonKYC had no ECX market that day) |
+| O2 | **ECX implied price:** what exactly does "wbECX × 50, using 20M ECX" mean, and is it a number we want headlining the dashboard? | CLOSED 2026-10-29: the card and the wbECX row were removed with betanet. No ECX price until real ECX is listed on a keyless venue (Gate.io and NonKYC had no ECX market that day). **Closed for good 2026-11-09:** ECX comes from eCash.com's own price API (`dev.ecash.com/price`), §11 |
 | O3 | Mainnet explorer URL at the fork (Oct 31) — needed for the config flip | CLOSED 2026-10-29: `https://explorer.ecash.ninja` (verified: `/api/blocks/tip/height`, `/api/v1/blocks`, `/api/mempool`), releases channel `mainnet` (`releases.ecash.com/L1-ecash-bitcoin/mainnet/latest/release.json`, same fields). Bundled as `DashboardNetwork.mainnet` |
 | O4 | Should the Wallet tab's fiat price for eCash wallets use the same wbECX source? | No — out of scope here |
 | O5 | Attribution: do Gate/DexScreener/NonKYC terms require visible credit? | Credit each source in the Markets footnote |
@@ -296,12 +302,12 @@ Ecosystem / Development tabs, and any buy/swap/trade entry point (§3.6).
   skipped refreshing. A cancellation is also never recorded as a failure.
 - **Config key:** top-level `dashboard: {network_id, display_name, explorer_url, releases_channel}`
   (`RemoteEndpointConfig.resolvedDashboardNetwork`). Needs `network_id` + an http(s) `explorer_url`;
-  anything else keeps betanet.
+  anything else falls back to `.mainnet` (betanet before 2026-10-29).
 - **Android gotchas found:** `accessibilityElement(children:)` is unavailable in SkipFuseUI;
   `NumberFormatter` ignores `maximumFractionDigits` (values are rounded before formatting); Compose
   ignores `.firstTextBaseline` in `HStack`s (news rows use `.top`).
-- **Open still:** O2 (the ×50 ratio — shown as a labelled secondary line), O3 (mainnet explorer URL for
-  the config flip), O5 (attribution — sources are credited inline).
+- **Open still (2026-11-10):** only O5 (attribution — sources are credited inline). O2 and O3 are
+  closed (§8, §11).
 - **wbECX moved off DexScreener (2026-10-07, same day as release):** DexScreener stopped returning the
   Orca pool (`"pairs": null` for the pool, the token and a search), so the ECX price card read
   "Unavailable" everywhere. Now Jupiter's price API (aggregated price + 24h change) with Orca's own pool
@@ -316,7 +322,12 @@ Ecosystem / Development tabs, and any buy/swap/trade entry point (§3.6).
   what depending on a fetch costs, so the default no longer waits for it. Caches are keyed by id, so
   nothing cached under `betanet.*` is shown.
 - **ECX price card and the wbECX market row removed.** wbECX was wrapped *betanet* ECX; real ECX is
-  not listed on Gate.io or NonKYC (checked that day). The Markets table (BTC/BCH/BSV/XEC/BTCB2) stays.
+  not listed on Gate.io or NonKYC (checked that day). The Markets table (BTC/BCH/BSV/BTCB2; XEC removed 2026-11-05) stays.
   Jupiter/Orca code is gone — `git log -S wbECX` to recover it if an ECX market appears there.
 - Betanet and alphanet are no longer referenced by the dashboard. CoinNews still follows the selected
   wallet's network, as before.
+- **2026-11-09 — ECX price is back, from eCash.com.** The headline card and the first Markets row read
+  `https://dev.ecash.com/price` (`EcashPriceProvider`, shared with the eCash-mainnet and Thunder-mainnet
+  fiat lines): USD, volume-weighted across the ECX markets it tracks, labelled "eCash.com"; the API
+  publishes **no 24h change**, so none is shown. (2026-11-05 to 11-09 it was the wECX/USDC Orca pool
+  via GeckoTerminal.) XEC was dropped from the table 2026-11-05.

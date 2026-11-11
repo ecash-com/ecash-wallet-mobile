@@ -1,25 +1,16 @@
 # Store screenshots — shot list
 
-**For:** App Store Connect + Google Play · **Written:** 2026-09-09 · **App version:** 0.2.2 (17)
+**For:** App Store Connect + Google Play · **Written:** 2026-09-09 · **App version:** 1.5.0 (46) (refreshed 2026-11-10)
 
 The copy is done (`Darwin/fastlane/metadata/`, `Android/fastlane/metadata/`). This is the shooting
 script for the images, which are the last thing standing between us and a submittable listing.
 
 ---
 
-## 0. Decide this first: are we shipping an iPad app?
+## 0. iPad — decided: iPhone only
 
-`Darwin/ECashWalletMobile.xcodeproj` sets `TARGETED_DEVICE_FAMILY = "1,2"` — iPhone **and** iPad. That
-has a cost at submission: App Store Connect requires a **separate 13" iPad screenshot set**, and Apple
-review will run the app on an iPad and reject layout that breaks there. Nothing in this project has
-ever been laid out or tested for iPad.
-
-Two ways out, and it's worth picking before shooting rather than after:
-
-- **Set `TARGETED_DEVICE_FAMILY = 1`** (iPhone only). One screenshot set, one form factor to defend.
-  Almost certainly right for now; an iPad build can come back later as a deliberate piece of work.
-- **Keep "1,2"** and budget for shooting every shot below twice, plus an iPad layout pass first.
-
+`Darwin/ECashWalletMobile.xcodeproj` sets `TARGETED_DEVICE_FAMILY = "1"` (iPhone only), so there is one
+screenshot set and one form factor to defend; the iPad question lives in `docs/tablet-support.md`.
 Everything below assumes iPhone-only.
 
 ---
@@ -74,10 +65,12 @@ fine as captured; no resizing.
 
 **Build a burner wallet, and treat it as disposable.**
 
-- Create a fresh wallet on **eCash** — the network the app exists for, and it keeps real BTC balances
-  out of the frame.
-- Fund it from the faucet (`FaucetSheet`) and make **4–6 transactions**: a couple in, a couple out, one
-  self-send so a "Sent to yourself" row appears. History that is one row deep reads as a demo.
+- Create a fresh wallet — there is no network choice at create any more; it opens on **eCash mainnet**
+  (the network the app exists for), which keeps real BTC balances out of the frame.
+- **There is no faucet on mainnet** (`FaucetRegistry` returns nil for `.ecashMainnet` — real money), so
+  either fund the burner with a **small real ECX amount**, or switch the wallet to **L2L Signet** and
+  shoot there from its faucet. Make **4–6 transactions**: a couple in, a couple out, one self-send so a
+  "Sent to yourself" row appears. History that is one row deep reads as a demo.
 - Aim for a balance that looks like a person's, not a test's — something around **0.0247 ECX**.
   `0.00000001` and `1,000` both read as fake.
 - Name it something plausible — "Spending" — not "test1".
@@ -168,7 +161,7 @@ them earns its place — which matters more than filling the slots.
 
 ### 1 — Entropy pad, mid-swipe · *"You generate the randomness"*
 
-`EntropyInputScreen`. Create wallet → Continue → Swipe.
+`EntropyInputScreen`. Create wallet pushes the grid directly (no explainer step since 2026-11-05) → Swipe.
 
 Our one genuinely unique screen, so it leads. Swipe for **15–20 seconds before capturing** so the shot
 shows the feature working, not sitting empty:
@@ -196,7 +189,9 @@ recipient address that isn't one of ours.
 
 ### 4 — Words derived from the swipe · *"Twelve words, from your own hand"*
 
-`EntropySeedPreviewScreen` — the step after the pad.
+`EntropyInputScreen` with the bar full — the live phrase block reads "Your recovery phrase" (the
+separate preview step was replaced by `NameWalletScreen` on 2026-11-10, so the pad is where the words
+are now shown).
 
 Closes the loop shot 1 opened: the swipe produced *these* words. Burner phrase only (see §2).
 
@@ -205,11 +200,14 @@ same point with the words masked. Slightly weaker as an image, zero risk of a us
 
 ### 5 — Wallet switcher · *"As many wallets as you need"*
 
-`WalletManagerSheet`, with **three wallets across two networks** — the burner on eCash, one on Bitcoin,
-one on Signet, each showing its coloured chip.
+`WalletManagerSheet`, with **three wallets** (the burner plus two more). Wallets aren't per network any
+more (seed-container model): each row shows a **balance line per account** it has coins on, or "No
+coins seen yet", with the coloured chips. To show multi-network, pair this with (or swap in) the
+**`NetworkSwitcherSheet`** — eCash mainnet with Thunder nested under it, Bitcoin, L2L Signet — which is
+where a user actually sees one wallet spanning networks.
 
 Carries multi-wallet and multi-network in one frame, and the chips make the safety argument visually
-without a word of copy. Give the Bitcoin wallet a zero or near-zero balance.
+without a word of copy. Give the Bitcoin account a zero or near-zero balance.
 
 ### 6 — Receive · *"Get paid in seconds"*
 
@@ -234,7 +232,7 @@ and a contrived version of it would be the weakest image in the set.*
 ## 4. Capturing and filing
 
 ```sh
-# iOS — writes 1290 x 2796 with no resizing
+# iOS — the 17 Pro Max writes 1320 x 2868 with no resizing (§1)
 xcrun simctl io booted screenshot ~/Desktop/shots/01_entropy.png
 
 # Android — Saga or emulator
@@ -251,7 +249,9 @@ Android/fastlane/metadata/android/en-US/images/featureGraphic.png    # 1024 x 50
 Android/fastlane/metadata/android/en-US/images/icon.png              # 512 x 512
 ```
 
-Neither directory exists yet — `mkdir -p` both.
+`images/featureGraphic.png` and `images/icon.png` already exist (2026-11-10); only the two screenshot
+directories are missing — `Darwin/fastlane/screenshots/en-US/` is absent and `…/phoneScreenshots/` is
+an empty directory — `mkdir -p` the Darwin one.
 
 ## 5. Raw captures, or framed?
 

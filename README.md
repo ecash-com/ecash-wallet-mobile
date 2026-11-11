@@ -14,9 +14,10 @@ SwiftUI codebase ships as a native SwiftUI app on iOS and native Jetpack Compose
 [Skip](https://skip.dev). All key material, signing, and consensus logic is handled by
 [BDK](https://bitcoindevkit.org) (`bdk-swift` / `bdk-android`).
 
-Multi-wallet and multi-network from day one. Bundled networks: **Bitcoin mainnet** (`0'`),
-**L2L Signet** (`1'`), and the **eCash dry-run chain** (drynet2, unit ECX); further eCash / L2L
-networks slot in as `NetworkRegistry` entries.
+Multi-wallet and multi-network from day one. A wallet is a seed; the network is switched inside it.
+Bundled networks: **eCash mainnet** (the default, coin-type `0'`, unit ECX), **Bitcoin mainnet** (`0'`),
+and **L2L Signet** (`1'`), with the **Thunder** sidechain nested under eCash in the network switcher;
+further eCash / L2L networks slot in as `NetworkRegistry` entries.
 
 ## Contributing
 
@@ -59,7 +60,7 @@ Known-good toolchain (2026-09-23):
 
 | Tool | Version |
 |---|---|
-| macOS | 26.7 |
+| macOS | 27.0 |
 | Xcode | 27.0 (Swift 6.4) — iOS 27 simulator runtime |
 | Skip | 1.9.11 (CLI **and** the SwiftPM `skip` package — keep them in lockstep) |
 | Swift Android SDK | 6.4.0 (NDK r30) |
@@ -82,9 +83,10 @@ Known-good toolchain (2026-09-23):
 
 > [!WARNING]
 > **Building from source isn't recommended yet.** The wallet is under **heavy active development** —
-> APIs, storage layout, and screens change frequently, and it targets test networks by default. If
-> you build anyway, treat it as a preview: don't put real funds in a wallet built from an
-> in-development checkout. (Bitcoin mainnet is selectable but the app is pre-release.)
+> APIs, storage layout, and screens change frequently, and a new wallet **opens on eCash mainnet —
+> real money**. If you build anyway, treat it as a preview: don't put real funds in a wallet built
+> from an in-development checkout. (Bitcoin mainnet is one switch away; L2L Signet is the place to
+> experiment.)
 
 ```bash
 # Both platforms at once (iOS Simulator + running Android emulator):
@@ -122,7 +124,9 @@ scripts/run-ios-device.sh Release  # Release
 ## Testing
 
 ```bash
-# Fast: host tests for the app view models + Thunder crypto (Swift Testing, on the Mac).
+# Host tests for the app view models + Thunder/sidechain crypto (Swift Testing, on the Mac).
+# NOTE: root `swift test` is currently BROKEN under SwiftPM 6.4 (see the note below); the app
+# tests run through a temporary xcodebuild scheme instead (memory: app-tests-xcodebuild-temp-scheme).
 swift test
 
 # The wallet engine package — transpiled JUnit on the JVM (Robolectric), so both platforms in one run:
@@ -132,8 +136,8 @@ swift test --package-path Packages/WalletService
 skip export --debug
 
 # Real-BDK integration on a device runtime:
-ANDROID_SERIAL=emulator-5554 swift test          # Android instrumented
-WALLETSERVICE_LIVE=1 swift test --filter testLiveSignetSync   # opt-in live L2L Signet
+ANDROID_SERIAL=emulator-5554 swift test --package-path Packages/WalletService   # Android instrumented
+WALLETSERVICE_LIVE=1 swift test --package-path Packages/WalletService --filter testLiveSignetSync   # opt-in live L2L Signet
 ```
 
 `swift build` only checks Apple + transpilation; **`skip export --debug` is the real Android check.**
@@ -144,7 +148,9 @@ libs incl. `libswiftCore.so`).
 > **Known issue on Xcode 27:** the root package's `swift build` / `swift test` currently fails with
 > "linked as a static library … duplication of library code" (SwiftPM 6.4 is stricter about the Skip
 > packages' static products). It is not caused by Skip, and it doesn't affect the Xcode iOS build or
-> `skip export`. `swift test --package-path Packages/WalletService` is unaffected.
+> `skip export`. `swift test --package-path Packages/WalletService` is unaffected. The root `swift
+> test` line above is therefore aspirational until SwiftPM is fixed; the app's own tests run via a
+> gitignored temporary xcodebuild scheme (`xcodebuild -skipPackagePluginValidation`).
 No change to `WalletService` or a view model merges without tests in the same PR.
 
 ## Security model
@@ -157,9 +163,10 @@ Your keys stay on your device, and the app is built to keep them exposed as litt
   labels, the transaction cache) is public data.
 - **BDK owns all cryptography** for the Bitcoin/eCash wallet. Key derivation, signing, PSBT building,
   and coin selection are handled by the [Bitcoin Dev Kit](https://bitcoindevkit.org) — no hand-rolled
-  crypto. *(The one exception is the in-development [Thunder](https://github.com/LayerTwo-Labs/thunder-rust)
-  sidechain engine — a non-BDK chain, not yet user-facing — which uses swift-crypto + BLAKE3 with
-  derivation and serialization pinned to published test vectors. See the acknowledgements table.)*
+  crypto. *(The one exception is the [Thunder](https://github.com/LayerTwo-Labs/thunder-rust)
+  sidechain engine — a non-BDK chain, offered in the network switcher under eCash — whose keys are
+  FROST ristretto255 Schnorr over a vendored libsodium subset, with BLAKE3 addresses and derivation and
+  serialization pinned to thunder-rust's own test vectors. See the acknowledgements table.)*
 - **Watch-only + sign-on-demand.** Day-to-day the wallet runs **watch-only**: balance, address
   derivation, syncing, and even building a transaction use only the *public* descriptors — the
   secret store is never read. Your phrase is loaded for exactly one purpose, at one moment: to
@@ -175,14 +182,24 @@ Your keys stay on your device, and the app is built to keep them exposed as litt
 - **Guarded backup.** Revealing the phrase is behind an explicit gate + device auth, and you confirm
   a few words before it's marked backed up. Screenshots aren't blocked — capturing your own recovery
   phrase is your call (the app advises against it) — though the app-switcher snapshot stays obscured.
-- **Spendable balance (0-conf policy).** Only **confirmed coins + your own unconfirmed change** are
-  treated as spendable. Coins you *received* that are still unconfirmed (0-conf) are shown separately
-  as **pending** and are kept out of coin selection until they confirm — because an unconfirmed
-  incoming payment can still be double-spent or RBF-replaced, which would orphan anything you tried to
-  send on top of it. This mirrors Bitcoin Core's trusted/untrusted rule (BDK gives us the
-  `confirmed` / `trustedPending` / `untrustedPending` split; the send path also marks untrusted
-  outpoints unspendable). A configurable confirmation threshold — and potentially a **per-network**
-  one (e.g. stricter on mainnet than on testnets) — is a planned option.
+- **Spendable balance (0-conf policy).** Every coin the wallet holds is spendable, including payments
+  you *received* that are still unconfirmed (since 2026-11-11; before that only confirmed coins + your
+  own unconfirmed change were). Coin selection is **two-pass**: a send is first built from confirmed
+  coins and your own change only — exactly the old rule — and only if those don't cover it is it
+  rebuilt with the unconfirmed incoming coins allowed. When that happens the **review screen warns**
+  how much of the payment rides on an unconfirmed payment, because its sender can still double-spend
+  or RBF-replace it, which would invalidate your send with it (your coins return; the recipient is
+  never paid). Home shows the unconfirmed share of the balance for the same reason. That share
+  follows the chain: the change from a send that spent an unconfirmed incoming coin is only as good
+  as that coin, so it stays "unconfirmed" (and warned about) until the coin confirms — BDK alone
+  would call it trusted the moment it is yours. Bitcoin Core
+  refuses such coins outright and Electrum spends them silently; this is the middle. Coin splitting
+  and sidechain deposits keep the strict rule (Bitcoin's explorer can't classify an unmined coin; a
+  deposit's treasury ordering is delicate enough). BDK gives us the `confirmed` / `trustedPending` /
+  `untrustedPending` split; the send path marks the untrusted outpoints unspendable on the first pass
+  (`WalletEngine.buildPreferringConfirmed`) and the review's dry run (`previewSend`) reads what got
+  selected. A configurable confirmation threshold — possibly **per-network** — remains a planned
+  option.
 - **Clean removal.** Removing a wallet purges its phrase from the secure store plus all of its
   on-device data.
 
@@ -194,8 +211,9 @@ non-negotiable rules are CLAUDE.md §2 (Golden Rules) and §7 (Security model).
 eCash forked from Bitcoin, so every coin that existed before the fork exists on **both** chains at
 the same address — one coin, two ledgers. Spend it carelessly and you can move your BTC along with
 your ECX. **Splitting** fixes that: the wallet sends your eCash to a fresh address of the same
-wallet in a transaction Bitcoin will not accept (`nLockTime = 499999999` with non-final inputs,
-which Bitcoin reads as a lock ~9,500 years out). Afterwards the two chains hold genuinely separate
+wallet in a transaction Bitcoin will not accept (`nLockTime = 499999998` on the real fork —
+`499999999` on the test forks; the two are not interchangeable — with non-final inputs, which Bitcoin
+reads as a lock ~9,500 years out). Afterwards the two chains hold genuinely separate
 coins. Only eCash moves; your Bitcoin is untouched and only an eCash fee is paid.
 
 Working out *which* coins need this takes two steps:
@@ -223,7 +241,8 @@ automatic.
 - `DESIGN.md` — visual spec (tokens, type, components, voice).
 - `docs/release.md` — build / sign / ship to App Store + Google Play.
 - `docs/coin-splitting.md` — how shared coins are detected and separated (the money-critical one).
-- `docs/` — decision records: key storage & derivation, wallet/network model, accounts & labels, backends & endpoints, CoinNews, and more.
+- `docs/seed-container-model.md` — the wallet/network model: a wallet is a seed, the network is switched inside it.
+- `docs/` — decision records: key storage & derivation, accounts & labels, backends & endpoints, CoinNews, and more.
 
 ## Open source & acknowledgements
 
@@ -236,7 +255,7 @@ app screen and this table should be kept in sync.
 |---|---|---|
 | [Skip](https://skip.tools) | Swift→Kotlin cross-platform toolchain + frameworks | MPL-2.0 |
 | [Bitcoin Dev Kit](https://bitcoindevkit.org) (`bdk-swift` / `bdk-android`) | Wallet engine | Apache-2.0 / MIT |
-| [swift-crypto](https://github.com/apple/swift-crypto) | ed25519 signing (Thunder sidechain) | Apache-2.0 |
+| [swift-crypto](https://github.com/apple/swift-crypto) | SHA-256/512 + HMAC (entropy, sidechain key derivation) and Ed25519 fast-withdrawal quote checks | Apache-2.0 |
 | [SwiftBlake3](https://github.com/thecoolwinter/SwiftBlake3) | BLAKE3 hashing (Thunder addresses) | ISC (bundled BLAKE3 C: CC0-1.0 / Apache-2.0) |
 | [SkipKeychain](https://source.skip.tools/skip-keychain) | Secure mnemonic storage | LGPL-3.0 |
 | [swift-qrcode-generator](https://github.com/fwcd/swift-qrcode-generator) | Receive QR codes | MIT |

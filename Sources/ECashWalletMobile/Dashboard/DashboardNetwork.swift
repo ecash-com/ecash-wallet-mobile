@@ -9,7 +9,7 @@ import WalletService
 /// before; `docs/dashboard-plan.md` D3). Deliberately not the selected wallet's network and not
 /// user-picked — the dashboard is about the eCash chain, whichever wallet happens to be open.
 ///
-/// A remote-config `dashboard` block (`drivechain.dev/config`) can still override it; the live config
+/// A remote-config `dashboard` block (`dev.ecash.com/config`) can still override it; the live config
 /// has never carried one, which is why the bundled default is mainnet rather than waiting on a
 /// fetch (the Android 1.4.6 lesson). This is display data only — it never routes a wallet anywhere
 /// (that stays `RemoteEndpointConfig.RemoteNetwork.walletNetwork`'s allow-list).

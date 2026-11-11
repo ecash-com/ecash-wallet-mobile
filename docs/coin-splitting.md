@@ -62,8 +62,10 @@ For each spendable coin we ask a Bitcoin Esplora about that exact outpoint:
 
 **When it runs:**
 - **Once automatically**, after the first successful sync of a wallet **imported** (phrase or WIF,
-  including investor claims) or **copied** onto an eCash network. Those are the wallets that can hold
-  coins inherited from Bitcoin; a newly created seed can't, so create skips it. The owed check is a
+  including investor claims), or the first time an **eCash account is opened** in the network
+  switcher (`AppState.switchNetwork` after `enableNetwork` — since the seed-container model
+  replaced copy-to-network, 2026-11-10). Those are the wallets that can hold coins inherited from
+  Bitcoin; a newly created seed can't, so create skips it. The owed check is a
   flag in `SplitCheckStore` (`markNeedsInitialCheck`), cleared only when Bitcoin answered for every
   coin, so an import made offline or during an explorer outage is checked on a later sync.
 - **Otherwise only from Settings → Check for splittable coins**, which shows "Last checked …".
@@ -72,8 +74,8 @@ Not on every sync: it's a request per coin against a chain the wallet otherwise 
 it hands that operator the wallet's txids. Coins received after the last check aren't covered until
 the user checks again.
 
-Only eCash networks (`supportsCoinSplit`: alphanet, betanet) ever run it — never Bitcoin, L2L
-Signet or Thunder.
+Only eCash networks (`supportsCoinSplit`: alphanet, betanet, and eCash mainnet `.ecashMainnet`)
+ever run it — never Bitcoin, L2L Signet or Thunder.
 
 The fork height (`WalletManager.effectiveForkHeight`) is still used, but only to mark pre-fork
 transactions in history.
@@ -163,15 +165,19 @@ only supplies the local UTXO list.
   control on both chains.
 - Results are **point-in-time**: someone can spend the Bitcoin side afterwards.
 - The check **reveals the wallet's txids to a Bitcoin backend** — which is why it runs once per
-  import/copy and otherwise only from the button, never on every sync.
+  import / first eCash account open and otherwise only from the button, never on every sync.
 
 ## 9. Known gaps
 
-1. **The bundled fallback is stale.** `NetworkRegistry` still hardcodes drynet3 —
-   `defaultBackend: esplora.drynet3.drivechain.dev`, `displayName: "Drynet3"`, `forkHeight 957_600`
-   — while the config has rolled to alphanet (963,648). Harmless while the remote fetch succeeds
-   (remote wins), but an offline first launch marks history against a height ~6,000 blocks wrong.
-   (Splitting no longer depends on it.)
+1. **A fresh install has no Bitcoin Esplora endpoint (2026-11-10).** The remote config moved to
+   `dev.ecash.com/config` on 2026-11-09 and lists only the eCash networks, and the bundled Bitcoin
+   backend is Electrum (`ssl://electrum.blockstream.info:50002`), so nothing populates
+   `RemoteServiceOverrides.esploraURL(for: .bitcoin)` on a new install (an upgraded install keeps
+   the URL the old `drivechain.dev/config` applied). The check then reports "Needs a Bitcoin
+   Esplora endpoint. Set one in Settings → Network → Bitcoin." (`AppState.checkSplittableCoins`)
+   until a bundled Bitcoin Esplora fallback is added or the config lists Bitcoin.
+   (The earlier gap here — the bundled `.ecash` fallback hardcoding drynet3 — is fixed: it is now
+   alphanet, `esplora.alpha.ecash.ninja`, fork height 963,648.)
 2. **No batching.** One or two requests per coin; a wallet with hundreds of UTXOs makes a lot of
    them. `/address/{addr}/utxo` intersected against our set would be O(addresses) instead.
 3. **No automatic re-check** after a split, though the summary is recomputed from cache.

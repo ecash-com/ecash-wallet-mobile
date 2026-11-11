@@ -16,7 +16,6 @@ import WalletService
     private final class Recorder: @unchecked Sendable {
         var callCount = 0
         var label: String?
-        var network: WalletNetwork?
         var wordCount: Int?
         var scriptType: ScriptType?
         var errorToThrow: Error?
@@ -24,10 +23,9 @@ import WalletService
 
     private func makeVM() -> (CreateViewModel, Recorder) {
         let rec = Recorder()
-        let vm = CreateViewModel(create: { label, network, wordCount, scriptType in
+        let vm = CreateViewModel(create: { label, wordCount, scriptType in
             rec.callCount += 1
             rec.label = label
-            rec.network = network
             rec.wordCount = wordCount
             rec.scriptType = scriptType
             if let error = rec.errorToThrow { throw error }
@@ -35,39 +33,38 @@ import WalletService
         return (vm, rec)
     }
 
-    @Test func submitPassesLabelAndNetwork() {
+    @Test func submitPassesLabel() {
         let (vm, rec) = makeVM()
-        vm.submit(label: "Wallet 1", network: .signet)
+        vm.submit(label: "Wallet 1")
         #expect(rec.callCount == 1)
         #expect(rec.label == "Wallet 1")
-        #expect(rec.network == .signet)
         #expect(rec.wordCount == 12)   // default seed length
         #expect(vm.errorMessage == nil)
     }
 
     @Test func submitPassesChosenWordCount() {
         let (vm, rec) = makeVM()
-        vm.submit(label: "W", network: .signet, wordCount: 24)
+        vm.submit(label: "W", wordCount: 24)
         #expect(rec.wordCount == 24)
     }
 
     @Test func defaultsToNativeSegwit() {
         let (vm, rec) = makeVM()
-        vm.submit(label: "W", network: .ecash)
+        vm.submit(label: "W")
         #expect(rec.scriptType == .bip84)          // default = native segwit
     }
 
     @Test func passesChosenScriptType() {
         let (vm, rec) = makeVM()
         vm.scriptType = .bip86                      // user picks Taproot in Advanced
-        vm.submit(label: "W", network: .ecash)
+        vm.submit(label: "W")
         #expect(rec.scriptType == .bip86)
     }
 
     @Test func walletErrorMapsToUserMessage() {
         let (vm, rec) = makeVM()
         rec.errorToThrow = WalletError.persistenceFailed
-        vm.submit(label: "W", network: .signet)
+        vm.submit(label: "W")
         #expect(vm.errorMessage == WalletError.persistenceFailed.userMessage)
     }
 
@@ -75,26 +72,26 @@ import WalletService
         struct Boom: Error {}
         let (vm, rec) = makeVM()
         rec.errorToThrow = Boom()
-        vm.submit(label: "W", network: .signet)
+        vm.submit(label: "W")
         #expect(vm.errorMessage == "Couldn't create the wallet. Please try again.")
     }
 
     @Test func doubleSubmitIsGuardedAfterSuccess() {
         let (vm, rec) = makeVM()
-        vm.submit(label: "W", network: .signet)   // → .creating (success leaves it there)
+        vm.submit(label: "W")   // → .creating (success leaves it there)
         #expect(vm.isCreating)
-        vm.submit(label: "W", network: .signet)   // blocked by the `phase != .creating` guard
+        vm.submit(label: "W")   // blocked by the `phase != .creating` guard
         #expect(rec.callCount == 1)   // must not create a second wallet while one is in flight
     }
 
     @Test func canRetryAfterFailure() {
         let (vm, rec) = makeVM()
         rec.errorToThrow = WalletError.persistenceFailed
-        vm.submit(label: "W", network: .signet)    // → .failed
+        vm.submit(label: "W")    // → .failed
         #expect(vm.errorMessage != nil)
 
         rec.errorToThrow = nil
-        vm.submit(label: "W", network: .signet)    // failed is not creating → allowed
+        vm.submit(label: "W")    // failed is not creating → allowed
         #expect(rec.callCount == 2)   // a failed attempt can be retried
     }
 }

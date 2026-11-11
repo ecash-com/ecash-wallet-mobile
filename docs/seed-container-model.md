@@ -1,14 +1,17 @@
 # One wallet, many networks — the seed-container model
 
-> **Status:** 🟡 DESIGN — not built. Requested by Paul (via Jake, 2026-11-04): a wallet should not
+> **Status:** 🟢 **Phase 1 BUILT 2026-11-05** (branch `seed-container`); **Thunder mainnet nested
+> 2026-11-10**; version bumped to **1.5.0 build 46** (`Skip.env`). Phase 2 (script types on demand)
+> and phase 3 (import auto-discovery) remain design. Requested by Paul (via Jake, 2026-11-04): a wallet should not
 > be tied to a network at creation. You create a wallet, it opens on eCash mainnet, and you switch
 > to Bitcoin, L2L Signet, or a sidechain from inside it. Script type should default to native segwit
 > with taproot (etc.) addresses available on demand, not fixed at creation.
 >
-> Supersedes `docs/network-switching.md` (the 2026-06 plan, whose §4.2 store namespacing is reused)
-> and retires `docs/copy-wallet-to-network.md` (copy becomes "switch"). Complements
-> `docs/wallet-and-network-model.md` (a wallet is a seed — still true, now structurally),
-> `docs/key-derivation.md` (eCash = Bitcoin params), `docs/key-storage.md` (mnemonic-only
+> Supersedes the 2026-06 network-switching plan (its §4.2 store namespacing is reused — §2 below),
+> the copy-wallet-to-network feature (copy becomes "switch"; its secret-handling rationale is kept
+> in §6.2) and the 2026-06 wallet-and-network-model note (a wallet is a seed — still true, now
+> structurally; its reasoning is in §1a). Those three docs were **superseded and removed 2026-11-10**.
+> Complements `docs/key-derivation.md` (eCash = Bitcoin params), `docs/key-storage.md` (mnemonic-only
 > persistence, sign-on-demand), `docs/custom-derivation-path-import.md` (script types),
 > `docs/thunder-sidechain-support.md` (Thunder keys from the same phrase).
 >
@@ -52,6 +55,21 @@ phrase (`copyWallet`). That is what Paul finds restrictive: the wallet list fill
 The new model: a **Wallet is the seed**, and inside it the user switches **which network** (and
 which script type) they're looking at. One list entry, one phrase, one backup flag.
 
+### 1a. Why wallets are separate seeds, not accounts (kept from the removed 2026-06 wallet-and-network note)
+
+- **Creating a wallet generates a new mnemonic.** Savings / checking / inheritance = **three separate
+  seeds, three recovery phrases.** Multiple wallets = multiple independent seeds.
+- **Why separate seeds (not accounts) by default: isolation.** Losing or *handing off* one phrase
+  (e.g. an inheritance wallet) must not expose the others — the account model (`m/84'/c'/k'` under
+  one phrase) can't give that (one phrase unlocks everything). Separate seeds is also the simpler
+  mental model and is what **import** already requires (each imported wallet is its own seed).
+- **Multiple seeds stored simultaneously: yes.** Each wallet's mnemonic lives in the Keychain under
+  its `walletId`; removal purges it.
+- **Accounts-under-one-seed** (one backup → multiple sub-wallets, BIP-84 account level) stays an
+  opt-in power-user feature for later, never the default (`docs/accounts-and-labels.md`). The
+  seed-container model does not change this: the accounts *inside* a wallet are the same seed on
+  different networks / script types, not sub-wallets.
+
 ## 2. What is already true (facts the design leans on)
 
 - **One BIP39 phrase serves every chain we have.** Bitcoin and every eCash generation derive BIP84
@@ -61,7 +79,13 @@ which script type) they're looking at. One list entry, one phrase, one backup fl
   secp256k1 key, usable only on the coin-type `0'` chains, no Signet, no Thunder.
 - **BDK chain data is already namespaced per `(walletId × network)`**:
   `BDKWalletEngineFactory.makePersister` writes `<walletId>-<network>.sqlite`, and `purgeChainData`
-  removes every `<walletId>-*` file. Built 2026-06-14 for exactly this feature.
+  removes every `<walletId>-*` file. Built 2026-06-14 for exactly this feature (the removed
+  network-switching plan §4.2: the same seed on two coin-`1'` chains has identical scriptPubKeys, so
+  sharing a store would corrupt UTXO accounting / cause `bad-txns-inputs-missingorspent`; a legacy
+  un-namespaced `<walletId>.sqlite` was moved to the scoped path on first open). **Store naming
+  rule now:** a migrated account keeps `<walletId>-<network>.sqlite`; an account added to a wallet
+  is `<walletId>-<network>-<scriptType>-<accountIndex>.sqlite`
+  (`WalletAccount.storeName`, `Models.swift:~411`); **remove-wallet purges every one** of them.
 - **Every persisted HD descriptor carries its key origin**, `wpkh([fingerprint/84'/0'/0']xpub…/0/*)`.
   The **master fingerprint** is the same for one seed on any coin-type / script type. That is the
   handle the migration uses to recognise copies of one seed **without reading a single mnemonic**.
@@ -70,8 +94,10 @@ which script type) they're looking at. One list entry, one phrase, one backup fl
   `SplitCheckStore`, `isBackedUp`, `sortIndex`. CoinNews identity is derived from the phrase (per
   seed, not per record). CoinNews feeds / topic subscriptions / sidechain lists are keyed per
   **network**, not per wallet.
-- `WalletNetwork.selectable` is `[ecashMainnet, bitcoin, signet]` since 2026-10-30 (betanet and
-  Thunder betanet retired from the picker; cases kept so old records load).
+- `WalletNetwork.selectable` is `[ecashMainnet, bitcoin, signet, thunderMainnet]` (`Models.swift:~179-193`;
+  betanet and Thunder betanet left 2026-10-30, Thunder mainnet added 2026-11-10 as an *offered*
+  sidechain; cases kept so old records load). The mainchains a new wallet gets accounts on are
+  `WalletManager.mainchainsForNewWallets` (`WalletManager.swift:~199`) = `selectable` minus sidechains.
 - `AppState` mirrors ONE `balance` / `pendingBalance` / `transactions` / `syncState` /
   `splitSummary` for the selected wallet, re-rooted on `select`.
 
@@ -92,9 +118,11 @@ Wallet (= seed)                         one list entry, one Keychain entry, one 
 ### 3.1 Mainchains and sidechains are a hierarchy, not two lists
 
 Each `WalletNetwork` gets a `kind`: `.mainchain` or `.sidechain(parent: WalletNetwork)`. The
-switcher shows the mainchains (**eCash mainnet, Bitcoin, L2L Signet** — the `selectable` list), and
-under the mainchain you're on, its sidechains (Thunder-on-eCash once a Thunder mainnet node exists;
-today only a wallet that already *has* a Thunder-betanet account sees that one). Bitcoin has none.
+switcher shows the mainchains (**eCash mainnet, Bitcoin, L2L Signet** — `mainchainsForNewWallets`), and
+under the mainchain you're on, its sidechains: **Thunder under eCash** (`.thunderMainnet`, added
+2026-11-10 — offered to every seed wallet; the first tap derives the slot-9 ristretto account through
+`enableNetwork`, behind `DeviceAuth` like any first-time network), and Thunder betanet under betanet
+for a wallet that already *has* that migrated account. Bitcoin has none.
 This is the natural home for deposits (parent account → its sidechain account) and keeps
 "Thunder-on-betanet" and "Thunder-on-mainnet" from ever being confused: they are different accounts
 with different parents.
@@ -108,11 +136,14 @@ to show its sidechains. A flat list was the alternative; the data model is the s
 |---|---|---|---|
 | coin-type `0'` | eCash mainnet, Bitcoin (+ retired alphanet/betanet for old records) | BIP84/86/44/49 public descriptors at `m/<purpose>'/0'/<acct>'` | yes, once (xpub) |
 | coin-type `1'` | L2L Signet | same at `…/1'/…` | yes, once |
-| Thunder | `.thunder` (per parent chain) | ristretto account public key (already cached in `ThunderAccountKeyStore`) | yes, once |
+| Thunder | `.thunderMainnet` under eCash mainnet; retired `.thunder` under betanet | ristretto account public key (already cached in `ThunderAccountKeyStore`) | yes, once |
 | WIF | eCash mainnet, Bitcoin only | the single `pkh(<pubkey>)` descriptor, same on both | no (pubkey is in the record) |
 
 **At create and import we already hold the phrase in memory, so we derive every mainchain
-account's default-script-type descriptors right then** (`0'` bip84, `1'` bip84, Thunder account key).
+account's default-script-type descriptors right then** (`0'` bip84, `1'` bip84). **Not the Thunder
+key** (as built): create/import iterate `mainchainsForNewWallets`, which drops sidechains; the
+Thunder account is derived on the first tap in the switcher via `enableNetwork`
+(`WalletManager.swift:~273`), behind `DeviceAuth`.
 Switching a new wallet between networks therefore never touches the Keychain. Only a **migrated**
 wallet that lacks a family (e.g. an eCash-only wallet switching to Signet for the first time), or
 adding a **new script type**, needs one `DeviceAuth`-gated phrase read to derive the missing xpub,
@@ -146,11 +177,13 @@ each script type is its own BDK wallet, own sqlite store, own sync. Consequences
 ## 4. Behaviour, screen by screen
 
 - **Create:** no network picker and **no script-type picker** (Jake, 2026-11-04): every new
-  mainchain account is native segwit (bip84). The current create screen's address-type control
-  (`ScriptType.creatable`) is removed; taproot comes back as an on-demand address type on Receive in
-  phase 2, never as a creation decision. Generate phrase → derive the `0'`, `1'` and Thunder account
-  keys → persist with `selectedAccountId = ecashMainnet-bip84-0` → Home. 12/24 words, entropy-grid,
-  labels, backup nudge: unchanged.
+  mainchain account is native segwit (bip84). Taproot comes back as an on-demand address type on
+  Receive in phase 2, never as a creation decision. **The "New wallet" screen itself goes** (Jake,
+  2026-11-05): with both pickers gone it held only an explainer paragraph and Continue, so "Create
+  wallet" (onboarding and the wallet list) pushes the **entropy grid directly** — no explainer
+  paragraph above it either (Jake, 2026-11-05: the grid's own copy is enough). Flow: entropy grid (words shown live) → name the wallet (2026-11-10; was a seed preview) → generate → derive the `0'` and `1'`
+  accounts (Thunder comes later, on first tap — §3.2) → persist with `selectedAccountId = ecashMainnet-bip84-0` → Home. The 12/24-word
+  choice stays in Settings; labels and the backup nudge are unchanged.
 - **Import:** phrase → same derivation. The **Advanced** section keeps script type + account index
   (recovery-correctness, `docs/custom-derivation-path-import.md`), applied to the accounts created at
   import. Phase 3 (§8): scan all four script types on the default network and keep those with
@@ -175,6 +208,17 @@ each script type is its own BDK wallet, own sqlite store, own sync. Consequences
   account's network exactly as they follow the selected wallet's network today.
 - **Settings → Network:** lists `selectable` plus any network that **any account** is on (so a
   retired chain's endpoint stays editable).
+- **Hide retired networks** (Settings → Network toggle, **on by default** — Jake, 2026-11-09;
+  `RetiredNetworks`, `WalletNetwork.isRetired` = not in `selectable` and not a sidechain of an
+  offered mainchain: alphanet, betanet, Thunder betanet). Display only — nothing is deleted,
+  re-keyed, or stops syncing. With it on: retired entries leave the switcher (the account the wallet
+  is open on always stays), retired balance lines leave the wallet rows, and a wallet whose accounts
+  are **all** retired leaves the list and is never auto-selected (if the selected wallet becomes
+  hidden, selection moves to the first visible one). Two guard rails: **the list is never empty** —
+  if every wallet is retired-only nothing is hidden, and the list says so (the welcome screen is for
+  people with no wallets); and the list footer states how many wallets are hidden. Home shows a
+  nudge on a retired account — "open this wallet on eCash" — which is just `switchNetwork` to
+  `currentEcash` (deriving the account on first use, behind the device-auth gate).
 
 ### 4.1 Flows that must survive unchanged (non-negotiable — Jake, 2026-11-04)
 
@@ -230,8 +274,10 @@ exactly one account, `(record.network, record.scriptType, record.accountIndex)`,
 ### 6.1 Storage
 
 - New file `wallets.v2.json` beside `wallets.json`. `wallets.json` is **left in place, frozen** (never
-  written again) so a downgrade still boots with pre-migration state. `UserDefaults` flag
-  `wallets.migration.v2.done` prevents re-running. The manager loads v2 if present, else migrates.
+  written again) so a downgrade still boots with pre-migration state. ~~`UserDefaults` flag
+  `wallets.migration.v2.done` prevents re-running.~~ As built there is **no flag**: "done" is the
+  existence of `wallets.v2.json` (`FileWalletStore.isV2`), one source of truth (§9 step 3). The
+  manager loads v2 if present, else migrates.
 - Each account record carries `storeName` explicitly. Migrated accounts get the file they already
   have (`<id>-<network>.sqlite`, whatever their script type); new accounts get
   `<id>-<network>-<scriptType>-<acct>.sqlite`. No naming heuristics anywhere.
@@ -247,7 +293,8 @@ group:
    Its chain store `<secondaryId>-<network>.sqlite` (+`-wal`/`-shm`) is **moved** to
    `<primaryId>-<network>-<scriptType>-<acct>.sqlite` and recorded as that account's `storeName`.
    Two records on the same `(network, scriptType, acct)` (shouldn't exist — `existingCopy` blocks
-   it) keep the one with the newer mtime and leave the other file untouched on disk.
+   it), or a destination file that already exists: the later record is **kept as its own wallet**,
+   untouched, and listed in `keptStandalone` for the report. Nothing is dropped, nothing guessed.
 3. `isBackedUp` = OR of the group. The label of a secondary (`"Wallet 1 (Bitcoin)"`) is dropped.
 4. If the secondary was the **selected** wallet, selection moves to the primary with that account
    selected — the user lands on the same balance they left.
@@ -261,22 +308,48 @@ group:
    may add proof-on-first-use purging (after a successful sign/reveal from the surviving entry); it
    is deliberately not in scope now. Deleting a phrase is the one irreversible step in here.
 
+   *Why each pre-migration copy had its own Keychain entry at all* (kept from the removed
+   copy-wallet-to-network design, "copy the secret; don't share it"): a copy got its **own
+   `walletId` and its own Keychain entry** holding the same secret, so removing either wallet purged
+   only its own copy (Golden Rule §5, remove = purge, stays simple). Sharing one entry between
+   wallets would have needed reference counting in the removal path, and a bug there deletes a key
+   the other wallet still needs — the one failure mode that loses money. The orphan handling here
+   is the cost of that choice, paid once at migration.
+
 Thunder records have no descriptor, so a Thunder record stays a **separate wallet** after migration
-(one account, `.thunder`). A Settings action "Merge into…" can fold it into its sibling later with a
-`DeviceAuth`-gated phrase comparison. Acceptable for v1 of this; most Thunder betanet wallets will
+(one account, `.thunder`). A Settings action "Merge into…" could fold it into its sibling later with a
+`DeviceAuth`-gated phrase comparison — **future, not built** (2026-11-10). Acceptable for v1 of this; most Thunder betanet wallets will
 be removed by their owners as betanet winds down.
 
 ### 6.3 Dry run and failure handling
 
+**As built (step 3, 2026-11-05):** `WalletMigrationV2Applier` in WalletService. `WalletManager.load`
+runs it before reading the list; it has no `KeyStore` reference and no logging of its own. Order:
+`store.beginV2Migration()` (copies `wallets.json` → `wallets.json.pre-v2`, once) → plan → for each
+merged record with a store: open its legacy store with its own descriptors **load-only** and read
+the balance → move the `.sqlite` (+`-wal`/`-shm` if present) → reopen at the account name, same
+descriptors, compare the balance → on any failure move it back, record the exclusion
+(`load-before` / `move` / `load-after`), re-plan with that id pinned standalone, continue → write
+`migration-v2.log.json` (ids, store names, counts, exclusions, selection — never a label or
+descriptor; a test scans for canaries) → `store.commitV2`. An empty legacy list is committed as an
+empty v2 list so a fresh install writes v2 from its first wallet. A destination already present
+with its source gone is an interrupted earlier run: the record is still merged and the store is
+verified in place, never moved twice. The app's persisted selection goes INTO `load(savedSelectedId:)`
+so it can be mapped to the wallet a merged copy now lives in (`migratedWalletId(forLegacy:)`).
+The per-`walletId` app-store re-keys (`SplitCheckStore`) are in the report's `rekeys` and are
+applied app-side in step 5.
+
 - The migration is **computed fully in memory first** (plan: wallets, moves, re-keys), then applied:
   copy `wallets.json` → `wallets.json.pre-v2` → file moves, each followed by the BDK reopen +
   balance check (I3/I4; a failing move is reverted and that record stays standalone) → write
-  `migration-v2.log.json` → write `wallets.v2.json` → set the flag. A failure before the flag leaves `wallets.json`
+  `migration-v2.log.json` → write `wallets.v2.json` (its existence IS the done marker — no separate flag,
+  §9 step 3). A failure before that write leaves `wallets.json`
   authoritative and the next launch retries; a move that already happened is idempotent (check the
   destination first).
 - Log the plan's shape (counts, ids) — never descriptors or labels.
 - Ship with a hidden Settings → Advanced "Show migration report" for the first release so a tester
-  can confirm what was merged.
+  can confirm what was merged. **Open — not built as of 2026-11-10** (the report file is written;
+  nothing in Settings shows it).
 
 ### 6.4 Rollback
 
@@ -310,7 +383,7 @@ public struct ManagedWallet {            // becomes the container
     public var selectedAccountId: String
     public var accounts: [WalletAccount]
     public var selectedAccount: WalletAccount { … }
-    /// Compat shim during the port: the selected account's network. Delete when no caller remains.
+    /// The selected account's network — the official read-through (kept, see §11 step 5).
     public var network: WalletNetwork { selectedAccount.network }
 }
 ```
@@ -399,8 +472,12 @@ small real amount.
      in the design that deletes a phrase, which is why it is not in phase 1.
    - **(c) Purge during migration** — rejected (violates I1).
    Recommendation: (a) for 1.5.0; revisit (b) only if duplicate entries cause a concrete problem.
-4. **Thunder mainnet**: there's no `NetworkRegistry` entry yet; phase 1 ships the sidechain level
-   with only migrated Thunder-betanet accounts visible. Fine?
+4. **Thunder mainnet** — DONE 2026-11-10: `.thunderMainnet` (parent `.ecashMainnet`, index
+   `https://seed.ecash.eu.com/thunder`, kind `thunder-esplora`, real-money). Same slot-9 derivation
+   as betanet Thunder, so one seed's Thunder address is identical on both; `ThunderService` keys
+   its chain-specific state (revealed index, first-seen, caches) per network and the account key by
+   wallet alone. Slot 9 is active on mainnet (activated at height 978,324, treasury funded) but the
+   index held no blocks on 2026-11-10 — sync reports `.indexEmpty` until Thunder mainnet mines.
 5. **Default script type for the whole wallet** vs per network: per wallet (recommended), so a
    bip86-imported wallet's eCash and Bitcoin accounts both start at bip86. Fresh wallets are always
    bip84 (decided 2026-11-04).
@@ -412,30 +489,61 @@ small real amount.
 Branch `seed-container` off `main`. Work in this order — each step is a reviewable PR on its own,
 and nothing user-visible changes until step 5.
 
-1. **Migration planner, pure and tested first.** `Packages/WalletService/.../WalletStoreMigrationV2.swift`:
+1. ✅ **Migration planner, pure and tested first** (DONE 2026-11-05, branch `seed-container`).
+   `Packages/WalletService/.../WalletStoreMigrationV2.swift`:
    `LegacyRecord` (today's `StoredWallet` DTO), `MigrationPlan` (wallets, accounts, file moves,
    re-keys, standalone ids), and `plan(legacy:files:)` with no BDK, no filesystem, no Keychain
    reference (I1). Add `ManagedWallet.masterFingerprint` (parse the key origin next to
    `keyOriginPath`). Write the §9 planner tests before the planner. Transpiles under Skip, so keep it
    in the Lite subset (no `Set` parameters — see `SplitSummary.classify`).
-2. **Model.** `WalletAccount`, `WalletNetwork.kind` (`.mainchain` / `.sidechain(parent:)`), make
-   `keyFamily` public, grow `ManagedWallet` into the container with the `network` compat shim so the
-   app keeps compiling. `StoredWalletV2` DTO + `FileWalletStore` reading v2-else-legacy. Bridge
-   rules apply (signed types, no `Date`) and a new bridged type needs a clean Android rebuild.
-3. **Applier.** File moves with the BDK reopen + balance check (I3/I4), `wallets.json.pre-v2` copy,
-   `migration-v2.log.json`, the done flag. Real-BDK tests on sim + emulator with a seeded legacy
-   `wallets.json` fixture covering (a)–(d) from §9.
-4. **Manager.** `createWallet` / `importWallet` / `importPrivateKey` lose `network:` and derive all
-   mainchain accounts; `switchAccount`, `availableNetworks`; engine cache keyed by `storeName`;
-   `WalletEngine.signPsbt` rebuilt from the **account** (I7); delete `copyTargets` / `copyWallet` /
-   `existingCopy` and their tests.
-5. **App.** `AppState` per account; `NetworkSwitcherSheet` (nested, §3.1) opened from the Home chip;
-   remove `NetworkSelector` from create (and the script-type control — bip84 only) and from import
-   outside Advanced; delete `CopyWalletSheet`; keep claim mode and WIF import exactly (§4.1); then
-   migrate the ~140 `.network` call sites off the shim and delete it.
+2. ✅ **Model** (DONE 2026-11-05). `WalletAccount` (bridged), `WalletNetwork.parentChain` /
+   `isSidechain` / `sidechains(of:)` (an optional parent rather than an associated-value enum — bridge
+   safe), `keyFamily` public, `ManagedWallet` is the container (`accounts`, `selectedAccountId`,
+   `mergedFrom`, `orphanKeychainIds`) with `network` / descriptors / `scriptType` / `accountIndex`
+   reading through to the selected account so every caller still compiles; the legacy
+   `network:` initializer builds a one-account wallet. `FileWalletStore` reads/writes
+   `wallets.v2.json` (`{"version":2,"wallets":[…]}`) once `commitV2` has run and never touches
+   `wallets.json` again; before that it stays on the legacy file and refuses a multi-account
+   write. The planner emits real `ManagedWallet`s. Verified: WalletService 328 host + JUnit, app
+   592 tests, Android debug APK with the regenerated bridge.
+3. ✅ **Applier** (DONE 2026-11-05, §6.3 "as built"). The "done flag" is the v2 file's existence
+   (`FileWalletStore.isV2`) — one source of truth, no UserDefaults flag to drift. Mock-factory tests
+   cover merge / empty list / run-once / pass-through / back-out before and after the move /
+   resume / report scrubbing; `MigrationApplierBDKTests` runs the whole thing over real BDK SQLite
+   stores with a funded store (balance intact after the move, snapshot byte-identical, second launch
+   a no-op) and a store written for a different seed (refused by BDK's load, left in place).
+   Remove-wallet now purges `orphanKeychainIds` (never a live wallet's id). Still to do on a real
+   device: the §9 manual upgrade matrix, before 1.5.0.
+4. ✅ **Manager** (DONE 2026-11-05). `createWallet` / `importWallet` / `importPrivateKey` take no
+   network: while the secret is in memory they derive an account on every offered mainchain the key
+   type can live on (`mainchainsForNewWallets`: eCash mainnet, Bitcoin, L2L Signet; a WIF key only
+   the coin-type-0' pair), stores named by the new scheme. `selectedNetwork:` (default
+   `.currentEcash`; the claim passes its claim chain) only picks which account the wallet opens on.
+   `switchAccount` is the one place `selectedAccountId` changes; `enableNetwork` switches or
+   derives-then-switches (the app gates the deriving case behind `DeviceAuth` via `hasAccount`);
+   `availableMainchains` / `availableSidechains` feed the nested switcher. The engine cache is
+   keyed by the account's store, the BDK persister opens `selectedAccount.storeName`, and the sign
+   closure already derives from the selected account's script type and network (I7). The three
+   copy-to-network methods are kept as **shims over `enableNetwork`** so the old sheet keeps
+   working on the branch; step 5 deletes them with the sheet.
+5. ✅ **App** (BUILT 2026-11-05). `NetworkSwitcherSheet` (nested: mainchains, the current one's
+   sidechains indented under it; current marked; a lock glyph on a chain the wallet has no account
+   on yet) opens from the Home chip, the wallet-list ⋯ menu ("Switch network…") and Settings.
+   `AppState.switchNetwork` gates a first-time chain behind device auth, then re-roots the money
+   surfaces like a wallet switch. `CreateWalletScreen` replaces `CreateConfirmView`: create pushes
+   the entropy grid directly (its own copy explains the swipe). Import keeps Advanced and claim
+   mode exactly; `NetworkSelector`, `CopyWalletView`/`CopyWalletViewModel` and the manager's copy
+   shims are deleted. "Send to one of my wallets" lists every wallet with an account on the sending
+   network and pays THAT account (`nextUnusedAddress(walletId:network:)`); a payment link's
+   candidates are (wallet × payable account), so an ambiguous link on a seed wallet still asks
+   which chain. Settings → Network lists every account's network. `SplitCheckStore.rekey` applies
+   the report's `rekeys` at launch. **`ManagedWallet.network` stays** as the documented
+   read-through to the selected account (it is exactly what every money surface wants), so the
+   ~140 call sites were not churned — the "compat shim" framing in §7 is withdrawn.
 6. **Release prep.** Manual upgrade matrix (§9) on both platforms from a 1.4.7 build, release notes
-   stating the downgrade behaviour (§6.4), bump to 1.5.0 / next build number, update CLAUDE.md §2
-   Golden Rule 4 and §4 to the container model in the same PR.
+   stating the downgrade behaviour (§6.4), bump to 1.5.0 / next build number (DONE 2026-11-10:
+   `Skip.env` is 1.5.0 build 46), update CLAUDE.md §2 Golden Rule 4 and §4 to the container model
+   in the same PR.
 
 Before step 1, re-read §0. If a step can't satisfy an invariant, stop and change the plan, not the
 invariant.

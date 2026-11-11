@@ -62,13 +62,17 @@ never can be.
 
 ## 4. Routing rules
 
-| Input | Wallets offered | If the set is empty |
+| Input | Candidates offered | If the set is empty |
 |---|---|---|
-| `bitcoin:bc1q…` | Bitcoin | "This is a Bitcoin payment request. You don't have a Bitcoin wallet." |
-| `ecash:bc1q…` | eCash | "This is an eCash payment request. You don't have an eCash wallet." |
+| `bitcoin:bc1q…` | Bitcoin accounts | "This is a Bitcoin payment request. You don't have a Bitcoin wallet." |
+| `ecash:bc1q…` | eCash accounts (`PaymentLink.ecashNetworks` = `[.ecashMainnet, .ecashBeta]`; alphanet absent) | "This is an eCash payment request. You don't have an eCash wallet." |
 | `ecash:qq…` / `ecash:p…` (XEC CashAddr) | none | "That's an eCash (XEC) address. This wallet is for eCash (ECX)." |
-| bare `bc1…` / `1…` / `3…` | Bitcoin **+** eCash → switcher | "You don't have a Bitcoin or eCash wallet." |
-| `tb1…` (any scheme) | signet | "You don't have a signet wallet." |
+| bare `bc1…` / `1…` / `3…` | Bitcoin **+** eCash accounts → picker | "You don't have a Bitcoin or eCash wallet." |
+| `tb1…` (any scheme) | signet accounts | "You don't have a signet wallet." |
+
+Since the seed-container model (2026-11-05) a wallet holds one account per network, so the candidates
+are **(wallet × account) pairs**, not wallets: one seed wallet can appear once per payable chain in the
+picker (`PaymentLinkWalletPicker`, keyed by `selectedAccount.storeName`; `AppState.paymentLinkChoices`).
 
 Notes on the messages: say **why**, not just "no wallet found" — the user has to be able to tell a
 missing wallet from a wrong-chain link. A strict `bitcoin:` means an ECX request emitted by generic
@@ -116,78 +120,39 @@ the wrong choice sends real value to a chain the payee will never watch, and on 
 user knows better than we do which wallet should pay. Each row carries the network chip, and the
 ambiguous case says outright that the link didn't specify a chain.
 
-## 5. Implementation plan
+## 5. As built (updated 2026-11-10)
+
+The plan below was built; this section records what differs from it.
 
 ### 5.1 Android — manifest
 
-`Android/app/src/main/AndroidManifest.xml` (tracked and editable; currently only `MAIN`/`LAUNCHER`):
-
-```xml
-<intent-filter>
-    <action android:name="android.intent.action.VIEW" />
-    <category android:name="android.intent.category.DEFAULT" />
-    <category android:name="android.intent.category.BROWSABLE" />
-    <data android:scheme="bitcoin" />
-    <data android:scheme="ecash" />
-</intent-filter>
-```
-
-**`MainActivity` also needs `android:launchMode="singleTask"` (or `singleTop`).** It currently
-declares no `launchMode`, so it defaults to `standard` — under which `onNewIntent` never fires and a
-link tapped while the app is running stacks a *second* `MainActivity` instead of delivering to the
-running one. Without this the warm-start half of the feature silently does not work. This is the one
-thing missing from the issue's otherwise-correct write-up.
+`Android/app/src/main/AndroidManifest.xml` declares the `VIEW` / `DEFAULT` / `BROWSABLE` intent filter
+for `bitcoin` and `ecash` **and `android:launchMode="singleTask"`** on `MainActivity` — the latter is
+load-bearing: under the default `standard` mode `onNewIntent` never fires and a link tapped while the
+app is running stacks a *second* `MainActivity`, so the warm-start half silently fails.
 
 ### 5.2 iOS — Info.plist
 
-`Darwin/Info.plist` currently declares only `NSAppTransportSecurity`. Add:
+`Darwin/Info.plist` declares `CFBundleURLTypes` with `CFBundleURLName` `com.ecash.mobile.wallet` and
+the two schemes `bitcoin` / `ecash`.
 
-```xml
-<key>CFBundleURLTypes</key>
-<array>
-  <dict>
-    <key>CFBundleURLName</key>
-    <string>com.ecash.mobile.wallet</string>
-    <key>CFBundleURLSchemes</key>
-    <array>
-      <string>bitcoin</string>
-      <string>ecash</string>
-    </array>
-  </dict>
-</array>
-```
+### 5.3 Delivery — `onOpenURL` on iOS, the intent on Android
 
-### 5.3 Delivery — `onOpenURL`, and the Fuse gotcha
+The plan expected a bridged `onOpenURLString` seam. What was built instead: `RootView` calls plain
+`.onOpenURL { app.handlePaymentLink($0.absoluteString) }`, which is real SwiftUI on iOS and compiles to
+a **no-op** on Fuse-Android (SkipUI's non-SKIP branch returns self — verified on device). Android reads
+the `VIEW` intent in Kotlin instead: `Android/app/src/main/kotlin/Main.kt` captures it in `onResume`
+(cold start, `getIntent()`) and `onNewIntent` (warm start, after `setIntent`) and hands it to
+`WalletService`; the Swift side drains it via `PlatformBridge.takePaymentLink()` from
+`RootView.onAppear` → `app.checkAndroidPaymentLink()`. Consuming clears it, so a link fires once.
 
-SkipUI implements the modifier in `SkipUI/System/UserActivity.swift` and it covers both cases we
-need: `activity.intent` for cold start and `addOnNewIntentListener` for warm start, clearing the
-intent after handling so a recompose doesn't reprocess it.
+### 5.4 Parser — scheme handling lives in `PaymentLink`, not `BIP21`
 
-**But the bridged entry point is `onOpenURLString`, not `onOpenURL`.** Only
-`onOpenURLString(perform: (String) -> Void)` carries `// SKIP @bridge`; the `URL`-taking variant does
-not, so a Fuse app calling `.onOpenURL { }` may compile while leaving the Android side unwired. Expect
-a seam at the call site:
-
-```swift
-#if os(Android)
-.onOpenURLString { handleIncoming($0) }     // bridged SkipUI
-#else
-.onOpenURL { handleIncoming($0.absoluteString) }   // real SwiftUI
-#endif
-```
-
-This must be verified with `skip export`, not `swift build` — the Fuse native-Android pass is the only
-thing that catches this class of error (same lesson as `String(localized:)`, memory
-`fuse-localization-no-string-localized`).
-
-### 5.4 Parser — `BIP21` gains the scheme
-
-`BIP21.parse` currently strips `bitcoin:` and *discards* which scheme it saw; it needs to report it so
-the router can apply §4. `BIP21` is a **bridged public type**, so the new field must be bridge-safe —
-a `String`, or an enum exposed as one. No `UInt`-family types (memory
-`bridged-surface-signed-types-only`).
-
-It must also strip `ecash:` — today an `ecash:` prefix would fall through into the address field.
+`BIP21.parse` **still strips only `bitcoin:`** and discards the scheme. The scheme is handled one layer
+up in `WalletService`'s `PaymentLink` (`Packages/WalletService/Sources/WalletService/PaymentLink.swift`):
+`PaymentLink.scheme(of:)` reports `.bitcoin` / `.ecash` / `.none`, `PaymentLink.body(of:)` strips
+either prefix before `BIP21.parse`, and `isXECCashAddr` does §5.5. `ecashNetworks` =
+`[.ecashMainnet, .ecashBeta]`.
 
 Already done: `req-` params reject the whole URI, per BIP-21's rule that a client not implementing a
 `req-` variable MUST treat the URI as invalid. That fix is live and shipped with tests.

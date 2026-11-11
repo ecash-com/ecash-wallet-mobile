@@ -54,7 +54,7 @@ Measured, not assumed (2026-09-10):
 
 | | count |
 |---|---|
-| `.frame(maxWidth: .infinity)` — stretch to fill | **19** |
+| `.frame(maxWidth: .infinity)` — stretch to fill | **106** (re-counted 2026-11-10 with `grep -rn "frame(maxWidth: .infinity" Sources/ECashWalletMobile`; was 19 at 1.0.0 build 19) |
 | `maxWidth: <number>` — content width caps | **0** |
 | `horizontalSizeClass` / size-class awareness | **0** |
 
@@ -76,10 +76,10 @@ One modifier applied at each screen's root: constrain content to a readable meas
 centre it. A phone is narrower than the cap, so it's unaffected — the change is invisible on iPhone and
 transforms the iPad. Do this before anything else and re-evaluate; it may well be enough to ship.
 
-Best done as a single `Theme`-level modifier (e.g. `readableWidth()`) rather than 19 edits, so there's
+Best done as a single `Theme`-level modifier (e.g. `readableWidth()`) rather than 106 edits, so there's
 one place to tune the number and one place to make it size-class-aware later.
 
-**2. Audit the 19 stretch sites.** Some *should* still fill (list rows, dividers); others (primary
+**2. Audit the 106 stretch sites** (count as of 2026-11-10; caps and `horizontalSizeClass` are still 0). Some *should* still fill (list rows, dividers); others (primary
 buttons, the amount keypad, the entropy pad) want the cap. This is judgement per site, not mechanical.
 
 **3. The entropy pad specifically.** `EntropyGridView` is a 12×8 grid sized to the available space —

@@ -3,20 +3,21 @@
 > How the app is built, signed, and shipped to the **App Store / TestFlight** (iOS) and **Google
 > Play** (Android), via fastlane. Secrets are gitignored and supplied locally (templates committed).
 >
-> **Status (2026-08-13):** Version **0.2.0** (build 1), first release under the **eCash orgs**. iOS is **connected** (App Store Connect API
-> key in place) → push via `fastlane beta`; 0.1.1(2) uploaded to TestFlight. Android: the **upload
-> keystore is wired** and produces a Play-grade **signed AAB** (§2b, verified `CN=Layer Two Labs`);
-> remaining is Play Console setup (create app, App content section, manual first upload). Still also
-> ships a sideload **APK** (arm64) for ad-hoc testers (§2a). Play automation via fastlane needs the
-> service-account JSON (not yet created).
+> **Status (2026-11-10):** Version **1.5.0** (build **46**, `Skip.env`), under the **eCash orgs** (org
+> migration done — §5). iOS is **connected** (App Store Connect API key in place) → push via
+> `fastlane beta`. Android: the **upload keystore is wired** and produces a Play-grade **signed AAB**
+> (§2b, verified `CN=Layer Two Labs`); **Play is still NOT set up** — remaining is Play Console setup
+> (create app, App content section, manual first upload). Still also ships a sideload **APK** (arm64)
+> for ad-hoc testers (§2a). Play automation via fastlane needs the service-account JSON (not yet
+> created). *(Previous status 2026-08-13: 0.2.0 build 1, first release under the eCash orgs.)*
 
 All fastlane commands run from the platform subdir: `cd Darwin` (iOS) / `cd Android` (Android).
 Bundle id / package = `com.ecash.mobile.wallet` (from `Skip.env`, shared by both) as of the 2026-08
 org migration. The Layer Two Labs identifier `com.layertwolabs.mobile.ecashwallet` still exists as a
 separate, published app on both stores — the new identifiers are a NEW listing, not an update.
 
-**Version** is centralized in `Skip.env` — `MARKETING_VERSION` (semantic, currently `0.1.1`) +
-`CURRENT_PROJECT_VERSION` (build number, currently `2`), shared by iOS and Android. **Bump
+**Version** is centralized in `Skip.env` — `MARKETING_VERSION` (semantic, currently `1.5.0`) +
+`CURRENT_PROJECT_VERSION` (build number, currently `46`), shared by iOS and Android. **Bump
 `CURRENT_PROJECT_VERSION` before each repeat TestFlight/Play upload** (build numbers must be unique).
 
 ---
@@ -130,8 +131,10 @@ current new-app requirement of target ≥ 35).
 
 ### Lanes (`Android/fastlane/Fastfile`), once the above exist
 - **`fastlane assemble`** — gradle `bundleRelease` → `.build/Android/app/outputs/bundle/release/app-release.aab`.
-- **`fastlane release`** — `assemble` → `upload_to_play_store` (defaults to the production track;
-  add `track: "internal"` for an internal-testing first push, the Play analog of TestFlight).
+- **`fastlane release`** — `assemble` → `upload_to_play_store`. **Defaults to the `internal` track**
+  (`Android/fastlane/Fastfile:~53` overrides fastlane's own production default so an unqualified
+  `fastlane release` can't push a beta at every user); pass `track:beta` / `track:production` to
+  promote deliberately.
 
 ### Note: AAB vs APK
 Play wants an **`.aab`** (App Bundle); the `adb install` debug flow we use for on-device testing uses
@@ -152,9 +155,40 @@ the debug **APK** (`skip export --debug`). Different artifacts — the release p
 Committed **templates**: `Darwin/fastlane/apikey.json.example`, `Darwin/DeveloperSettings.xcconfig.example`.
 
 ## 4. TODO / open
-- **Build-number bumping:** TestFlight/Play require a unique build number per upload. Build 1 is fine
-  now; add `increment_build_number` (or a timestamp) before the second upload.
+- **Build-number bumping:** TestFlight/Play require a unique build number per upload. Bump
+  `CURRENT_PROJECT_VERSION` **manually in `Skip.env`** before each upload and **never reset it** (§2b —
+  Play's `versionCode` must increase for the life of the app). No `increment_build_number` lane; the
+  number is the single source for both stores.
 - **CI:** lanes are local-only today; wiring them into CI (with the secrets injected) is future.
-- **Store metadata / screenshots / privacy:** `fastlane/metadata/` + Deliverfile exist but need real
-  copy, screenshots, and the privacy-nutrition / data-safety forms filled before public release.
+- **Store screenshots / privacy:** store copy exists on both sides (`Darwin/fastlane/metadata/en-US/`,
+  `Android/fastlane/metadata/android/en-US/` incl. `featureGraphic.png` + `icon.png`); **screenshots
+  are still missing** (`Darwin/fastlane/screenshots/` absent, `…/images/phoneScreenshots/` empty —
+  `docs/store-screenshots.md`), as are the privacy-nutrition / data-safety forms (2026-11-10).
 - **Android first manual upload** (see §2.1) before `fastlane release` can push.
+
+## 5. Org migration — DONE (folded in from the removed `docs/org-migration.md`, 2026-11-10)
+
+The app moved from the Layer Two Labs orgs to the **eCash** orgs as a **clean start, not a transfer**
+(2026-08). What that settled, beyond the identifiers already stated above:
+
+- **Apple:** team **`7BQ6DL5YV9`** (Blockchain Emulation Services Ltd) — `DEVELOPMENT_TEAM` in the
+  gitignored xcconfig and both `project.pbxproj` entries; App Store Connect record for
+  `com.ecash.mobile.wallet` created 2026-08-13; ASC API key `LM5CG2YGN9` wired into
+  `Darwin/fastlane/apikey.json`; distribution certificate installed. `Darwin/fastlane/Appfile` now
+  reads `PRODUCT_BUNDLE_IDENTIFIER` only (it used to prefer `ANDROID_APPLICATION_ID`, which aimed
+  TestFlight at the wrong app while Android was rebranded first).
+- **Firebase / push:** project **`ecash-wallet-3b5c9`** was **kept**, with new iOS/Android apps added
+  for the new bundle id (regenerated `google-services.json` / `GoogleService-Info.plist`, both
+  gitignored; CI secret `GOOGLE_SERVICES_JSON_BASE64`). The APNs auth key in Firebase should belong to
+  team `7BQ6DL5YV9` — **unverified from the repo** (the old key `N3U7CSY8YT` was under LTL's
+  `6AXPP357T2`); check Firebase → Cloud Messaging if iOS push ever stops.
+- **Google Play** (still open — the steps §2b."Play Console" doesn't already list): the **eCash
+  Google Play developer account** itself must be created/verified (one-time fee; identity
+  verification can take days) before the app can be created there; the existing upload keystore is
+  account-independent and can be kept as-is (`CN=Layer Two Labs` is cosmetic); when automation is
+  wired, the service-account JSON must be created under the eCash Google account
+  (`Android/fastlane/Appfile` reads `package_name` from `Skip.env` + `fastlane/apikey.json`).
+- **Old-bundle users:** the LTL app (`com.layertwolabs.mobile.ecashwallet`) is a separate, dead-end
+  listing. Keys live in the OS secure store keyed by the app's identity, so the new app starts empty —
+  **TestFlight/APK users of the old bundle must back up their seed and restore it into the new app**;
+  nothing migrates automatically, and there is no server-side state.

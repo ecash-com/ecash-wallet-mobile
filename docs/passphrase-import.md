@@ -30,19 +30,31 @@ Consequences that shape everything below:
 
 ## 2. Where the code stands today
 
-`password: nil` is hardcoded in exactly three places:
+The passphrase is hardcoded empty in four places (line numbers re-checked 2026-11-10):
 
-- `Packages/WalletService/Sources/WalletService/BDKWalletEngineFactory.swift:138` (signing path)
-- `…/BDKWalletEngineFactory.swift:239`
-- `…/CoinNewsIdentity.swift:35` (BIP-340 identity — **easy to miss**; a passphrase wallet must not
-  post under an identity derived from the passphrase-less seed)
+- `Packages/WalletService/Sources/WalletService/BDKWalletEngineFactory.swift:~199` (`password: nil` —
+  the `signPsbt` closure, signing path)
+- `…/BDKWalletEngineFactory.swift:~375` (`password: nil` — `walletKeys(network:mnemonic:scriptType:)`,
+  the public descriptors stored per account)
+- `…/CoinNewsIdentity.swift:~35` (`password: nil` — BIP-340 identity — **easy to miss**; a passphrase
+  wallet must not post under an identity derived from the passphrase-less seed)
+- `Sources/ECashWalletMobile/Thunder/ThunderWallet.swift:~21` / `ThunderKey.swift:~23` — the Thunder
+  (ristretto255) key is derived from `Bip39Seed.seed(mnemonic:passphrase:)` with `passphrase`
+  defaulting to `""`; the parameter exists but nothing passes it
+
+Since the seed-container model (2026-11-05, `docs/seed-container-model.md`) import derives an account on
+**every** offered mainchain while the phrase is in memory (`WalletManager.persistNewWallet`, ~318) and
+later the Thunder account key on first tap (`enableNetwork`) — the passphrase must reach every one of
+those derivations, not just the first.
 
 `KeyStore` stores the mnemonic and nothing else (`saveMnemonic` / `loadMnemonic` /
 `deleteMnemonic`) — there is no slot for a second secret.
 
 The import screen already has an **Advanced** disclosure section
-(`Sources/ECashWalletMobile/Screens/ImportWalletView.swift:110`) and, on the WIF path, a **live
-address preview** (`:238`). Both are directly reusable here — see §5.
+(`Sources/ECashWalletMobile/Screens/ImportWalletView.swift:~151`, `advancedSection`) and a **live
+first-address preview** on both paths — the seed path (`:~205`, `vm.seedPreviewAddress`) and the WIF
+path (`:~285`, `vm.previewAddress`). Both are directly reusable here — see §5 (mitigation 1 already
+exists; it only needs the passphrase wired into it).
 
 ## 3. Conflict with the plausible-deniability design
 
@@ -90,8 +102,9 @@ the 12 words in a drawer gets nothing without the passphrase. That matches most 
 ("my written backup isn't enough on its own") — but it is strictly weaker than the case a passphrase
 is classically chosen for, where the device never holds full spending authority.
 
-Cost asymmetry worth weighing: prompting means touching four signing flows (send, split coins,
-CoinNews publish, CoinNews vote) plus their error and cancel paths. Storing stops at import + backup.
+Cost asymmetry worth weighing: prompting means touching every signing flow — send, split coins,
+CoinNews publish, CoinNews vote, sidechain deposit (`WalletEngine.depositToSidechain`), Thunder send
+and Thunder withdraw (`ThunderService.swift:~231`, `~269`) — plus their error and cancel paths. Storing stops at import + backup.
 
 Also note **Confirm-send is already behind device auth** (`SendViewModel.authorize`). A passphrase
 prompt would land immediately after Face ID / passcode — a second secret to type right after
@@ -105,8 +118,9 @@ authenticating, which many users will read as the app being broken.
 Mitigations, in order of value:
 
 1. **Address preview before committing the import.** Show the first derived address so the user can
-   compare it against their other wallet. The pattern already exists on the WIF path
-   (`ImportWalletView.swift:238`).
+   compare it against their other wallet. The seed path already has one
+   (`ImportWalletView.swift:~205`, `vm.seedPreviewAddress`; the WIF path at `~285`) — it just needs
+   the passphrase as an input (2026-11-10).
 2. **Honest empty state after import.** If the first sync finds no history, say *"No transactions
    found — check your passphrase"* rather than showing a confident zero.
 3. **Never trim the passphrase.** Whitespace is significant; a trailing space is a different wallet.
@@ -147,10 +161,11 @@ half of what they need.
 
 ## 8. If it gets built — surface
 
-- Passphrase field in the existing **Advanced** section on Import (`ImportWalletView.swift:110`),
+- Passphrase field in the existing **Advanced** section on Import (`ImportWalletView.swift:~151`),
   alongside the script-type/derivation options, since it's the same class of "I know what my other
   wallet did" setting.
 - Address preview wired to it (§5.1).
-- `password:` threaded through the three sites in §2 — including `CoinNewsIdentity`.
+- `password:` / `passphrase:` threaded through the four sites in §2 — including `CoinNewsIdentity` and
+  the Thunder seed — and into every per-mainchain derivation at import plus `enableNetwork`.
 - Backup copy change (§6).
 - `KeyStore` gains a passphrase entry keyed by `walletId`, purged on remove.

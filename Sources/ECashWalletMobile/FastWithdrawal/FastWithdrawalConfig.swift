@@ -27,7 +27,8 @@ enum FastWithdrawalConfig {
                             sidechainID: "thunder",
                             operatorName: "L2L",
                             pinnedQuoteKeyBase64: nil)
-        case .bitcoin, .signet, .ecash, .ecashBeta, .ecashMainnet:
+        // No fast-withdrawal service for Thunder mainnet yet (betanet's is the only one, 2026-11-10).
+        case .bitcoin, .signet, .ecash, .ecashBeta, .ecashMainnet, .thunderMainnet:
             return nil   // not sidechains
         }
     }

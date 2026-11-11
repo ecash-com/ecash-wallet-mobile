@@ -36,7 +36,7 @@ let package = Package(
         // Android (app crashed at launch on the Saga). Our vendored copy forces the portable C path.
         .package(path: "Packages/SwiftBlake3"),
         // ristretto255 (vendored libsodium subset) — thunder-rust >= 0.18 signs with FROST(ristretto255).
-        // PROOF OF CONCEPT: only ThunderFrostSpike uses it so far (see Packages/Ristretto255/README.md).
+        // Production: Sidechain/FrostSchnorr.swift + RistrettoBip32.swift (see Packages/Ristretto255/README.md).
         .package(path: "Packages/Ristretto255"),
         // The BDK seam lives in its own transpiled+bridged package (the SkipSQL pattern);
         // it carries the bdk-swift / bdk-android dependencies internally.

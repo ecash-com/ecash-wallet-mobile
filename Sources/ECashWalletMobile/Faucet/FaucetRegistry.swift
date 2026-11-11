@@ -48,7 +48,7 @@ enum FaucetRegistry {
             return nil
         case .ecashMainnet:
             return nil   // real money: no faucet, ever (the overlay is still honoured if L2L ran one)
-        case .thunder:
+        case .thunder, .thunderMainnet:
             return nil   // no Thunder faucet
         }
     }

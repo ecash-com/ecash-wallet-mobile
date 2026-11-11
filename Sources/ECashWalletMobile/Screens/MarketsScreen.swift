@@ -14,7 +14,7 @@ struct MarketsScreen: View {
         List {
             Section(header: header(Text("Bitcoin and its forks", bundle: .module, comment: "markets: comparison section")),
                     footer: footnote(section)) {
-                ForEach(section.value?.quotes ?? []) { quote in
+                ForEach(section.value?.allQuotes ?? []) { quote in
                     MarketRow(quote: quote, detailed: true)
                 }
             }
@@ -35,8 +35,8 @@ struct MarketsScreen: View {
 
     private func footnote(_ section: DashboardSection<MarketBoard>) -> some View {
         VStack(alignment: .leading, spacing: Theme.Space.x1) {
-            Text("Prices in USDT on Gate.io and NonKYC. ECX itself is not listed on a public exchange yet.",
-                 bundle: .module, comment: "markets footnote: sources, and why there is no ECX row")
+            Text("ECX is eCash.com's volume-weighted price across ECX markets, in USD. Other prices are in USDT on Gate.io and NonKYC.",
+                 bundle: .module, comment: "markets footnote: where the ECX price comes from, and the other sources")
             DashboardFreshness(updatedAt: section.updatedAt, stale: section.lastAttemptFailed)
         }
         .textStyle(.xs)

@@ -33,8 +33,12 @@ import WalletService
 final class ThunderService: WalletOps {
     private let loadMnemonic: (String) throws -> String?
     /// Built per call so a Settings endpoint change — URL *or* wire kind — takes effect without
-    /// rebuilding the service.
-    private let makeBackend: @Sendable () -> ThunderBackend
+    /// rebuilding the service. Takes the wallet's Thunder network: betanet and mainnet read
+    /// different indexes.
+    private let makeBackend: @Sendable (WalletNetwork) -> ThunderBackend
+    /// Which Thunder a wallet is on right now (its selected account). Betanet by default — the only
+    /// Thunder there was before 2026-11-10 — so older callers and tests need no change.
+    private let networkOf: (String) -> WalletNetwork
     private let indexStore: ThunderAddressIndexStoring
     private let firstSeenStore: ThunderFirstSeenStoring
     private let accountKeyStore: ThunderAccountKeyStoring
@@ -44,16 +48,16 @@ final class ThunderService: WalletOps {
     /// Last synced UTXO set per wallet. `WalletOps.balance` is synchronous (the UI reads it during
     /// layout), so a sync populates this and balance reads it — cached first, then refresh, exactly
     /// like the BDK path.
-    private var utxoCache: [String: [ThunderPointedOutput]] = [:]
+    private var utxoCache: [String: [ThunderPointedOutput]] = [:]   // keyed by `chainKey`
 
     /// Last rebuilt history per wallet. `WalletOps.transactions` is synchronous, so — like balance —
     /// a sync computes this and the read returns it.
-    private var historyCache: [String: [WalletTx]] = [:]
+    private var historyCache: [String: [WalletTx]] = [:]   // keyed by `chainKey`
 
     /// Last synced value of the wallet's UNCONFIRMED outputs (see `ThunderScan.pendingSats`).
-    private var pendingCache: [String: UInt64] = [:]
+    private var pendingCache: [String: UInt64] = [:]   // keyed by `chainKey`
     /// The part of `pendingCache` that is our own change (`ThunderScan.pendingChangeSats`).
-    private var pendingChangeCache: [String: UInt64] = [:]
+    private var pendingChangeCache: [String: UInt64] = [:]   // keyed by `chainKey`
 
     /// How far past the highest revealed index a sync still looks. Mirrors BIP44's gap limit: money
     /// paid to an address we handed out but never recorded still has to be found.
@@ -65,16 +69,18 @@ final class ThunderService: WalletOps {
     static let maxDiscoveryRounds = 20
 
     init(loadMnemonic: @escaping (String) throws -> String?,
-         makeBackend: @escaping @Sendable () -> ThunderBackend = {
-             let params = NetworkRegistry.params(for: WalletNetwork.thunder)
+         makeBackend: @escaping @Sendable (WalletNetwork) -> ThunderBackend = { network in
+             let params = NetworkRegistry.params(for: network)
              return ThunderBackendFactory.make(kind: params.defaultBackendKind, url: params.defaultBackend)
          },
+         networkOf: @escaping (String) -> WalletNetwork = { _ in WalletNetwork.thunder },
          indexStore: ThunderAddressIndexStoring = UserDefaultsThunderAddressIndexStore(),
          firstSeenStore: ThunderFirstSeenStoring = UserDefaultsThunderFirstSeenStore(),
          accountKeyStore: ThunderAccountKeyStoring = UserDefaultsThunderAccountKeyStore(),
          now: @escaping @Sendable () -> Int64 = { Int64(Date().timeIntervalSince1970) }) {
         self.loadMnemonic = loadMnemonic
         self.makeBackend = makeBackend
+        self.networkOf = networkOf
         self.indexStore = indexStore
         self.firstSeenStore = firstSeenStore
         self.accountKeyStore = accountKeyStore
@@ -92,10 +98,10 @@ final class ThunderService: WalletOps {
         let account = try await accountPublicKey(walletId: walletId)
         let index: UInt32
         if unused {
-            index = indexStore.revealedIndex(walletId: walletId)
+            index = indexStore.revealedIndex(walletId: chainKey(walletId))
         } else {
-            index = indexStore.revealedIndex(walletId: walletId) + 1
-            indexStore.setRevealedIndex(index, walletId: walletId)
+            index = indexStore.revealedIndex(walletId: chainKey(walletId)) + 1
+            indexStore.setRevealedIndex(index, walletId: chainKey(walletId))
         }
         return try await Task.detached(priority: .userInitiated) {
             let address = try ThunderWallet.addresses(account: account, indices: index..<(index + 1))[0]
@@ -108,7 +114,7 @@ final class ThunderService: WalletOps {
     /// The last synced spendable balance. Zero before the first sync (the UI shows a cached value then
     /// refreshes), never a stale value from another wallet.
     func balance(walletId: String) throws -> Amount {
-        Amount(sats: Int64(clamping: (utxoCache[walletId] ?? []).reduce(UInt64(0)) { $0 &+ $1.valueSats }))
+        Amount(sats: Int64(clamping: (utxoCache[chainKey(walletId)] ?? []).reduce(UInt64(0)) { $0 &+ $1.valueSats }))
     }
 
     /// Coins the wallet has but can't spend yet: unconfirmed incoming payments and change from a send
@@ -116,13 +122,18 @@ final class ThunderService: WalletOps {
     /// confirmed state, so it always reports zero here. Spendable `balance` excludes them — the node
     /// rejects spending an output that isn't in its utreexo accumulator yet.
     func pendingBalance(walletId: String) throws -> Amount {
-        Amount(sats: Int64(clamping: pendingCache[walletId] ?? 0))
+        Amount(sats: Int64(clamping: pendingCache[chainKey(walletId)] ?? 0))
     }
 
     /// Our own change within `pendingBalance` — returns to the spendable balance at the next block.
     func pendingChange(walletId: String) -> Amount {
-        Amount(sats: Int64(clamping: pendingChangeCache[walletId] ?? 0))
+        Amount(sats: Int64(clamping: pendingChangeCache[chainKey(walletId)] ?? 0))
     }
+
+    /// Thunder never has spendable-but-unconfirmed coins: the node rejects spending an output that
+    /// isn't in its utreexo accumulator yet, so incoming payments stay in `pendingBalance` until mined.
+    func unconfirmedBalance(walletId: String) throws -> Amount { .zero }
+    func unconfirmedBalanceAsync(walletId: String) async throws -> Amount { .zero }
 
     /// Scan this wallet's addresses (0 ..< revealed + gap limit), refresh the cached UTXO set, and
     /// rebuild history from the unspent + spent reads.
@@ -137,13 +148,13 @@ final class ThunderService: WalletOps {
     }
 
     func sync(walletId: String) async throws -> Amount {
-        let backend = makeBackend()
+        let backend = makeBackend(networkOf(walletId))
         let discovered = try await discoverWindow(walletId: walletId, backend: backend)
         let scan = try await backend.scan(addresses: discovered.addresses, knownUsed: discovered.used)
-        utxoCache[walletId] = scan.utxos
-        historyCache[walletId] = datedNewestFirst(scan.transactions, walletId: walletId)
-        pendingCache[walletId] = scan.pendingSats
-        pendingChangeCache[walletId] = scan.pendingChangeSats
+        utxoCache[chainKey(walletId)] = scan.utxos
+        historyCache[chainKey(walletId)] = datedNewestFirst(scan.transactions, walletId: walletId)
+        pendingCache[chainKey(walletId)] = scan.pendingSats
+        pendingChangeCache[chainKey(walletId)] = scan.pendingChangeSats
         return try balance(walletId: walletId)
     }
 
@@ -191,7 +202,7 @@ final class ThunderService: WalletOps {
         // index-ordered from 0, so an address's position IS its derivation index. The store is
         // monotonic, so this can only ever widen the window, never re-issue an old address.
         if let highest = used.compactMap({ addresses.firstIndex(of: $0) }).max() {
-            indexStore.setRevealedIndex(UInt32(highest), walletId: walletId)
+            indexStore.setRevealedIndex(UInt32(highest), walletId: chainKey(walletId))
         }
         return (addresses, used)
     }
@@ -207,8 +218,8 @@ final class ThunderService: WalletOps {
         let undated = transactions.filter { $0.timestampEpochSeconds == nil }
         guard !undated.isEmpty else { return transactions }
 
-        firstSeenStore.record(txids: Set(undated.map(\.txid)), walletId: walletId, now: now())
-        let firstSeen = firstSeenStore.firstSeen(walletId: walletId)
+        firstSeenStore.record(txids: Set(undated.map(\.txid)), walletId: chainKey(walletId), now: now())
+        let firstSeen = firstSeenStore.firstSeen(walletId: chainKey(walletId))
         let stamped = transactions.map { tx -> WalletTx in
             guard tx.timestampEpochSeconds == nil, let seen = firstSeen[tx.txid] else { return tx }
             return tx.withTimestamp(seen)
@@ -218,7 +229,7 @@ final class ThunderService: WalletOps {
 
     /// History rebuilt from `get_utxos` + `get_stxos` at the last sync (see `ThunderHistory` for what
     /// can and can't be derived — notably no fee, no height, no real confirmation depth).
-    func transactions(walletId: String) throws -> [WalletTx] { historyCache[walletId] ?? [] }
+    func transactions(walletId: String) throws -> [WalletTx] { historyCache[chainKey(walletId)] ?? [] }
 
     // MARK: - Sending
 
@@ -240,6 +251,11 @@ final class ThunderService: WalletOps {
         return try await build(walletId: walletId, selection: selection, outputs: outputs,
                                netSats: -(amount.sats + Int64(clamping: selection.feeSats)))
     }
+
+    /// No dry run for Thunder: its coin selection runs at send time against a fresh UTXO fetch, and
+    /// nothing it spends is unconfirmed (see `unconfirmedBalance`). The review shows no exact fee.
+    func previewSend(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> SendPreview? { nil }
+    func previewSweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> SendPreview? { nil }
 
     /// True "Max": drain every spendable UTXO to `address`, fee taken out of the total.
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
@@ -322,17 +338,35 @@ final class ThunderService: WalletOps {
         return mnemonic
     }
 
+    /// The key under which chain-specific state (revealed index, first-seen times, the UTXO and
+    /// history caches) is kept for `walletId` on its current Thunder. One seed's Thunder address is
+    /// the same string on betanet and mainnet, so the ACCOUNT KEY is shared (keyed by wallet id
+    /// alone), but what the chains have seen at those addresses is not. Betanet keeps the bare id —
+    /// the key it was stored under before mainnet existed — so nothing already recorded is lost.
+    private func chainKey(_ walletId: String) -> String {
+        Self.chainKey(walletId, network: networkOf(walletId))
+    }
+
+    static func chainKey(_ walletId: String, network: WalletNetwork) -> String {
+        network == WalletNetwork.thunder ? walletId : "\(walletId)@\(network.rawValue)"
+    }
+
+    /// Every key `chainKey` could produce for `walletId`, for removal.
+    static func allChainKeys(_ walletId: String) -> [String] {
+        WalletNetwork.allCases.filter { $0.isThunder }.map { chainKey(walletId, network: $0) }
+    }
+
     /// Derive this wallet's address window and ask the backend for its UTXOs. Unspendable outputs
     /// (withdrawals, which consensus refuses to let anyone spend) are already dropped by the backend,
     /// so they can't inflate a balance or be picked by coin selection.
     private func fetchUtxos(walletId: String) async throws -> [ThunderPointedOutput] {
         let addresses = try await addressWindow(walletId: walletId)
-        return try await makeBackend().spendableUTXOs(addresses: addresses)
+        return try await makeBackend(networkOf(walletId)).spendableUTXOs(addresses: addresses)
     }
 
     /// This wallet's address window: 0 ..< revealed + gap limit.
     private func addressWindow(walletId: String) async throws -> [String] {
-        let count = indexStore.revealedIndex(walletId: walletId) + Self.gapLimit + 1
+        let count = indexStore.revealedIndex(walletId: chainKey(walletId)) + Self.gapLimit + 1
         return try await derivedAddresses(walletId: walletId, indices: UInt32(0)..<count)
     }
 
@@ -365,7 +399,7 @@ final class ThunderService: WalletOps {
                        netSats: Int64,
                        withdrawalAddress: String? = nil) async throws -> WalletTx {
         let mnemonic = try requireMnemonic(walletId: walletId)
-        let searchLimit = Int(indexStore.revealedIndex(walletId: walletId) + Self.gapLimit) + 1
+        let searchLimit = Int(indexStore.revealedIndex(walletId: chainKey(walletId)) + Self.gapLimit) + 1
         let transaction = ThunderTransaction(inputs: selection.inputs.map { $0.asInput() }, outputs: outputs)
         let inputAddresses = selection.inputs.map(\.address)
 
@@ -377,13 +411,13 @@ final class ThunderService: WalletOps {
                                                             searchLimit: max(searchLimit, ThunderWallet.defaultAddressSearchLimit))
         }.value
 
-        let txid = try await makeBackend().submit(authorized)
+        let txid = try await makeBackend(networkOf(walletId)).submit(authorized)
 
         // Drop the spent coins from the cache so an immediate second send can't reselect them. The
         // change output isn't added back — it isn't in the node's state until the tx is mined, and
         // `pendingBalance` is honest about that.
         let spent = Set(selection.inputs.map { $0.utxoHash() })
-        utxoCache[walletId] = (utxoCache[walletId] ?? []).filter { !spent.contains($0.utxoHash()) }
+        utxoCache[chainKey(walletId)] = (utxoCache[chainKey(walletId)] ?? []).filter { !spent.contains($0.utxoHash()) }
 
         return WalletTx(txid: txid, netSats: netSats, feeSats: Int64(clamping: selection.feeSats),
                         confirmations: 0, timestampEpochSeconds: nil, isRBF: false,
@@ -394,8 +428,8 @@ final class ThunderService: WalletOps {
     /// address the Receive screen might hand out later (and so the next sync's window covers it).
     private func nextChangeAddress(walletId: String) async throws -> ThunderAddress {
         let account = try await accountPublicKey(walletId: walletId)
-        let index = indexStore.revealedIndex(walletId: walletId) + 1
-        indexStore.setRevealedIndex(index, walletId: walletId)
+        let index = indexStore.revealedIndex(walletId: chainKey(walletId)) + 1
+        indexStore.setRevealedIndex(index, walletId: chainKey(walletId))
         return try ThunderWallet.addresses(account: account, indices: index..<(index + 1))[0]
     }
 
@@ -404,12 +438,15 @@ final class ThunderService: WalletOps {
     /// Purge everything this engine keeps for `walletId` — revealed index, first-seen times, the account
     /// public key, and the in-memory caches (Golden Rule §5). Called when the wallet is removed.
     func forget(walletId: String) {
-        indexStore.forget(walletId: walletId)
-        firstSeenStore.forget(walletId: walletId)
+        // Every chain's slice, not just the one selected at removal time.
+        for key in Self.allChainKeys(walletId) {
+            indexStore.forget(walletId: key)
+            firstSeenStore.forget(walletId: key)
+            utxoCache[key] = nil
+            historyCache[key] = nil
+            pendingCache[key] = nil
+            pendingChangeCache[key] = nil
+        }
         accountKeyStore.forget(walletId: walletId)
-        utxoCache[walletId] = nil
-        historyCache[walletId] = nil
-        pendingCache[walletId] = nil
-        pendingChangeCache[walletId] = nil
     }
 }

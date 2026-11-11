@@ -17,7 +17,7 @@ import WalletService
 final class AppState {
     private let manager: WalletManager
 
-    /// Routes per-wallet ops to the right engine: `.thunder` wallets → the Fuse-native
+    /// Routes per-wallet ops to the right engine: Thunder accounts (`isThunder`) → the Fuse-native
     /// `ThunderService`, everything else → the bridged BDK `WalletManager`. Constructed in `init`
     /// once `manager` exists. See docs/thunder-sidechain-support.md.
     private let walletOps: WalletFacade
@@ -28,8 +28,12 @@ final class AppState {
 
     /// The selected wallet's SPENDABLE balance (confirmed + own unconfirmed change), refreshed by `sync()`.
     private(set) var balance: Amount = .zero
-    /// Not-yet-spendable balance (incoming 0-conf + immature). Shown separately so it doesn't look lost.
+    /// Not-yet-spendable balance (immature coinbase; on Thunder also incoming 0-conf and own change,
+    /// which its node can't spend until mined). Shown separately so it doesn't look lost.
     private(set) var pendingBalance: Amount = .zero
+    /// Incoming unconfirmed payments INSIDE `balance` — spendable since 2026-11-11, shown apart on
+    /// Home because their senders can still pull them back (Send warns when a payment rides on one).
+    private(set) var unconfirmedBalance: Amount = .zero
     /// The part of `pendingBalance` that is the selected wallet's own change waiting for a block
     /// (Thunder only). Read alongside `pendingBalance`, which is what triggers the re-render.
     var pendingChange: Amount {
@@ -56,6 +60,16 @@ final class AppState {
         didSet { UserDefaults.standard.set(balanceHidden, forKey: "balanceHidden") }
     }
 
+    /// Hide alphanet / betanet / Thunder-betanet wallets and accounts (`RetiredNetworks`). Default
+    /// ON. Flipping it never changes data, only what the list and switcher show — and, if the
+    /// selected wallet just became hidden, which wallet is selected.
+    var hideRetiredNetworks: Bool {
+        didSet {
+            UserDefaults.standard.set(hideRetiredNetworks, forKey: RetiredNetworks.defaultsKey)
+            enforceVisibleSelection()
+        }
+    }
+
     /// Recovery-phrase length (12 or 24) for NEW wallets. Chosen ONCE in Settings, not per-wallet —
     /// the create flow reads this so creating a wallet stays a single tap. Persisted; default 12
     /// (plenty for most wallets; 24 adds entropy). Anything other than 24 normalizes to 12.
@@ -65,7 +79,6 @@ final class AppState {
 
     /// How long a completed sync counts as fresh for ambient triggers. Short enough that the app
     /// still feels live, long enough to collapse the resume/unlock/open-Send cluster into one.
-    private static let syncFreshnessWindow: TimeInterval = 30
 
     private static let selectedWalletKey = "selectedWalletId"
     private static let appLockKey = "appLockEnabled"
@@ -176,19 +189,34 @@ final class AppState {
                 // (the same override chain the BDK backends use). The KIND is resolved too, not just
                 // the URL: it decides whether we speak to a drivechain-esplora index or a bare
                 // Thunder node's JSON-RPC.
-                makeBackend: { [manager] in
-                    ThunderBackendFactory.make(kind: manager.backendKind(for: .thunder),
-                                               url: manager.backendURL(for: .thunder))
+                makeBackend: { [manager] network in
+                    ThunderBackendFactory.make(kind: manager.backendKind(for: network),
+                                               url: manager.backendURL(for: network))
+                },
+                // Which Thunder a wallet is on right now (betanet or mainnet) — its selected account.
+                networkOf: { [manager] id in
+                    manager.wallets.first { $0.id == id }?.network ?? WalletNetwork.thunder
                 }),
-            isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network == .thunder })
+            isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network.isThunder ?? false })
         balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
+        // Unset reads as ON (`object(forKey:) as? Bool`, not `bool(forKey:)`'s false).
+        hideRetiredNetworks = UserDefaults.standard.object(forKey: RetiredNetworks.defaultsKey) as? Bool ?? true
         // New-wallet seed length: 24 if explicitly chosen, otherwise 12 (covers unset → default 12).
         newWalletWordCount = (UserDefaults.standard.object(forKey: Self.newWalletWordCountKey) as? Int) == 24 ? 24 : 12
-        try? manager.load()
-        // Restore the active wallet across launches (manager.load defaults to the first wallet;
-        // select is a no-op if the saved id no longer exists).
-        if let saved = UserDefaults.standard.string(forKey: Self.selectedWalletKey) {
-            manager.select(id: saved)
+        // Restore the active wallet across launches. The saved id goes INTO load so the one-time
+        // seed-container migration can map it if that wallet was merged into another
+        // (`docs/seed-container-model.md §6.2`); select is a no-op if the id no longer exists.
+        let savedSelection = UserDefaults.standard.string(forKey: Self.selectedWalletKey)
+        try? manager.load(savedSelectedId: savedSelection)
+        if let saved = savedSelection {
+            manager.select(id: manager.migratedWalletId(forLegacy: saved) ?? saved)
+        }
+        // The migration's per-walletId re-keys (report `rekeys`): the split-check cache follows a
+        // merged record into the wallet it lives in now. A cache — a miss costs one re-check.
+        for legacyId in manager.migrationMergedLegacyIds() {
+            if let walletId = manager.migratedWalletId(forLegacy: legacyId) {
+                splitCheckStore.rekey(from: legacyId, to: walletId)
+            }
         }
         // Point the News feed at the selected wallet's network up front (CoinNews is per network).
         // Build it via a direct member assignment now (a stored prop with no default must be set
@@ -219,6 +247,8 @@ final class AppState {
         coinNewsByNetwork[initialNetwork] = initialFeed
         coinNewsNetwork = initialNetwork
         refresh()
+        // A hidden (retired-only) wallet is never the selected one: move to the first visible.
+        enforceVisibleSelection()
         // Best-effort: pull the latest backend endpoints and apply them over the bundled defaults.
         // Fire-and-forget — a failure leaves last-known-good/bundled endpoints untouched (never
         // blocks launch). Runs after the initial `load()`, so a changed endpoint evicts engines and
@@ -319,6 +349,32 @@ final class AppState {
         return wallets.first { $0.id == id }
     }
 
+    // MARK: Retired networks (`RetiredNetworks`; Settings → "Hide retired networks")
+
+    /// The wallets the list shows. `wallets` itself stays complete: `hasWallets`, onboarding and
+    /// every money path read the real set.
+    var visibleWallets: [ManagedWallet] { RetiredNetworks.visibleWallets(wallets, hiding: hideRetiredNetworks) }
+    var hiddenWalletCount: Int { RetiredNetworks.hiddenCount(wallets, hiding: hideRetiredNetworks) }
+    /// Hiding is on but every wallet is retired-only, so the list shows them anyway.
+    var isShowingRetiredFallback: Bool { RetiredNetworks.isShowingRetiredFallback(wallets, hiding: hideRetiredNetworks) }
+    /// The selected wallet is open on a retired network — Home offers to open it on eCash.
+    var selectedWalletIsOnRetiredNetwork: Bool { selectedWallet?.network.isRetired ?? false }
+
+    /// If the selected wallet is hidden, select the first visible one. A selection change only —
+    /// the same path as tapping a wallet in the list.
+    private func enforceVisibleSelection() {
+        guard let target = RetiredNetworks.selection(current: selectedWalletId, visible: visibleWallets),
+              target != selectedWalletId else { return }
+        selectWallet(id: target)
+    }
+
+    /// `accountBalances(for:)` minus retired chains (the current one stays if it holds coins).
+    func visibleAccountBalances(for wallet: ManagedWallet) -> [WalletAccountBalance] {
+        let lines = accountBalances(for: wallet)
+        guard hideRetiredNetworks, !isShowingRetiredFallback else { return lines }
+        return lines.filter { !$0.network.isRetired || $0.network == wallet.network }
+    }
+
     /// The most recent transactions for the Home preview (full list lives on the Activity tab).
     var recentTransactions: [WalletTx] {
         Array(transactions.prefix(10))
@@ -357,8 +413,8 @@ final class AppState {
     @discardableResult
     func createWallet(label: String, network: WalletNetwork, wordCount: Int = 12,
                       scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let wallet = try manager.createWallet(label: label, network: network, wordCount: wordCount,
-                                              scriptType: scriptType)
+        let wallet = try manager.createWallet(label: label, wordCount: wordCount,
+                                              scriptType: scriptType, selectedNetwork: network)
         resetPerWalletState()   // the new wallet is auto-selected; don't show the old one's numbers
         refresh()
         // A fresh wallet has no history, but sync anyway: it settles the balance as a known 0
@@ -373,9 +429,9 @@ final class AppState {
     @discardableResult
     func createWallet(label: String, network: WalletNetwork, entropyField: String,
                       wordCount: Int = 12, scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let wallet = try manager.createWallet(label: label, network: network,
+        let wallet = try manager.createWallet(label: label,
                                               entropyField: entropyField, wordCount: wordCount,
-                                              scriptType: scriptType)
+                                              scriptType: scriptType, selectedNetwork: network)
         resetPerWalletState()
         refresh()
         Task { await sync() }
@@ -394,8 +450,8 @@ final class AppState {
     @discardableResult
     func importWallet(label: String, network: WalletNetwork, mnemonic: String,
                       scriptType: ScriptType = .bip84) throws -> ManagedWallet {
-        let wallet = try manager.importWallet(label: label, network: network, mnemonic: mnemonic,
-                                              scriptType: scriptType)
+        let wallet = try manager.importWallet(label: label, mnemonic: mnemonic,
+                                              scriptType: scriptType, selectedNetwork: network)
         scheduleInitialSplitCheck(for: wallet)
         resetPerWalletState()   // the imported wallet is auto-selected
         refresh()
@@ -409,7 +465,7 @@ final class AppState {
     /// `WalletError.invalidPrivateKey` on a bad key — never echoes the input (`docs/wif-import-and-sweep.md`).
     @discardableResult
     func importPrivateKey(label: String, network: WalletNetwork, wif: String) throws -> ManagedWallet {
-        let wallet = try manager.importPrivateKey(label: label, network: network, wif: wif)
+        let wallet = try manager.importPrivateKey(label: label, wif: wif, selectedNetwork: network)
         scheduleInitialSplitCheck(for: wallet)
         resetPerWalletState()   // the imported wallet is auto-selected
         refresh()
@@ -434,11 +490,12 @@ final class AppState {
     /// Vend a `CreateViewModel` wired to this manager (used by the Create flow). The VM is owned by
     /// the view; capturing `self` here is safe (no retain cycle — AppState doesn't hold the VM).
     func makeCreateViewModel() -> CreateViewModel {
-        CreateViewModel(create: { label, network, wordCount, scriptType in
-            _ = try self.createWallet(label: label, network: network, wordCount: wordCount,
+        // No network: a new wallet opens on the current eCash chain (docs/seed-container-model.md §4).
+        CreateViewModel(create: { label, wordCount, scriptType in
+            _ = try self.createWallet(label: label, network: .currentEcash, wordCount: wordCount,
                                       scriptType: scriptType)
-        }, createWithEntropy: { label, network, entropyField, wordCount, scriptType in
-            _ = try self.createWallet(label: label, network: network, entropyField: entropyField,
+        }, createWithEntropy: { label, entropyField, wordCount, scriptType in
+            _ = try self.createWallet(label: label, network: .currentEcash, entropyField: entropyField,
                                       wordCount: wordCount, scriptType: scriptType)
         })
     }
@@ -464,41 +521,77 @@ final class AppState {
             })
     }
 
-    /// Whether `wallet` can be copied to any other network — drives the "Copy to network…" entries.
-    /// Takes the observed wallet value (not a `manager` lookup, which isn't observable) so rows update.
-    func canCopyToNetwork(_ wallet: ManagedWallet) -> Bool {
-        WalletNetwork.selectable.contains { $0 != wallet.network && wallet.network.sharesKeys(with: $0) }
-    }
+    // MARK: - Network switching (docs/seed-container-model.md §4)
 
-    /// Vend a `CopyWalletViewModel` ("Copy to network") for `walletId`, or nil if it has nowhere to
-    /// go. The id is captured at present-time, so a switch mid-flow can't change which wallet gets
-    /// copied (`docs/copy-wallet-to-network.md`).
-    func makeCopyWalletViewModel(walletId id: String) -> CopyWalletViewModel? {
-        guard let wallet = wallets.first(where: { $0.id == id }) else { return nil }
-        let targets = manager.copyTargets(for: id).map {
-            CopyWalletViewModel.Target(network: $0, existingWalletId: manager.existingCopy(of: id, on: $0)?.id)
+    /// Whether the wallet has anywhere else to go — drives the "Switch network…" entries.
+    func canSwitchNetwork(_ wallet: ManagedWallet) -> Bool {
+        availableMainchains(for: wallet.id).count + availableSidechains(for: wallet.id).count > 1
+    }
+    /// The switcher's entries, minus retired networks when hiding is on (the current one stays).
+    func availableMainchains(for walletId: String) -> [WalletNetwork] {
+        RetiredNetworks.visibleNetworks(manager.availableMainchains(for: walletId),
+                                        current: wallets.first { $0.id == walletId }?.network,
+                                        hiding: hideRetiredNetworks)
+    }
+    func availableSidechains(for walletId: String) -> [WalletNetwork] {
+        RetiredNetworks.visibleNetworks(manager.availableSidechains(for: walletId),
+                                        current: wallets.first { $0.id == walletId }?.network,
+                                        hiding: hideRetiredNetworks)
+    }
+    /// The sidechains to nest under `mainchain` in the switcher, retired ones hidden per the setting.
+    func availableSidechains(for walletId: String, under mainchain: WalletNetwork) -> [WalletNetwork] {
+        RetiredNetworks.visibleNetworks(manager.availableSidechains(for: walletId, under: mainchain),
+                                        current: wallets.first { $0.id == walletId }?.network,
+                                        hiding: hideRetiredNetworks)
+    }
+    func hasAccount(walletId: String, network: WalletNetwork) -> Bool { manager.hasAccount(walletId: walletId, network: network) }
+    /// Why the last `switchNetwork` failed, for the switcher sheet. User-safe (a `WalletError` message).
+    private(set) var networkSwitchMessage: String? = nil
+
+    /// Switch a wallet to `network`. Opening a chain the wallet has no account on yet derives one,
+    /// which reads the phrase once — that case is gated behind device auth when app-lock is on,
+    /// like the Backup reveal. On the selected wallet the money surfaces re-root exactly as a
+    /// wallet switch does: reset, cached state, then a forced sync + price in the background. Returns
+    /// false (with a message) on failure; nothing changes then.
+    func switchNetwork(walletId: String, to network: WalletNetwork) async -> Bool {
+        networkSwitchMessage = nil
+        let isNew = !manager.hasAccount(walletId: walletId, network: network)
+        if isNew && appLock.enabled {
+            let reason = "Open this wallet on \(NetworkRegistry.params(for: network).displayName)"
+            guard await DeviceAuth.authenticate(reason: reason) else {
+                networkSwitchMessage = "Authentication is required to open this wallet on a new network."
+                return false
+            }
         }
-        guard !targets.isEmpty else { return nil }
-        return CopyWalletViewModel(
-            walletLabel: wallet.label,
-            targets: targets,
-            copy: { network in
-                // "Wallet 1 (Betanet)": the two wallets share a name otherwise, and the network is
-                // what tells them apart.
-                let label = "\(wallet.label) (\(NetworkRegistry.params(for: network).displayName))"
-                let copy = try self.manager.copyWallet(id: id, to: network, label: label)
-                self.scheduleInitialSplitCheck(for: copy)
-                self.resetPerWalletState()   // the copy is auto-selected
-                self.refresh()
-                // Sync immediately: the point of the copy is to see what this seed holds there.
-                Task { await self.sync() }
-            },
-            authorize: { reason in
-                // Reads the secret (inside WalletService), so gate it like the other key-touching
-                // flows when app-lock is on (§7); pass through if off.
-                guard self.appLock.enabled else { return true }
-                return await DeviceAuth.authenticate(reason: reason)
-            })
+        do {
+            _ = try manager.enableNetwork(walletId: walletId, network: network)
+        } catch let error as WalletError {
+            networkSwitchMessage = error.userMessage
+            return false
+        } catch {
+            networkSwitchMessage = WalletError.persistenceFailed.userMessage
+            return false
+        }
+        // An eCash account opened for the first time may hold coins shared with Bitcoin: owe it the
+        // one automatic split check, like an import does.
+        if isNew, let wallet = manager.wallets.first(where: { $0.id == walletId }) {
+            scheduleInitialSplitCheck(for: wallet)
+        }
+        if walletId == selectedWalletId {
+            resetPerWalletState()
+            refresh()
+            // Not awaited, like `selectWallet`: the switcher dismisses as soon as the account is
+            // switched and Home shows the sync spinner — awaiting the forced sync here held the
+            // sheet open for the whole network round trip (Jake, 2026-11-11). Forced because the
+            // user asked for this chain: never a throttled skip.
+            Task {
+                await sync(force: true)
+                await refreshPrice()
+            }
+        } else {
+            refresh()
+        }
+        return true
     }
 
     /// Vend a `SplitViewModel` for the selected eCash wallet, or nil if none is selected / nothing to
@@ -568,9 +661,10 @@ final class AppState {
     /// Outcome of the last check, for the Settings row. nil = never run this session.
     private(set) var splitCheckMessage: String?
 
-    /// When each wallet last completed a sync, for the throttle in `sync(force:)`. Per wallet, so
-    /// switching wallets is never throttled by the previous one's timestamp.
-    @ObservationIgnored private var lastSyncedAt: [String: Date] = [:]
+    /// When each account last completed a sync, for the throttle in `sync(force:)`. Per wallet AND
+    /// network, so neither a wallet switch nor a network switch is throttled by the previous
+    /// chain's timestamp (see `SyncFreshness`).
+    @ObservationIgnored private var syncFreshness = SyncFreshness()
 
     /// Single-flight sync across wallets, queueing a switch made mid-sync (see `SyncScheduler`).
     /// `@ObservationIgnored` on purpose — internal bookkeeping; the UI renders `syncState`.
@@ -580,6 +674,37 @@ final class AppState {
     /// The last-known balance for any wallet, selected or not. A cached read of BDK's persisted
     /// chain data (no network, safe on the main actor), or `.unknown` when the wallet has never
     /// synced on this device and `0` would be a guess rather than a fact.
+    /// One line per chain a wallet holds coins on, for the wallet list: the account it's open on
+    /// first, then the others, each only with a known non-zero cached balance. A seed is several
+    /// chains; the list says so instead of showing whichever chain was looked at last (Jake,
+    /// 2026-11-05). The current chain used to be shown even at zero, which on an empty wallet
+    /// amounted to naming the last network viewed and nothing else (Jake, 2026-11-10) — now an empty
+    /// wallet has no lines and the list says "no coins seen yet" without naming a chain.
+    func accountBalances(for wallet: ManagedWallet) -> [WalletAccountBalance] {
+        var out: [WalletAccountBalance] = []
+        let current = wallet.selectedAccount
+        if case .known(let amount) = balanceSummary(walletId: wallet.id), amount.sats > 0 {
+            out.append(WalletAccountBalance(network: current.network, balance: .known(amount)))
+        }
+        for account in wallet.accounts where account.id != current.id {
+            let summary = balanceSummary(walletId: wallet.id, network: account.network)
+            if case .known(let amount) = summary, amount.sats > 0 {
+                out.append(WalletAccountBalance(network: account.network, balance: summary))
+            }
+        }
+        return out
+    }
+
+    /// `balanceSummary` for one of a wallet's accounts that isn't necessarily the one it's switched
+    /// to (the payment-link chooser shows a seed wallet once per payable chain).
+    func balanceSummary(walletId: String, network: WalletNetwork) -> WalletBalanceSummary {
+        if manager.wallets.first(where: { $0.id == walletId })?.network == network {
+            return balanceSummary(walletId: walletId)
+        }
+        guard let amount = try? manager.balance(walletId: walletId, network: network) else { return .unknown }
+        return amount.sats > 0 ? .known(amount) : .unknown
+    }
+
     func balanceSummary(walletId: String) -> WalletBalanceSummary {
         guard let amount = try? walletOps.balance(walletId: walletId) else { return .unknown }
         if syncStore.hasSynced(walletId: walletId) { return .known(amount) }
@@ -627,7 +752,16 @@ final class AppState {
             return
         }
         let routing = PaymentLink.routing(scheme: scheme, address: parsed.address)
-        let candidates = wallets.filter { routing.networks.contains($0.network) }
+        // One candidate per (wallet × account on a payable chain): a seed wallet holding both a
+        // Bitcoin and an eCash account is TWO choices for an ambiguous link, shown with that
+        // account's chip and balance — picking the chain is the whole decision.
+        let candidates: [ManagedWallet] = wallets.flatMap { wallet in
+            wallet.accounts.filter { routing.networks.contains($0.network) }.map { account in
+                var viewed = wallet
+                viewed.selectedAccountId = account.id
+                return viewed
+            }
+        }
         guard !candidates.isEmpty else {
             paymentLinkProblem = PaymentLink.noWalletMessage(for: routing)
             return
@@ -644,8 +778,7 @@ final class AppState {
         // ambiguous link the wrong choice sends real value to a chain the payee will never watch,
         // and on a named chain the user still knows better than we do which wallet should pay.
         if candidates.count == 1 {
-            if candidates[0].id != selectedWalletId { selectWallet(id: candidates[0].id) }
-            pendingPaymentLink = body
+            choosePaymentLinkWallet(id: candidates[0].id, network: candidates[0].network, body: body)
         } else {
             paymentLinkChoices = candidates
             paymentLinkChoiceBody = body
@@ -665,11 +798,35 @@ final class AppState {
     /// intent is captured. Called from Home's `.task`, which runs after the first render.
     func recheckPaymentLinkAfterLaunch() { checkAndroidPaymentLink() }
 
-    /// Pay the pending link from a chosen wallet.
-    func choosePaymentLinkWallet(id: String) {
+    /// Pay the pending link from a chosen wallet, on the chosen chain.
+    func choosePaymentLinkWallet(id: String, network: WalletNetwork) {
         guard let body = paymentLinkChoiceBody else { return }
         clearPaymentLinkChoice()
-        if id != selectedWalletId { selectWallet(id: id) }
+        choosePaymentLinkWallet(id: id, network: network, body: body)
+    }
+
+    /// Select the wallet, switch it to `network` (it has an account there — the candidates were
+    /// built from accounts — so no secret is read), and hand Send the link.
+    private func choosePaymentLinkWallet(id: String, network: WalletNetwork, body: String) {
+        if !manager.hasAccount(walletId: id, network: network) {
+            paymentLinkProblem = "That wallet can't pay on \(NetworkRegistry.params(for: network).displayName)."
+            return
+        }
+        let wallet = manager.wallets.first { $0.id == id }
+        let needsSwitch = wallet?.network != network
+        if needsSwitch {
+            guard (try? manager.enableNetwork(walletId: id, network: network)) != nil else {
+                paymentLinkProblem = WalletError.persistenceFailed.userMessage
+                return
+            }
+        }
+        if id != selectedWalletId {
+            selectWallet(id: id)
+        } else if needsSwitch {
+            resetPerWalletState()
+            refresh()
+            Task { await sync() }
+        }
         pendingPaymentLink = body
     }
 
@@ -719,7 +876,7 @@ final class AppState {
             // uses Bitcoin's `bc` HRP, so a cross-network entry here would look perfectly valid and
             // send coins to a chain that will never see them (Golden Rule §6).
             destinations: manager.wallets
-                .filter { $0.network == wallet.network && $0.id != id }
+                .filter { other in other.id != id && other.accounts.contains { $0.network == wallet.network } }
                 .map { SendViewModel.Destination(id: $0.id, label: $0.label,
                                                  balance: balanceSummary(walletId: $0.id)) },
             send: { address, amount, feeRate in
@@ -730,6 +887,12 @@ final class AppState {
             sweep: { address, feeRate in
                 // "Max" → true drain of the whole wallet (exact fee deducted).
                 try await self.walletOps.sweep(walletId: id, to: address, feeRate: feeRate)
+            },
+            preview: { address, amount, feeRate, isMax in
+                // The review's dry run: the same engine and the same two-pass build as the send
+                // itself, so the warning it drives can't disagree with what gets broadcast.
+                isMax ? try await self.walletOps.previewSweep(walletId: id, to: address, feeRate: feeRate)
+                      : try await self.walletOps.previewSend(walletId: id, to: address, amount: amount, feeRate: feeRate)
             },
             onSent: { tx in self.insertPending(tx) },
             authorize: { reason in
@@ -742,7 +905,7 @@ final class AppState {
                 // Thunder addresses are BLAKE3/base58, not BDK — validate them app-side; BDK would
                 // reject every one. (The send itself still errors with `.backendUnavailable` until the
                 // Thunder RPC lands.)
-                wallet.network == .thunder
+                wallet.network.isThunder
                     ? ThunderAddress(base58: address) != nil
                     : self.manager.isValidAddress(address, network: wallet.network)
             },
@@ -750,7 +913,13 @@ final class AppState {
             // deriving a FRESH address every time someone browses the picker would inflate that
             // wallet's revealed-index space, which is what hid a real incoming tx once before.
             addressForDestination: { destinationId in
-                try await self.walletOps.receiveAddress(walletId: destinationId, unused: true).address
+                // Pay the destination wallet's account ON THIS NETWORK — not whichever account it
+                // happens to be switched to (Golden Rule §6). Sidechain wallets still go through the
+                // facade (Thunder derives outside BDK).
+                if wallet.network.isSidechain {
+                    return try await self.walletOps.receiveAddress(walletId: destinationId, unused: true).address
+                }
+                return try self.manager.nextUnusedAddress(walletId: destinationId, network: wallet.network).address
             })
         activeSendVM = vm
         return vm
@@ -874,8 +1043,8 @@ final class AppState {
         let network = wallet.network
         let params = NetworkRegistry.params(for: network)
         let ops = walletOps
-        // The user's wallets ON THIS SIDECHAIN (betanet Thunder for betanet slot 9, nothing
-        // else today), exactly like Send's same-network list.
+        // The user's wallets ON THIS SIDECHAIN (Thunder for slot 9 on eCash, betanet Thunder for
+        // betanet's slot 9), exactly like Send's same-network list.
         let receiving = SidechainWalletNetwork.walletNetwork(forSlot: sidechain.slot, onMainchain: network)
         let destinations = manager.wallets
             .filter { receiving != nil && $0.network == receiving }
@@ -1156,6 +1325,7 @@ final class AppState {
         if let id = selectedWalletId {
             balance = (try? walletOps.balance(walletId: id)) ?? balance
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? pendingBalance
+            unconfirmedBalance = (try? walletOps.unconfirmedBalance(walletId: id)) ?? unconfirmedBalance
         }
 
         // Then reconcile with the backend in the background — confirmations, fee, and the split
@@ -1233,12 +1403,14 @@ final class AppState {
         // assignments come back to main.
         let cached = try? await walletOps.balanceAsync(walletId: id)
         let pending = try? await walletOps.pendingBalanceAsync(walletId: id)
+        let unconfirmed = try? await walletOps.unconfirmedBalanceAsync(walletId: id)
         let cachedTxs = try? await walletOps.transactionsAsync(walletId: id)
         // The user may have switched wallets during those reads — never paint one wallet's numbers
         // on another's screen (Golden Rule §5).
         guard selectedWalletId == id else { return }
         if let cached { balance = cached }
         if let pending { pendingBalance = pending }
+        if let unconfirmed { unconfirmedBalance = unconfirmed }
         if let cachedTxs { transactions = sorted(cachedTxs) }
         if selectedWallet?.network.supportsCoinSplit == true {
             splitSummary = try? splitSummaryUsingCachedChecks(walletId: id)
@@ -1263,6 +1435,7 @@ final class AppState {
             guard selectedWalletId == id else { return }   // switched away mid-rescan
             balance = rescanned
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
+            unconfirmedBalance = (try? walletOps.unconfirmedBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             splitSummary = (selectedWallet?.network.supportsCoinSplit == true) ? (try? splitSummaryUsingCachedChecks(walletId: id)) : nil
             syncState = .idle
@@ -1366,8 +1539,8 @@ final class AppState {
     }
 
     /// Owe `wallet` one automatic Bitcoin check, run after its next successful sync. Only for imports
-    /// and copies on a fork network: those can hold coins inherited from Bitcoin. A newly created
-    /// seed can't, so create skips it.
+    /// and the first open of an eCash account on an existing seed: those can hold coins inherited
+    /// from Bitcoin. A newly created seed can't, so create skips it.
     private func scheduleInitialSplitCheck(for wallet: ManagedWallet) {
         guard wallet.network.supportsCoinSplit else { return }
         splitCheckStore.markNeedsInitialCheck(walletId: wallet.id)
@@ -1378,6 +1551,7 @@ final class AppState {
     private func resetPerWalletState() {
         balance = .zero
         pendingBalance = .zero
+        unconfirmedBalance = .zero
         transactions = []
         splitSummary = nil
         splitCheckMessage = nil
@@ -1429,8 +1603,10 @@ final class AppState {
         await loadCachedStateIfNeeded(walletId: id)
         // Ambient triggers cluster: a foreground resume can fire the scene-phase sync, an app-lock
         // unlock, and a Send tap within seconds, each doing a full-window query for a chain that
-        // hasn't meaningfully changed. Explicit user actions always pass `force`.
-        if !force, let last = lastSyncedAt[id], Date().timeIntervalSince(last) < Self.syncFreshnessWindow {
+        // hasn't meaningfully changed. Explicit user actions always pass `force`. The account is
+        // captured here: the chain this run syncs is the one selected NOW.
+        let network = manager.wallets.first(where: { $0.id == id })?.network
+        if !force, let network, syncFreshness.isFresh(walletId: id, network: network) {
             if selectedWalletId == id { syncState = .idle }
             return
         }
@@ -1441,10 +1617,11 @@ final class AppState {
             let updated = try await walletOps.sync(walletId: id)
             // Record that this wallet's balance is now a fact rather than an unsynced default.
             syncStore.markSynced(walletId: id, at: Int64(Date().timeIntervalSince1970))
-            lastSyncedAt[id] = Date()
+            if let network { syncFreshness.record(walletId: id, network: network) }
             guard selectedWalletId == id else { return }
             balance = updated
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
+            unconfirmedBalance = (try? walletOps.unconfirmedBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             // Coin-split status from Bitcoin's stored answers (local, no I/O) — drives the Home nudge.
             // eCash only; nil elsewhere.

@@ -27,7 +27,7 @@
 
 - **Golden Rules (CLAUDE.md §2)** are non-negotiable — BDK owns all key/consensus logic;
   seeds never leave the secure store or get logged; a wallet is a seed and network is a
-  switchable view resolved via `NetworkRegistry` (`docs/wallet-and-network-model.md`); wallets
+  switchable view resolved via `NetworkRegistry` (now `docs/seed-container-model.md`); wallets
   are isolated; testnet is unmistakable; no broadcast without
   explicit confirmation; fail loud in dev, fail safe in prod.
 - **Testing bar (CLAUDE.md §11/§13):** no PR touching `WalletService` or a view model merges
@@ -214,7 +214,7 @@ it; only "New address" advances the reveal index).
 > amount, full license texts, real brand tokens, signing/CI, and v2 backends (CBF +
 > embedded Tor).
 
-### Slice 1 — Create wallet  ✅ (model: `docs/wallet-and-network-model.md`)
+### Slice 1 — Create wallet  ✅ (model: `docs/seed-container-model.md`)
 - [x] **No network question** — generate seed → persist → route Home as selected wallet (dev
       wallets currently created on Signet; network switchable later; first sync on Home).
       A "Wallet" = its own mnemonic/seed. **Recovery-phrase length: 12 (default) or 24 words**,

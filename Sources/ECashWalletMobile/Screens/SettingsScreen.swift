@@ -12,7 +12,7 @@ struct SettingsScreen: View {
     @Environment(AppState.self) var app
     @State var showBackup = false   // not `private` — Fuse bridges @State (skip-fuse rule)
     @State var showSplit = false
-    @State var showCopy = false
+    @State var showSwitch = false
 
     var body: some View {
         List {
@@ -123,13 +123,13 @@ struct SettingsScreen: View {
                         .textStyle(.xs)
                         .foregroundStyle(Theme.Colors.text2)
 
-                    // Same phrase, another network (docs/copy-wallet-to-network.md). Only where the
-                    // keys carry over — Signet and Thunder wallets have nowhere to go.
-                    if app.canCopyToNetwork(wallet) {
-                        Button { showCopy = true } label: {
+                    // A wallet is a seed and switches networks (docs/seed-container-model.md §4);
+                    // same control as the Home chip, for people who look here first.
+                    if app.canSwitchNetwork(wallet) {
+                        Button { showSwitch = true } label: {
                             HStack {
-                                Text("Copy to another network", bundle: .module,
-                                     comment: "settings: copy wallet to another network")
+                                Text("Switch network", bundle: .module,
+                                     comment: "settings: switch the wallet's network")
                                     .textStyle(.body)
                                     .foregroundStyle(Theme.Colors.text0)
                                 Spacer()
@@ -216,7 +216,7 @@ struct SettingsScreen: View {
                 Text("Fiat values appear on mainnet wallets only, priced via Bitfinex.",
                      bundle: .module, comment: "fiat currency section explainer")
             }
-            Section(header: sectionHeader(Text("Network", bundle: .module, comment: "settings section: network"))) {
+            Section {
                 NavigationLink {
                     NetworkSettingsScreen()
                 } label: {
@@ -224,6 +224,20 @@ struct SettingsScreen: View {
                         .textStyle(.body)
                         .foregroundStyle(Theme.Colors.text0)
                 }
+                // Alphanet / betanet / Thunder betanet: finished test networks. Hiding is display
+                // only (`RetiredNetworks`); the wallets and their chain data stay on the device.
+                Toggle(isOn: Binding(
+                    get: { app.hideRetiredNetworks },
+                    set: { app.hideRetiredNetworks = $0 })) {
+                    Text("Hide retired networks", bundle: .module, comment: "settings: hide retired-network wallets toggle")
+                        .textStyle(.body)
+                        .foregroundStyle(Theme.Colors.text0)
+                }
+            } header: {
+                sectionHeader(Text("Network", bundle: .module, comment: "settings section: network"))
+            } footer: {
+                Text("Alphanet, Betanet and Thunder Betanet were test networks before the eCash fork. Hiding them takes their wallets and balances out of the list and the network switcher — nothing is deleted, and turning this off brings them back.",
+                     bundle: .module, comment: "hide retired networks explainer")
             }
             Section(header: sectionHeader(Text("About", bundle: .module, comment: "settings section: about"))) {
                 Text(versionString)
@@ -304,10 +318,8 @@ struct SettingsScreen: View {
                                   note: "This wallet has no spendable coins to split.")
             }
         }
-        .sheet(isPresented: $showCopy) {
-            if let id = app.selectedWalletId, let vm = app.makeCopyWalletViewModel(walletId: id) {
-                CopyWalletView(viewModel: vm)
-            }
+        .sheet(isPresented: $showSwitch) {
+            if let id = app.selectedWalletId { NetworkSwitcherSheet(walletId: id) }
         }
     }
 
