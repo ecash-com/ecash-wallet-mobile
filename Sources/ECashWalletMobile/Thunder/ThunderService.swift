@@ -130,6 +130,11 @@ final class ThunderService: WalletOps {
         Amount(sats: Int64(clamping: pendingChangeCache[chainKey(walletId)] ?? 0))
     }
 
+    /// Thunder never has spendable-but-unconfirmed coins: the node rejects spending an output that
+    /// isn't in its utreexo accumulator yet, so incoming payments stay in `pendingBalance` until mined.
+    func unconfirmedBalance(walletId: String) throws -> Amount { .zero }
+    func unconfirmedBalanceAsync(walletId: String) async throws -> Amount { .zero }
+
     /// Scan this wallet's addresses (0 ..< revealed + gap limit), refresh the cached UTXO set, and
     /// rebuild history from the unspent + spent reads.
     /// Thunder derives its own address window on every sync (no BDK revealed-spk model), so a
@@ -246,6 +251,11 @@ final class ThunderService: WalletOps {
         return try await build(walletId: walletId, selection: selection, outputs: outputs,
                                netSats: -(amount.sats + Int64(clamping: selection.feeSats)))
     }
+
+    /// No dry run for Thunder: its coin selection runs at send time against a fresh UTXO fetch, and
+    /// nothing it spends is unconfirmed (see `unconfirmedBalance`). The review shows no exact fee.
+    func previewSend(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> SendPreview? { nil }
+    func previewSweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> SendPreview? { nil }
 
     /// True "Max": drain every spendable UTXO to `address`, fee taken out of the total.
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {

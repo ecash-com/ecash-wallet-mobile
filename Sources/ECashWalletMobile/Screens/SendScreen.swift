@@ -346,11 +346,17 @@ struct SendScreen: View {
             VStack(alignment: .leading, spacing: Theme.Space.x3) {
                 reviewRow(label: "To", value: vm.reviewAddress)
                 reviewRow(label: "Network", value: vm.networkDisplayName)
-                reviewRow(label: "Fee", value: "\(vm.tier.label) · \(vm.tier.feeRate.satPerVByte) \(subUnit)/vB")
-                Text("The network fee is set by rate; the exact fee is deducted at send.",
-                     bundle: .module, comment: "send review fee explainer")
-                    .textStyle(.xs)
-                    .foregroundStyle(Theme.Colors.text2)
+                // The exact fee once the dry run has built the transaction (watch-only, nothing
+                // signed); the rate alone until then, or on an engine that can't dry-run (Thunder).
+                if let fee = vm.previewFee {
+                    reviewRow(label: "Fee", value: "\(fee.formattedCoin()) \(vm.unitLabel) · \(vm.tier.label) \(vm.tier.feeRate.satPerVByte) \(subUnit)/vB")
+                } else {
+                    reviewRow(label: "Fee", value: "\(vm.tier.label) · \(vm.tier.feeRate.satPerVByte) \(subUnit)/vB")
+                    Text("The network fee is set by rate; the exact fee is deducted at send.",
+                         bundle: .module, comment: "send review fee explainer")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.text2)
+                }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
             .padding(Theme.Space.x4)
@@ -359,6 +365,32 @@ struct SendScreen: View {
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
                     .stroke(Theme.Colors.border, lineWidth: 1)
             )
+
+            // Inline, in the warning colour, not an alert — the one thing the dry run exists to
+            // say. It appears only when confirmed coins didn't cover the payment and an incoming
+            // payment that hasn't confirmed had to be spent (Jake, 2026-11-11: unconfirmed coins
+            // are spendable, with a warning when a send depends on one). The risk is named
+            // plainly: the sender can still replace that payment, and this send goes with it.
+            if vm.usesUnconfirmedInputs {
+                Text("Uses \(vm.unconfirmedInputAmount.formattedCoin()) \(vm.unitLabel) you received that hasn't confirmed yet. If the sender replaces or cancels that payment before it confirms, this send fails with it and your coins return.",
+                     bundle: .module, comment: "send review: warning that the payment spends incoming unconfirmed coins; %@ are amount + unit")
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.warning)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(Theme.Space.x4)
+                    .background(Theme.Colors.bg1, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: Theme.Radius.md)
+                            .stroke(Theme.Colors.warning, lineWidth: 1)
+                    )
+            } else if let message = vm.previewMessage {
+                // The dry run failed the way the send would (not enough once the fee is in, dust):
+                // say so here, before device auth, rather than after.
+                Text(verbatim: message)
+                    .textStyle(.sm)
+                    .foregroundStyle(Theme.Colors.negative)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
 
             Spacer()
 
@@ -371,6 +403,9 @@ struct SendScreen: View {
             }
         }
         .padding(Theme.Space.gutter)
+        // The dry run, each time the review appears (a pop back to the amount step and a fresh
+        // Review re-runs it, which is what an edited amount or fee tier needs).
+        .task { await vm.loadPreview() }
     }
 
     private func reviewRow(label: LocalizedStringKey, value: String) -> some View {

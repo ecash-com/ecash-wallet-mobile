@@ -182,14 +182,24 @@ Your keys stay on your device, and the app is built to keep them exposed as litt
 - **Guarded backup.** Revealing the phrase is behind an explicit gate + device auth, and you confirm
   a few words before it's marked backed up. Screenshots aren't blocked — capturing your own recovery
   phrase is your call (the app advises against it) — though the app-switcher snapshot stays obscured.
-- **Spendable balance (0-conf policy).** Only **confirmed coins + your own unconfirmed change** are
-  treated as spendable. Coins you *received* that are still unconfirmed (0-conf) are shown separately
-  as **pending** and are kept out of coin selection until they confirm — because an unconfirmed
-  incoming payment can still be double-spent or RBF-replaced, which would orphan anything you tried to
-  send on top of it. This mirrors Bitcoin Core's trusted/untrusted rule (BDK gives us the
-  `confirmed` / `trustedPending` / `untrustedPending` split; the send path also marks untrusted
-  outpoints unspendable). A configurable confirmation threshold — and potentially a **per-network**
-  one (e.g. stricter on mainnet than on testnets) — is a planned option.
+- **Spendable balance (0-conf policy).** Every coin the wallet holds is spendable, including payments
+  you *received* that are still unconfirmed (since 2026-11-11; before that only confirmed coins + your
+  own unconfirmed change were). Coin selection is **two-pass**: a send is first built from confirmed
+  coins and your own change only — exactly the old rule — and only if those don't cover it is it
+  rebuilt with the unconfirmed incoming coins allowed. When that happens the **review screen warns**
+  how much of the payment rides on an unconfirmed payment, because its sender can still double-spend
+  or RBF-replace it, which would invalidate your send with it (your coins return; the recipient is
+  never paid). Home shows the unconfirmed share of the balance for the same reason. That share
+  follows the chain: the change from a send that spent an unconfirmed incoming coin is only as good
+  as that coin, so it stays "unconfirmed" (and warned about) until the coin confirms — BDK alone
+  would call it trusted the moment it is yours. Bitcoin Core
+  refuses such coins outright and Electrum spends them silently; this is the middle. Coin splitting
+  and sidechain deposits keep the strict rule (Bitcoin's explorer can't classify an unmined coin; a
+  deposit's treasury ordering is delicate enough). BDK gives us the `confirmed` / `trustedPending` /
+  `untrustedPending` split; the send path marks the untrusted outpoints unspendable on the first pass
+  (`WalletEngine.buildPreferringConfirmed`) and the review's dry run (`previewSend`) reads what got
+  selected. A configurable confirmation threshold — possibly **per-network** — remains a planned
+  option.
 - **Clean removal.** Removing a wallet purges its phrase from the secure store plus all of its
   on-device data.
 

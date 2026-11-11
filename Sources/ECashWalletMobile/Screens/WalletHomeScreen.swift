@@ -259,6 +259,15 @@ struct WalletHomeScreen: View {
                             .multilineTextAlignment(.center)
                     }
                 }
+                // Spendable, but not settled: incoming payments whose senders can still replace
+                // them (unconfirmed coins became spendable 2026-11-11; Send warns when a payment
+                // depends on one). Shown so the user knows which part of the balance that is.
+                if !app.balanceHidden, app.unconfirmedBalance.sats > 0 {
+                    Text("\(app.unconfirmedBalance.formattedCoin()) \(params.unitLabel) of this is unconfirmed",
+                         bundle: .module, comment: "home: share of the balance that is incoming payments not yet confirmed; %@ are amount + unit")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.warning)
+                }
                 syncStatus
             }
             .padding(.vertical, Theme.Space.x5)

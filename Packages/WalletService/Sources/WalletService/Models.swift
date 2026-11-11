@@ -604,6 +604,25 @@ public struct Utxo: Equatable, Hashable, Sendable {
     }
 }
 
+/// What a send WOULD spend, before anything is signed or broadcast — the dry run behind the review
+/// screen (`WalletEngine.previewSend` / `previewSweep`). Built watch-only by the same two-pass coin
+/// selection the real send uses: confirmed coins (plus our own change) first, incoming unconfirmed
+/// coins only when those don't cover the amount. Bridge-safe (signed Int fields, no computed
+/// properties — the app derives "uses unconfirmed" from `unconfirmedInputSats > 0`).
+public struct SendPreview: Equatable, Sendable {
+    /// The exact fee the built transaction pays.
+    public let feeSats: Int64
+    /// Sats of inputs that are incoming payments not yet confirmed. `> 0` means this send depends
+    /// on someone else's transaction confirming: if its sender replaces or cancels it first, this
+    /// send fails with it — the coins return, nothing is lost, but the recipient is never paid.
+    public let unconfirmedInputSats: Int64
+
+    public init(feeSats: Int64, unconfirmedInputSats: Int64) {
+        self.feeSats = feeSats
+        self.unconfirmedInputSats = unconfirmedInputSats
+    }
+}
+
 /// A read-only summary of a wallet's coin-split status: how much is drainable, and how much of that
 /// Bitcoin's explorer reported as still live on Bitcoin (shared → needs splitting). Drives the split
 /// nudge + the amount shown in the flow. Bridge-safe (signed Int fields).

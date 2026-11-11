@@ -28,8 +28,12 @@ final class AppState {
 
     /// The selected wallet's SPENDABLE balance (confirmed + own unconfirmed change), refreshed by `sync()`.
     private(set) var balance: Amount = .zero
-    /// Not-yet-spendable balance (incoming 0-conf + immature). Shown separately so it doesn't look lost.
+    /// Not-yet-spendable balance (immature coinbase; on Thunder also incoming 0-conf and own change,
+    /// which its node can't spend until mined). Shown separately so it doesn't look lost.
     private(set) var pendingBalance: Amount = .zero
+    /// Incoming unconfirmed payments INSIDE `balance` — spendable since 2026-11-11, shown apart on
+    /// Home because their senders can still pull them back (Send warns when a payment rides on one).
+    private(set) var unconfirmedBalance: Amount = .zero
     /// The part of `pendingBalance` that is the selected wallet's own change waiting for a block
     /// (Thunder only). Read alongside `pendingBalance`, which is what triggers the re-render.
     var pendingChange: Amount {
@@ -75,7 +79,6 @@ final class AppState {
 
     /// How long a completed sync counts as fresh for ambient triggers. Short enough that the app
     /// still feels live, long enough to collapse the resume/unlock/open-Send cluster into one.
-    private static let syncFreshnessWindow: TimeInterval = 30
 
     private static let selectedWalletKey = "selectedWalletId"
     private static let appLockKey = "appLockEnabled"
@@ -548,8 +551,8 @@ final class AppState {
     /// Switch a wallet to `network`. Opening a chain the wallet has no account on yet derives one,
     /// which reads the phrase once — that case is gated behind device auth when app-lock is on,
     /// like the Backup reveal. On the selected wallet the money surfaces re-root exactly as a
-    /// wallet switch does: reset, cached state, sync, price. Returns false (with a message) on
-    /// failure; nothing changes then.
+    /// wallet switch does: reset, cached state, then a forced sync + price in the background. Returns
+    /// false (with a message) on failure; nothing changes then.
     func switchNetwork(walletId: String, to network: WalletNetwork) async -> Bool {
         networkSwitchMessage = nil
         let isNew = !manager.hasAccount(walletId: walletId, network: network)
@@ -577,8 +580,14 @@ final class AppState {
         if walletId == selectedWalletId {
             resetPerWalletState()
             refresh()
-            await sync()
-            await refreshPrice()
+            // Not awaited, like `selectWallet`: the switcher dismisses as soon as the account is
+            // switched and Home shows the sync spinner — awaiting the forced sync here held the
+            // sheet open for the whole network round trip (Jake, 2026-11-11). Forced because the
+            // user asked for this chain: never a throttled skip.
+            Task {
+                await sync(force: true)
+                await refreshPrice()
+            }
         } else {
             refresh()
         }
@@ -652,9 +661,10 @@ final class AppState {
     /// Outcome of the last check, for the Settings row. nil = never run this session.
     private(set) var splitCheckMessage: String?
 
-    /// When each wallet last completed a sync, for the throttle in `sync(force:)`. Per wallet, so
-    /// switching wallets is never throttled by the previous one's timestamp.
-    @ObservationIgnored private var lastSyncedAt: [String: Date] = [:]
+    /// When each account last completed a sync, for the throttle in `sync(force:)`. Per wallet AND
+    /// network, so neither a wallet switch nor a network switch is throttled by the previous
+    /// chain's timestamp (see `SyncFreshness`).
+    @ObservationIgnored private var syncFreshness = SyncFreshness()
 
     /// Single-flight sync across wallets, queueing a switch made mid-sync (see `SyncScheduler`).
     /// `@ObservationIgnored` on purpose — internal bookkeeping; the UI renders `syncState`.
@@ -877,6 +887,12 @@ final class AppState {
             sweep: { address, feeRate in
                 // "Max" → true drain of the whole wallet (exact fee deducted).
                 try await self.walletOps.sweep(walletId: id, to: address, feeRate: feeRate)
+            },
+            preview: { address, amount, feeRate, isMax in
+                // The review's dry run: the same engine and the same two-pass build as the send
+                // itself, so the warning it drives can't disagree with what gets broadcast.
+                isMax ? try await self.walletOps.previewSweep(walletId: id, to: address, feeRate: feeRate)
+                      : try await self.walletOps.previewSend(walletId: id, to: address, amount: amount, feeRate: feeRate)
             },
             onSent: { tx in self.insertPending(tx) },
             authorize: { reason in
@@ -1309,6 +1325,7 @@ final class AppState {
         if let id = selectedWalletId {
             balance = (try? walletOps.balance(walletId: id)) ?? balance
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? pendingBalance
+            unconfirmedBalance = (try? walletOps.unconfirmedBalance(walletId: id)) ?? unconfirmedBalance
         }
 
         // Then reconcile with the backend in the background — confirmations, fee, and the split
@@ -1386,12 +1403,14 @@ final class AppState {
         // assignments come back to main.
         let cached = try? await walletOps.balanceAsync(walletId: id)
         let pending = try? await walletOps.pendingBalanceAsync(walletId: id)
+        let unconfirmed = try? await walletOps.unconfirmedBalanceAsync(walletId: id)
         let cachedTxs = try? await walletOps.transactionsAsync(walletId: id)
         // The user may have switched wallets during those reads — never paint one wallet's numbers
         // on another's screen (Golden Rule §5).
         guard selectedWalletId == id else { return }
         if let cached { balance = cached }
         if let pending { pendingBalance = pending }
+        if let unconfirmed { unconfirmedBalance = unconfirmed }
         if let cachedTxs { transactions = sorted(cachedTxs) }
         if selectedWallet?.network.supportsCoinSplit == true {
             splitSummary = try? splitSummaryUsingCachedChecks(walletId: id)
@@ -1416,6 +1435,7 @@ final class AppState {
             guard selectedWalletId == id else { return }   // switched away mid-rescan
             balance = rescanned
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
+            unconfirmedBalance = (try? walletOps.unconfirmedBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             splitSummary = (selectedWallet?.network.supportsCoinSplit == true) ? (try? splitSummaryUsingCachedChecks(walletId: id)) : nil
             syncState = .idle
@@ -1531,6 +1551,7 @@ final class AppState {
     private func resetPerWalletState() {
         balance = .zero
         pendingBalance = .zero
+        unconfirmedBalance = .zero
         transactions = []
         splitSummary = nil
         splitCheckMessage = nil
@@ -1582,8 +1603,10 @@ final class AppState {
         await loadCachedStateIfNeeded(walletId: id)
         // Ambient triggers cluster: a foreground resume can fire the scene-phase sync, an app-lock
         // unlock, and a Send tap within seconds, each doing a full-window query for a chain that
-        // hasn't meaningfully changed. Explicit user actions always pass `force`.
-        if !force, let last = lastSyncedAt[id], Date().timeIntervalSince(last) < Self.syncFreshnessWindow {
+        // hasn't meaningfully changed. Explicit user actions always pass `force`. The account is
+        // captured here: the chain this run syncs is the one selected NOW.
+        let network = manager.wallets.first(where: { $0.id == id })?.network
+        if !force, let network, syncFreshness.isFresh(walletId: id, network: network) {
             if selectedWalletId == id { syncState = .idle }
             return
         }
@@ -1594,10 +1617,11 @@ final class AppState {
             let updated = try await walletOps.sync(walletId: id)
             // Record that this wallet's balance is now a fact rather than an unsynced default.
             syncStore.markSynced(walletId: id, at: Int64(Date().timeIntervalSince1970))
-            lastSyncedAt[id] = Date()
+            if let network { syncFreshness.record(walletId: id, network: network) }
             guard selectedWalletId == id else { return }
             balance = updated
             pendingBalance = (try? walletOps.pendingBalance(walletId: id)) ?? .zero
+            unconfirmedBalance = (try? walletOps.unconfirmedBalance(walletId: id)) ?? .zero
             transactions = sorted((try? walletOps.transactions(walletId: id)) ?? [])
             // Coin-split status from Bitcoin's stored answers (local, no I/O) — drives the Home nudge.
             // eCash only; nil elsewhere.

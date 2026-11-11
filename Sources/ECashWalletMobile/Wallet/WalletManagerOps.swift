@@ -17,6 +17,8 @@ final class WalletManagerOps: WalletOps {
     func balance(walletId: String) throws -> Amount { try manager.balance(walletId: walletId) }
     func pendingBalance(walletId: String) throws -> Amount { try manager.pendingBalance(walletId: walletId) }
     func pendingChange(walletId: String) -> Amount { .zero }   // BDK counts own change as spendable
+    func unconfirmedBalance(walletId: String) throws -> Amount { try manager.unconfirmedBalance(walletId: walletId) }
+    func unconfirmedBalanceAsync(walletId: String) async throws -> Amount { try await manager.unconfirmedBalanceAsync(walletId: walletId) }
     func sync(walletId: String) async throws -> Amount { try await manager.sync(walletId: walletId) }
     func rescan(walletId: String) async throws -> Amount { try await manager.rescan(walletId: walletId) }
     func balanceAsync(walletId: String) async throws -> Amount { try await manager.balanceAsync(walletId: walletId) }
@@ -33,6 +35,12 @@ final class WalletManagerOps: WalletOps {
     }
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
         try await manager.sweep(walletId: walletId, to: address, feeRate: feeRate)
+    }
+    func previewSend(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> SendPreview? {
+        try await manager.previewSend(walletId: walletId, to: address, amount: amount, feeRate: feeRate)
+    }
+    func previewSweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> SendPreview? {
+        try await manager.previewSweep(walletId: walletId, to: address, feeRate: feeRate)
     }
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
         try await manager.splitToSelf(walletId: walletId, feeRate: feeRate)

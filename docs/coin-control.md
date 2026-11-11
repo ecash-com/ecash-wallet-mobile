@@ -32,7 +32,7 @@ adds spent outputs.
 |---|---|---|
 | Include specific coins | `addUtxo(outpoint)` / `addUtxos([…])` | force-include |
 | Spend only chosen coins | `manuallySelectedOnly()` | full manual selection |
-| Freeze / exclude coins | `addUnspendable` / `unspendable([…])` | **already used** for 0-conf policy |
+| Freeze / exclude coins | `addUnspendable` / `unspendable([…])` | **already used** for the 0-conf policy's first pass (`buildPreferringConfirmed`) |
 | Change handling | `changePolicy(ChangeSpendPolicy)` | allowed / only-change / forbidden |
 | Sweep / send-max | `drainWallet()` + `drainTo(script)` | consolidation building block (§5) |
 | Fees | `feeRate` / `feeAbsolute` | |
@@ -61,9 +61,11 @@ BDK stores **no** labels or freeze state (`metadata-is-app-owned`). So:
   - `label: String?` (where the coins came from)
   - `frozen: Bool`
   Survives across syncs; purged with the wallet. **BIP-329** is the backup/export format for labels.
-- **Frozen set → spend path:** the engine already builds an `unspendable` set (untrusted 0-conf).
-  Union the user's frozen outpoints into it on every `buildTx`, so frozen coins are never
-  auto-selected. (Frozen coins can still be *manually* added if we ever want an override — decide.)
+- **Frozen set → spend path:** the engine already builds an `unspendable` set (incoming 0-conf, on
+  the first of the two coin-selection passes — `WalletEngine.buildPreferringConfirmed`). Union the
+  user's frozen outpoints into it on BOTH passes, so frozen coins are never auto-selected even when
+  the second pass opens up the unconfirmed ones. (Frozen coins can still be *manually* added if we
+  ever want an override — decide.)
 
 ## 4. UX surfaces
 

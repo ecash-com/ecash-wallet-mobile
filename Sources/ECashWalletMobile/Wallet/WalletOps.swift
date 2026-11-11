@@ -24,10 +24,15 @@ protocol WalletOps {
     /// The part of `pendingBalance` that is the wallet's own change waiting for a block. Only Thunder
     /// has any: BDK wallets already count their own unconfirmed change as spendable.
     func pendingChange(walletId: String) -> Amount
+    /// Incoming unconfirmed payments — part of `balance` (spendable since 2026-11-11), shown apart on
+    /// Home because their senders can still pull them back. Thunder has none: its node only spends
+    /// coins already in a block, so they never reach its balance in the first place.
+    func unconfirmedBalance(walletId: String) throws -> Amount
     func sync(walletId: String) async throws -> Amount
     func rescan(walletId: String) async throws -> Amount
     func balanceAsync(walletId: String) async throws -> Amount
     func pendingBalanceAsync(walletId: String) async throws -> Amount
+    func unconfirmedBalanceAsync(walletId: String) async throws -> Amount
     func transactionsAsync(walletId: String) async throws -> [WalletTx]
     /// A receive address: `unused: true` = the default (lowest unused, doesn't advance); `false` =
     /// reveal a fresh one ("New address"). **Async** so an engine whose derivation is heavy (Thunder:
@@ -38,6 +43,12 @@ protocol WalletOps {
     func send(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> WalletTx
     /// Sweep the entire spendable balance to `address` (true drain — the correct "Max" + split-coins).
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx
+    /// Dry run of `send` for the review screen: the exact fee and how much of the payment rides on
+    /// incoming unconfirmed coins. `nil` when the engine can't say (Thunder) — the review then shows
+    /// no exact fee and no warning rather than a guess. Throws what the send would.
+    func previewSend(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> SendPreview?
+    /// Dry run of `sweep` ("Max").
+    func previewSweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> SendPreview?
     /// Split coins: drain the whole balance to a fresh address of ITSELF (wallet-owned destination).
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx
     /// Deposit into a BIP300 sidechain (M5). `address` is the BARE sidechain address; the treasury

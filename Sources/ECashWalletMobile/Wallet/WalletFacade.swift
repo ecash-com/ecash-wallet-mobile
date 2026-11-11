@@ -34,6 +34,8 @@ final class WalletFacade: WalletOps {
     func balance(walletId: String) throws -> Amount { try route(walletId).balance(walletId: walletId) }
     func pendingBalance(walletId: String) throws -> Amount { try route(walletId).pendingBalance(walletId: walletId) }
     func pendingChange(walletId: String) -> Amount { route(walletId).pendingChange(walletId: walletId) }
+    func unconfirmedBalance(walletId: String) throws -> Amount { try route(walletId).unconfirmedBalance(walletId: walletId) }
+    func unconfirmedBalanceAsync(walletId: String) async throws -> Amount { try await route(walletId).unconfirmedBalanceAsync(walletId: walletId) }
     func sync(walletId: String) async throws -> Amount { try await route(walletId).sync(walletId: walletId) }
     func rescan(walletId: String) async throws -> Amount { try await route(walletId).rescan(walletId: walletId) }
     func balanceAsync(walletId: String) async throws -> Amount { try await route(walletId).balanceAsync(walletId: walletId) }
@@ -48,6 +50,12 @@ final class WalletFacade: WalletOps {
     }
     func sweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> WalletTx {
         try await route(walletId).sweep(walletId: walletId, to: address, feeRate: feeRate)
+    }
+    func previewSend(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> SendPreview? {
+        try await route(walletId).previewSend(walletId: walletId, to: address, amount: amount, feeRate: feeRate)
+    }
+    func previewSweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> SendPreview? {
+        try await route(walletId).previewSweep(walletId: walletId, to: address, feeRate: feeRate)
     }
     func splitToSelf(walletId: String, feeRate: FeeRate) async throws -> WalletTx {
         try await route(walletId).splitToSelf(walletId: walletId, feeRate: feeRate)

@@ -746,10 +746,16 @@ public final class WalletManager: @unchecked Sendable {
         try liveEngine(walletId: walletId).balance()
     }
 
-    /// Not-yet-spendable balance (incoming 0-conf + immature) — shown separately from the spendable
+    /// Not-yet-spendable balance (immature coinbase) — shown separately from the spendable
     /// `balance`. Cached read, no network. See README "Spendable balance".
     public func pendingBalance(walletId: String) throws -> Amount {
         try liveEngine(walletId: walletId).pendingBalance()
+    }
+
+    /// Incoming unconfirmed payments — part of `balance` (spendable since 2026-11-11), shown on
+    /// Home as the share its sender can still pull back. Cached read, no network.
+    public func unconfirmedBalance(walletId: String) throws -> Amount {
+        try liveEngine(walletId: walletId).unconfirmedBalance()
     }
 
     /// Sync the wallet against its network backend (Electrum full scan → persist), then return the
@@ -775,6 +781,10 @@ public final class WalletManager: @unchecked Sendable {
 
     public func pendingBalanceAsync(walletId: String) async throws -> Amount {
         try pendingBalance(walletId: walletId)
+    }
+
+    public func unconfirmedBalanceAsync(walletId: String) async throws -> Amount {
+        try unconfirmedBalance(walletId: walletId)
     }
 
     public func transactionsAsync(walletId: String) async throws -> [WalletTx] {
@@ -829,6 +839,22 @@ public final class WalletManager: @unchecked Sendable {
                       feeRate: FeeRate) async throws -> WalletTx {
         let engine = try liveEngine(walletId: walletId)
         return try engine.sweep(to: address, feeRate: feeRate)
+    }
+
+    /// Dry run of `send` for the review screen: the exact fee and how much of the payment rides on
+    /// incoming unconfirmed coins. No key is read and nothing is broadcast, but it builds a
+    /// transaction, so it stays off the main actor like `send`. Throws what the send would.
+    public func previewSend(walletId: String, to address: String,
+                            amount: Amount, feeRate: FeeRate) async throws -> SendPreview {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.previewSend(to: address, amount: amount, feeRate: feeRate)
+    }
+
+    /// Dry run of `sweep` ("Max").
+    public func previewSweep(walletId: String, to address: String,
+                             feeRate: FeeRate) async throws -> SendPreview {
+        let engine = try liveEngine(walletId: walletId)
+        return try engine.previewSweep(to: address, feeRate: feeRate)
     }
 
     /// Deposit into a sidechain (BIP300 M5). `address` is the BARE sidechain address (the app

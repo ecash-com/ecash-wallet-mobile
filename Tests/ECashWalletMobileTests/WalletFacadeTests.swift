@@ -21,6 +21,16 @@ import WalletService
         func balance(walletId: String) throws -> Amount { calls.append("balance:\(walletId)"); return Amount(sats: tag == "thunder" ? 2 : 1) }
         func pendingBalance(walletId: String) throws -> Amount { calls.append("pending:\(walletId)"); return Amount(sats: 0) }
         func pendingChange(walletId: String) -> Amount { calls.append("change:\(walletId)"); return Amount(sats: 0) }
+        func unconfirmedBalance(walletId: String) throws -> Amount { calls.append("unconfirmed:\(walletId)"); return Amount(sats: 0) }
+        func unconfirmedBalanceAsync(walletId: String) async throws -> Amount { calls.append("unconfirmedAsync:\(walletId)"); return Amount(sats: 0) }
+        func previewSend(walletId: String, to address: String, amount: Amount, feeRate: FeeRate) async throws -> SendPreview? {
+            calls.append("previewSend:\(walletId)")
+            return SendPreview(feeSats: 1, unconfirmedInputSats: 0)
+        }
+        func previewSweep(walletId: String, to address: String, feeRate: FeeRate) async throws -> SendPreview? {
+            calls.append("previewSweep:\(walletId)")
+            return nil
+        }
         func sync(walletId: String) async throws -> Amount { calls.append("sync:\(walletId)"); return Amount(sats: 0) }
         func receiveAddress(walletId: String, unused: Bool) async throws -> AddressInfo {
             calls.append("recv:\(walletId):\(unused)"); return AddressInfo(address: tag, index: 0)
@@ -85,6 +95,15 @@ import WalletService
         let thunder = RecordingOps("thunder")
         let facade = WalletFacade(primary: primary, thunder: thunder, isThunder: { $0 == "thunder-id" })
         return (facade, primary, thunder)
+    }
+
+    /// The review's dry run must land on the same engine as the send it previews.
+    @Test func previewRoutesLikeSend() async throws {
+        let (facade, primary, thunder) = makeFacade()
+        _ = try await facade.previewSend(walletId: "btc-id", to: "x", amount: Amount(sats: 1), feeRate: FeeRate(satPerVByte: 1))
+        _ = try await facade.previewSweep(walletId: "thunder-id", to: "x", feeRate: FeeRate(satPerVByte: 1))
+        #expect(primary.calls == ["previewSend:btc-id"])
+        #expect(thunder.calls == ["previewSweep:thunder-id"])
     }
 
     @Test func thunderWalletRoutesToThunderEngine() throws {

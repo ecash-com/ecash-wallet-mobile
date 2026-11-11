@@ -95,9 +95,33 @@ final class SendViewModel {
     /// instead of sending the literal `amountText`. Cleared the moment the user edits the amount.
     private(set) var isMax = false
 
+    /// The review's dry run — the exact fee and how much of the payment rides on incoming unconfirmed
+    /// coins — or nil until it lands, or when the engine can't say (Thunder). Cleared on every entry
+    /// to review and loaded by `loadPreview()` when the review appears.
+    private(set) var preview: SendPreview? = nil
+    private(set) var isPreviewing = false
+    /// A dry run that failed the way the send would (not enough once the fee is in, dust…): the
+    /// user-safe message, shown on review so the user hears it BEFORE device auth, not after.
+    /// Informational — Confirm stays enabled and the real send reports its own outcome.
+    private(set) var previewMessage: String? = nil
+
+    /// True when the payment depends on an incoming payment that hasn't confirmed: the two-pass
+    /// build (`WalletEngine.buildPreferringConfirmed`) prefers confirmed coins, so this is set only
+    /// when they didn't cover the amount. Drives the review's warning (Jake, 2026-11-11).
+    var usesUnconfirmedInputs: Bool { (preview?.unconfirmedInputSats ?? 0) > 0 }
+    var unconfirmedInputAmount: Amount { Amount(sats: preview?.unconfirmedInputSats ?? 0) }
+    /// The exact fee the built transaction pays, once the dry run has landed.
+    var previewFee: Amount? {
+        guard let preview else { return nil }
+        return Amount(sats: preview.feeSats)
+    }
+
     private let send: (_ address: String, _ amount: Amount, _ feeRate: FeeRate) async throws -> WalletTx
     /// True sweep of the whole spendable balance to `address` — the correct "Max" (BDK drain).
     private let sweep: (_ address: String, _ feeRate: FeeRate) async throws -> WalletTx
+    /// The review's dry run (`isMax` → the sweep's). Nil = the engine can't say; throws what the
+    /// send would.
+    private let previewSend: (_ address: String, _ amount: Amount, _ feeRate: FeeRate, _ isMax: Bool) async throws -> SendPreview?
     private let onSent: @MainActor (WalletTx) -> Void
     /// Device-auth gate before broadcasting (Golden Rule §7). AppState wires this to `DeviceAuth`
     /// when app-lock is on, or a pass-through when it's off. Returns true to proceed.
@@ -123,6 +147,7 @@ final class SendViewModel {
          destinations: [Destination] = [],
          send: @escaping (_ address: String, _ amount: Amount, _ feeRate: FeeRate) async throws -> WalletTx,
          sweep: @escaping (_ address: String, _ feeRate: FeeRate) async throws -> WalletTx,
+         preview: @escaping (_ address: String, _ amount: Amount, _ feeRate: FeeRate, _ isMax: Bool) async throws -> SendPreview? = { _, _, _, _ in nil },
          onSent: @escaping @MainActor (WalletTx) -> Void,
          authorize: @escaping (String) async -> Bool,
          validateAddress: @escaping (String) -> Bool = { _ in true },
@@ -135,6 +160,7 @@ final class SendViewModel {
         self.destinations = destinations
         self.send = send
         self.sweep = sweep
+        self.previewSend = preview
         self.onSent = onSent
         self.authorize = authorize
         self.validateAddress = validateAddress
@@ -257,11 +283,43 @@ final class SendViewModel {
         step = .amount
     }
 
-    /// Amount → review.
+    /// Amount → review. The dry run is cleared here and re-run when the review appears
+    /// (`loadPreview`), so an edited amount or fee tier never shows a stale fee or warning.
     func review() {
         guard step == .amount, canReview, let amount else { return }
         reviewAmount = amount
+        preview = nil
+        previewMessage = nil
         step = .reviewing
+    }
+
+    /// Build the payment once, watch-only, to tell the user what it will cost and whether it rides
+    /// on coins that haven't confirmed — before auth, while they can still back out. Guarded on the
+    /// review step so a late result can't paint over another state. A failure is informational:
+    /// `previewMessage` shows the same message the send would fail with, Confirm stays enabled, and
+    /// the real send is the final word.
+    func loadPreview() async {
+        guard step == .reviewing, !isPreviewing else { return }
+        isPreviewing = true
+        defer { isPreviewing = false }
+        do {
+            let result = try await previewSend(reviewAddress, reviewAmount, tier.feeRate, isMax)
+            guard step == .reviewing else { return }
+            preview = result
+            previewMessage = nil
+        } catch let error as WalletError {
+            guard step == .reviewing else { return }
+            preview = nil
+            previewMessage = error.userMessage
+        } catch let error as UserFacingError {
+            guard step == .reviewing else { return }
+            preview = nil
+            previewMessage = error.userMessage
+        } catch {
+            guard step == .reviewing else { return }
+            preview = nil
+            previewMessage = nil   // can't say — show nothing rather than a guess
+        }
     }
 
     /// Step back one screen (amount → recipient, review → amount, failed → amount). Wired to the

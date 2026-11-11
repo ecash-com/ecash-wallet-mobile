@@ -52,11 +52,17 @@ import org.bitcoindevkit.__ // bdk-android (Kotlin) — note the `.__` wildcard
 public protocol WalletEngineProtocol: AnyObject {
     var network: WalletNetwork { get }
 
-    /// SPENDABLE ("Available") balance: confirmed coins + our own unconfirmed change.
+    /// SPENDABLE ("Available") balance: every coin the wallet holds except immature coinbase —
+    /// confirmed, our own unconfirmed change, AND incoming unconfirmed payments (spendable since
+    /// 2026-11-11; `unconfirmedBalance()` says how much of this is the latter).
     func balance() throws -> Amount
-    /// NOT-yet-spendable balance: incoming unconfirmed (0-conf) + immature coinbase. Shown
-    /// separately so funds aren't perceived as lost while they wait to confirm.
+    /// NOT-yet-spendable balance: immature coinbase only. Shown separately so funds aren't
+    /// perceived as lost while they wait.
     func pendingBalance() throws -> Amount
+    /// The part of `balance()` that is incoming payments not yet confirmed — spendable, but riding
+    /// on someone else's transaction confirming. Home shows it so the user knows which part of the
+    /// balance its sender can still pull back.
+    func unconfirmedBalance() throws -> Amount
     func nextReceiveAddress() throws -> AddressInfo
     /// The lowest revealed-but-unused receive address (reveals one only if none exists). Does
     /// NOT advance on repeat calls — the default for the Receive screen, so casual opens don't
@@ -67,6 +73,15 @@ public protocol WalletEngineProtocol: AnyObject {
 
     /// Build → sign → broadcast happens inside; returns the broadcast tx.
     func send(to address: String, amount: Amount, feeRate: FeeRate) throws -> WalletTx
+
+    /// Dry run of `send`: build the transaction exactly as `send` would — watch-only, no key, no
+    /// broadcast — and report its fee and how much of it rides on incoming unconfirmed coins. What
+    /// the review screen's warning reads. Throws the same `WalletError`s a real send would
+    /// (insufficient funds, dust, …), so the review can say so before Confirm.
+    func previewSend(to address: String, amount: Amount, feeRate: FeeRate) throws -> SendPreview
+
+    /// Dry run of `sweep` ("Max").
+    func previewSweep(to address: String, feeRate: FeeRate) throws -> SendPreview
 
     /// Sweep the entire spendable balance to `address` (true drain — all UTXOs, no change, exact fee
     /// deducted). The correct "Max" and the coin-splitting primitive. Build → sign → broadcast inside.
@@ -141,51 +156,46 @@ public final class WalletEngine: WalletEngineProtocol {
         self.signPsbt = signPsbt
     }
 
-    /// SPENDABLE / "Available" balance — confirmed coins + our OWN unconfirmed change
-    /// (BDK's `trustedPending`). Incoming unconfirmed (`untrustedPending`) and immature coinbase
-    /// are deliberately excluded: they're reported by `pendingBalance()` and can't be spent until
-    /// they confirm (spend policy — see README "Spendable balance"). This is what coin selection in
-    /// `send` honors too, via `untrustedUnconfirmedOutpoints()`.
-    /// Spendable balance: confirmed + unconfirmed outputs of transactions WE made (our change).
+    /// SPENDABLE / "Available" balance — everything but immature coinbase: confirmed coins, our own
+    /// unconfirmed change (BDK's `trustedPending`) and incoming unconfirmed payments (BDK's
+    /// `untrustedPending`). Incoming 0-conf became spendable 2026-11-11 (Jake's call, after the
+    /// boss asked for it): coin selection still prefers confirmed coins and reaches for unconfirmed
+    /// ones only when it must, and the review screen warns when it does (`buildPreferringConfirmed`,
+    /// `previewSend`). Until then this was confirmed + own change only; see README "Spendable
+    /// balance" for the history and `unconfirmedBalance()` for the incoming-0-conf share.
     ///
-    /// BDK's own `trustedPending` only trusts unconfirmed outputs on the INTERNAL (change) keychain. A
-    /// single-key WIF wallet has no change keychain — its change returns to its one external address —
-    /// so after any send BDK filed the whole remaining balance under `untrustedPending` and the wallet
-    /// showed everything as "pending", although `send` (same rule as here, `untrustedUnconfirmedOutpoints`)
-    /// would happily spend it. Reported by a betanet tester, 2026-10-01. Display and spending now agree.
+    /// Every unconfirmed output of ours counts, whichever of BDK's two pending buckets it lands in
+    /// (BDK only trusts the INTERNAL keychain, so a single-key WIF wallet's change — which returns to
+    /// its one external address — files under `untrustedPending`; that was the 2026-10-01
+    /// "everything shows pending" bug). Which of it is at risk is `unconfirmedBalance()`'s question.
     public func balance() throws -> Amount {
         let balance = wallet.balance()
         // BDK vends UInt64 sats; our Amount is signed Int64 (bridge-safe, fits all real values).
-        let available = balance.confirmed.toSat() + balance.trustedPending.toSat() + ownChangeOnExternalSats()
+        let available = balance.confirmed.toSat() + balance.trustedPending.toSat() + balance.untrustedPending.toSat()
         return Amount(sats: Int64(available))
     }
 
-    /// NOT-yet-spendable balance — incoming 0-conf from someone else + immature coinbase. Surfaced
-    /// separately so received-but-unconfirmed funds read as "pending", not missing.
+    /// NOT-yet-spendable balance — immature coinbase only, now that incoming 0-conf is spendable.
+    /// Surfaced separately so such funds read as "pending", not missing.
     public func pendingBalance() throws -> Amount {
-        let balance = wallet.balance()
-        let untrusted = balance.untrustedPending.toSat()
-        let own = ownChangeOnExternalSats()
-        let pending = (untrusted > own ? untrusted - own : UInt64(0)) + balance.immature.toSat()
-        return Amount(sats: Int64(pending))
+        Amount(sats: Int64(wallet.balance().immature.toSat()))
     }
 
-    /// Unconfirmed outputs on the EXTERNAL keychain that belong to a transaction we made — the change of
-    /// a single-key wallet, or a send to one of our own receive addresses. BDK counts these as
-    /// `untrustedPending`; our spend policy counts them as spendable.
-    private func ownChangeOnExternalSats() -> UInt64 {
+    /// The part of `balance()` that still depends on someone else's unconfirmed transaction: incoming
+    /// 0-conf payments, plus the change of any send of ours that spent one (that change is only as
+    /// good as the payment under it — if the sender replaces it, our send and its change go with it).
+    /// Summed over the very coins `buildPreferringConfirmed` keeps out of its first pass, so Home's
+    /// "of this is unconfirmed" and the review warning can never disagree. Not BDK's
+    /// `untrustedPending`: that is one hop only (our change files under `trustedPending`, however it
+    /// was funded), and it misfiles a single-key wallet's own change (which returns to its one
+    /// EXTERNAL address) as untrusted — the 2026-10-01 "everything shows pending" bug.
+    public func unconfirmedBalance() throws -> Amount {
         let txids = unconfirmedTxids()
-        if txids.trusted.isEmpty { return UInt64(0) }
-        let external = BDKSeam.externalKeychain()
         var sats = UInt64(0)
         for output in wallet.listUnspent() {
-            if output.keychain != external { continue }
-            let txid = "\(output.outpoint.txid)"
-            if txids.unconfirmed.contains(txid) && txids.trusted.contains(txid) {
-                sats += output.txout.value.toSat()
-            }
+            if txids.isUntrusted("\(output.outpoint.txid)") { sats += output.txout.value.toSat() }
         }
-        return sats
+        return Amount(sats: Int64(sats))
     }
 
     public func nextReceiveAddress() throws -> AddressInfo {
@@ -378,30 +388,33 @@ public final class WalletEngine: WalletEngineProtocol {
         return nil
     }
 
-    /// Outpoints to KEEP OUT of coin selection: unconfirmed UTXOs that aren't our own change.
-    /// An unconfirmed tx is "trusted" only if we contributed inputs to it (`sentAndReceived.sent
-    /// > 0` → our own spend/change); incoming 0-conf (no inputs of ours) is "untrusted" and stays
-    /// unspendable until it confirms — so a sender can't get us to forward coins that could be
-    /// double-spent or RBF-replaced before confirming. Mirrors Bitcoin Core's trusted/untrusted
-    /// rule. (Spend policy — README "Spendable balance".)
+    /// Outpoints to keep out of coin selection's FIRST pass: unconfirmed UTXOs that aren't our own
+    /// change. An unconfirmed tx is "trusted" only if we contributed inputs to it
+    /// (`sentAndReceived.sent > 0` → our own spend/change); incoming 0-conf (no inputs of ours) is
+    /// "untrusted" — its sender can still double-spend or RBF-replace it, which would invalidate
+    /// anything we chain on it. Mirrors Bitcoin Core's trusted/untrusted rule. Until 2026-11-11
+    /// these were unspendable outright; now `buildPreferringConfirmed` avoids them when it can and
+    /// the review warns when it can't. The split path still excludes them entirely.
     private func untrustedUnconfirmedOutpoints() -> [OutPoint] {
         let txids = unconfirmedTxids()
         var excluded: [OutPoint] = []
         for output in wallet.listUnspent() {
-            let txid = "\(output.outpoint.txid)"
-            if txids.unconfirmed.contains(txid) && !txids.trusted.contains(txid) {
-                excluded.append(output.outpoint)
-            }
+            if txids.isUntrusted("\(output.outpoint.txid)") { excluded.append(output.outpoint) }
         }
         return excluded
     }
 
-    /// Txids of the wallet's unconfirmed transactions, and the subset WE funded (`sent > 0`) — whose
-    /// outputs to us are our own change and so are spendable before they confirm. The one trust rule
-    /// shared by the spend policy and the balance display.
+    /// Txids of the wallet's unconfirmed transactions, and the subset we TRUST: those we funded
+    /// (`sent > 0`, so their outputs to us are our own change) whose inputs rest on nothing untrusted.
+    /// Trust is lost down the chain (2026-11-11, found on the sim the day 0-conf spending shipped): a
+    /// send of ours that spent an incoming unconfirmed coin is only as good as that coin, so its
+    /// change is untrusted too, and so is anything built on THAT. Walked to a fixpoint — an
+    /// unconfirmed chain of ours is short, so the loop is cheap. The one trust rule shared by the
+    /// spend policy, the review warning and the balance display.
     private func unconfirmedTxids() -> UnconfirmedTxids {
         var unconfirmedTxids = Set<String>()
         var trustedTxids = Set<String>()
+        var inputsByTxid: [String: [String]] = [:]   // our funded unconfirmed txs → the txids they spend
         for canonical in wallet.transactions() {
             let tx = canonical.transaction
             let confirmed: Bool
@@ -417,7 +430,26 @@ public final class WalletEngine: WalletEngineProtocol {
             let txid = "\(tx.computeTxid())"
             unconfirmedTxids.insert(txid)
             if wallet.sentAndReceived(tx: tx).sent.toSat() > UInt64(0) {
-                trustedTxids.insert(txid)   // our own unconfirmed change → spendable
+                trustedTxids.insert(txid)   // our own unconfirmed change → spendable, unless tainted below
+                var parents: [String] = []
+                for input in tx.input() { parents.append("\(input.previousOutput.txid)") }
+                inputsByTxid[txid] = parents
+            }
+        }
+        // Taint: a funded tx that spends an output of an untrusted unconfirmed tx is untrusted itself.
+        var changed = true
+        while changed {
+            changed = false
+            for txid in inputsByTxid.keys {
+                if !trustedTxids.contains(txid) { continue }
+                let parents: [String] = inputsByTxid[txid] ?? []
+                for parent in parents {
+                    if unconfirmedTxids.contains(parent) && !trustedTxids.contains(parent) {
+                        trustedTxids.remove(txid)
+                        changed = true
+                        break
+                    }
+                }
             }
         }
         return UnconfirmedTxids(unconfirmed: unconfirmedTxids, trusted: trustedTxids)
@@ -470,57 +502,144 @@ public final class WalletEngine: WalletEngineProtocol {
         let script = bdkAddress.scriptPubkey()
 
         // 2. Build the PSBT. BDK does coin selection, change, and fee math (Golden Rule §1).
-        // `Amount`/`FeeRate` collide with our domain types, so build BDK's via #if-inlined locals
-        // (type inferred — no module-qualified typealias needed).
-        // Our Amount is signed Int64; BDK's fromSat takes UInt64 (negative is impossible here —
-        // an Amount is never constructed negative, and the conversion traps loudly if it were).
-        #if SKIP
-        let bdkAmount = org.bitcoindevkit.Amount.fromSat(satoshi: UInt64(amount.sats))
-        #else
-        let bdkAmount = BitcoinDevKit.Amount.fromSat(satoshi: UInt64(amount.sats))
-        #endif
-        let psbt: Psbt
+        let psbt = try buildSend(to: script, amount: amount, feeRate: feeRate)
+
+        // 3-5. Sign on demand → broadcast → fold into the wallet graph → return the optimistic tx.
+        return try finalizeAndBroadcast(psbt)
+    }
+
+    /// Dry run of `send` — the same address check and the same two-pass build, then a look at what
+    /// got selected instead of a signature. Nothing is persisted: a built-but-unsigned PSBT reveals
+    /// no address and spends nothing.
+    public func previewSend(to address: String, amount: Amount, feeRate: FeeRate) throws -> SendPreview {
+        let bdkAddress: Address
         do {
+            bdkAddress = try Address(address: address, network: BDKSeam.network(network))
+        } catch {
+            throw WalletError.invalidAddress
+        }
+        return try preview(try buildSend(to: bdkAddress.scriptPubkey(), amount: amount, feeRate: feeRate))
+    }
+
+    /// Dry run of `sweep`: a drain takes every coin, so this reports how much of "Max" is unconfirmed.
+    public func previewSweep(to address: String, feeRate: FeeRate) throws -> SendPreview {
+        let bdkAddress: Address
+        do {
+            bdkAddress = try Address(address: address, network: BDKSeam.network(network))
+        } catch {
+            throw WalletError.invalidAddress
+        }
+        return try preview(try buildDrain(to: bdkAddress.scriptPubkey(), feeRate: feeRate, excludingUnconfirmed: false))
+    }
+
+    /// The payment PSBT: one recipient, change back to us, replay protection, and the spend policy's
+    /// two passes (`buildPreferringConfirmed`). Shared by `send` and `previewSend`, so the preview
+    /// can't disagree with the send about which coins are in play.
+    /// `Amount`/`FeeRate` collide with our domain types, so BDK's are built via #if-inlined locals
+    /// (type inferred — no module-qualified typealias needed). Our Amount is signed Int64; BDK's
+    /// fromSat takes UInt64 (negative is impossible here — an Amount is never constructed negative,
+    /// and the conversion traps loudly if it were).
+    private func buildSend(to script: Script, amount: Amount, feeRate: FeeRate) throws -> Psbt {
+        try buildPreferringConfirmed { excluded in
             #if SKIP
+            let bdkAmount = org.bitcoindevkit.Amount.fromSat(satoshi: UInt64(amount.sats))
             let bdkFeeRate = try org.bitcoindevkit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
+            // bdk-android's `unspendable` takes a Kotlin `List`: `.kotlin()` yields a star-projected
+            // MutableList, and the unchecked cast restores the concrete element type the binding's
+            // `unspendable(List<OutPoint>)` requires (the list really does hold OutPoints).
+            let unspendable = excluded.kotlin() as! kotlin.collections.List<OutPoint>
             #else
+            let bdkAmount = BitcoinDevKit.Amount.fromSat(satoshi: UInt64(amount.sats))
             let bdkFeeRate = try BitcoinDevKit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
-            #endif
-            // Spend policy: confirmed coins + our own unconfirmed change only. Excluding the
-            // untrusted (incoming 0-conf) outpoints keeps them out of coin selection (empty list
-            // is a harmless no-op). See `untrustedUnconfirmedOutpoints` / README "Spendable balance".
-            // bdk-android's `unspendable` takes a Kotlin `List`, so convert the Swift array to the
-            // backing Kotlin list on the transpiled side; Apple takes the `[OutPoint]` as-is.
-            let untrusted: [OutPoint] = untrustedUnconfirmedOutpoints()
-            #if SKIP
-            // `.kotlin()` yields a star-projected MutableList; the unchecked cast restores the
-            // concrete element type bdk-android's `unspendable(List<OutPoint>)` requires (the list
-            // really does hold OutPoints, so the cast is safe).
-            let unspendable = untrusted.kotlin() as! kotlin.collections.List<OutPoint>
-            #else
-            let unspendable = untrusted
+            let unspendable = excluded
             #endif
             var builder = TxBuilder()
                 .addRecipient(script: script, amount: bdkAmount)
                 .feeRate(feeRate: bdkFeeRate)
                 .unspendable(unspendable: unspendable)
             builder = applyingReplayProtection(builder)
-            psbt = try builder.finish(wallet: wallet)
+            return try builder.finish(wallet: wallet)
+        }
+    }
+
+    /// The spend policy, as two passes (2026-11-11, Jake — the boss wants unconfirmed coins
+    /// spendable): build with incoming unconfirmed coins kept OUT of coin selection — confirmed
+    /// coins and our own change only, exactly the old rule — and only if that comes up short,
+    /// rebuild with every coin allowed. A send therefore never rides on someone else's unconfirmed
+    /// transaction when it doesn't have to, and when it must, `unconfirmedInputSats(in:)` lets the
+    /// review say so. (An unconfirmed incoming payment can still be replaced or double-spent by its
+    /// sender, which invalidates anything chained on it: our coins come back, the recipient is never
+    /// paid. Bitcoin Core refuses such coins outright, Electrum spends them silently by default —
+    /// this is the middle.) `build` gets the outpoints to exclude; every BDK error out of it is
+    /// classified, never echoed (Golden Rule §2).
+    private func buildPreferringConfirmed(_ build: ([OutPoint]) throws -> Psbt) throws -> Psbt {
+        let untrusted: [OutPoint] = untrustedUnconfirmedOutpoints()
+        do {
+            return try build(untrusted)
         } catch {
-            // Insufficient-funds / dust / fee errors classified, never echoed (Golden Rule §2).
+            let mapped = WalletError.mapping(rawDescription: "\(error)")
+            var short = false
+            switch mapped {
+            case .insufficientFunds: short = true
+            default: short = false
+            }
+            // Only "not enough" earns the second pass, and only when there is something to add.
+            if !short || untrusted.isEmpty { throw mapped }
+        }
+        do {
+            return try build([])
+        } catch {
             throw WalletError.mapping(rawDescription: "\(error)")
         }
+    }
 
-        // 3-5. Sign on demand → broadcast → fold into the wallet graph → return the optimistic tx.
-        return try finalizeAndBroadcast(psbt)
+    /// Fee and unconfirmed-input share of a built PSBT — the review screen's numbers.
+    private func preview(_ psbt: Psbt) throws -> SendPreview {
+        let fee: UInt64
+        do {
+            fee = try psbt.fee()
+        } catch {
+            throw WalletError.mapping(rawDescription: "\(error)")
+        }
+        return SendPreview(feeSats: Int64(fee), unconfirmedInputSats: try unconfirmedInputSats(in: psbt))
+    }
+
+    /// Sats of `psbt`'s inputs that are incoming unconfirmed coins. Zero whenever the first pass of
+    /// `buildPreferringConfirmed` succeeded, by construction. Reads the unsigned transaction out of
+    /// the PSBT: `extractTx` needs each input's value, which BDK's builder always attaches (the
+    /// signed extract in `finalizeAndBroadcast` needs the very same data).
+    private func unconfirmedInputSats(in psbt: Psbt) throws -> Int64 {
+        var untrustedKeys = Set<String>()
+        for op in untrustedUnconfirmedOutpoints() { untrustedKeys.insert("\(op.txid):\(op.vout)") }
+        if untrustedKeys.isEmpty { return Int64(0) }
+        var valueByOutpoint: [String: UInt64] = [:]
+        for output in wallet.listUnspent() {
+            valueByOutpoint["\(output.outpoint.txid):\(output.outpoint.vout)"] = output.txout.value.toSat()
+        }
+        let tx: Transaction
+        do {
+            tx = try psbt.extractTx()
+        } catch {
+            throw WalletError.mapping(rawDescription: "\(error)")
+        }
+        var sats = UInt64(0)
+        for input in tx.input() {
+            let key = "\(input.previousOutput.txid):\(input.previousOutput.vout)"
+            if untrustedKeys.contains(key) {
+                if let value = valueByOutpoint[key] { sats += value }
+            }
+        }
+        return Int64(sats)
     }
 
     /// Sweep the ENTIRE spendable balance to `address` — a true drain (all UTXOs, no change, the exact
     /// fee deducted from the swept amount) via BDK `drainWallet()` + `drainTo()`. This is the correct
     /// "Max" (balance-minus-estimate can under/over-shoot the fee → dust or insufficient-funds), and the
     /// primitive behind coin-splitting (sweep to a fresh address; replay-safe via the eCash nLockTime
-    /// marker). Same spend policy, replay protection, and sign/broadcast path as `send`. Works for WIF
-    /// single-key wallets too (drainWallet spends every UTXO regardless of descriptor type).
+    /// marker). Same replay protection and sign/broadcast path as `send`. "Max" means every coin,
+    /// incoming unconfirmed ones included (the review warns how much of it is — `previewSweep`).
+    /// Works for WIF single-key wallets too (drainWallet spends every UTXO regardless of descriptor
+    /// type).
     public func sweep(to address: String, feeRate: FeeRate) throws -> WalletTx {
         let bdkAddress: Address
         do {
@@ -528,7 +647,7 @@ public final class WalletEngine: WalletEngineProtocol {
         } catch {
             throw WalletError.invalidAddress
         }
-        return try finalizeAndBroadcast(try buildDrain(to: bdkAddress.scriptPubkey(), feeRate: feeRate))
+        return try finalizeAndBroadcast(try buildDrain(to: bdkAddress.scriptPubkey(), feeRate: feeRate, excludingUnconfirmed: false))
     }
 
     /// **Split coins**: drain the wallet's entire spendable balance to a FRESH address of THIS wallet —
@@ -540,21 +659,24 @@ public final class WalletEngine: WalletEngineProtocol {
     public func splitToSelf(feeRate: FeeRate) throws -> WalletTx {
         let info = wallet.revealNextAddress(keychain: BDKSeam.externalKeychain())
         _ = try? wallet.persist(persister: persister)   // record the revealed index so future syncs track it
-        return try finalizeAndBroadcast(try buildDrain(to: info.address.scriptPubkey(), feeRate: feeRate))
+        // Incoming unconfirmed coins stay out of a split: Bitcoin's explorer can't classify a coin
+        // that isn't in a block yet, and `splitSummary`/`splitCandidates` exclude them for the same
+        // reason — the three must agree on which coins are in scope.
+        return try finalizeAndBroadcast(try buildDrain(to: info.address.scriptPubkey(), feeRate: feeRate, excludingUnconfirmed: true))
     }
 
-    /// Build a drain PSBT to `script`: every spendable UTXO in, no change, exact fee out — plus the
-    /// wallet's spend policy (excludes untrusted 0-conf) and eCash replay protection. Shared by
-    /// `sweep`/`splitToSelf`. Throws a classified `WalletError` (insufficient funds, dust, …); never
-    /// broadcasts.
-    private func buildDrain(to script: Script, feeRate: FeeRate) throws -> Psbt {
+    /// Build a drain PSBT to `script`: every UTXO in, no change, exact fee out — plus eCash replay
+    /// protection. `excludingUnconfirmed` keeps incoming 0-conf coins out (the split path); a sweep
+    /// passes `false` and takes everything. Shared by `sweep`/`splitToSelf`/`previewSweep`. Throws a
+    /// classified `WalletError` (insufficient funds, dust, …); never broadcasts.
+    private func buildDrain(to script: Script, feeRate: FeeRate, excludingUnconfirmed: Bool) throws -> Psbt {
         do {
             #if SKIP
             let bdkFeeRate = try org.bitcoindevkit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
             #else
             let bdkFeeRate = try BitcoinDevKit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
             #endif
-            let untrusted: [OutPoint] = untrustedUnconfirmedOutpoints()
+            let untrusted: [OutPoint] = excludingUnconfirmed ? untrustedUnconfirmedOutpoints() : []
             #if SKIP
             let unspendable = untrusted.kotlin() as! kotlin.collections.List<OutPoint>
             #else
@@ -573,7 +695,8 @@ public final class WalletEngine: WalletEngineProtocol {
     }
 
     /// Read-only split status with nothing checked yet: every coin is unverified, nothing needs
-    /// splitting. Excludes untrusted 0-conf (not drainable), matching what `splitToSelf` would move.
+    /// splitting. Excludes incoming 0-conf (Bitcoin can't classify an unmined coin), matching what
+    /// `splitToSelf` would move.
     public func splitSummary() throws -> SplitSummary {
         try splitSummary(knownShared: [], knownSafe: [])
     }
@@ -712,34 +835,26 @@ public final class WalletEngine: WalletEngineProtocol {
     /// bytes on default nodes, but L2L networks raise `-datacarriersize` for CoinNews, so we don't
     /// hard-cap here; an over-limit payload simply fails at broadcast.
     public func publishData(_ data: Data, feeRate: FeeRate) throws -> WalletTx {
-        let psbt: Psbt
-        do {
+        // Same spend policy as send: confirmed coins and our own change first, incoming unconfirmed
+        // only if those don't cover the fee (`buildPreferringConfirmed`). No warning here — a
+        // CoinNews post that gets orphaned simply doesn't appear, and costs nothing.
+        let psbt = try buildPreferringConfirmed { excluded in
             #if SKIP
             let bdkFeeRate = try org.bitcoindevkit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
-            #else
-            let bdkFeeRate = try BitcoinDevKit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
-            #endif
-            // Same spend policy as send: confirmed + own change only.
-            let untrusted: [OutPoint] = untrustedUnconfirmedOutpoints()
-            #if SKIP
-            let unspendable = untrusted.kotlin() as! kotlin.collections.List<OutPoint>
-            #else
-            let unspendable = untrusted
-            #endif
+            let unspendable = excluded.kotlin() as! kotlin.collections.List<OutPoint>
             // bdk-android's `addData` takes a Kotlin `ByteArray` (`Data.platformValue`); bdk-swift
             // takes `Data`.
-            #if SKIP
             let withData = TxBuilder().addData(data: data.platformValue)
             #else
+            let bdkFeeRate = try BitcoinDevKit.FeeRate.fromSatPerVb(satVb: UInt64(feeRate.satPerVByte))
+            let unspendable = excluded
             let withData = TxBuilder().addData(data: data)
             #endif
             var builder = withData
                 .feeRate(feeRate: bdkFeeRate)
                 .unspendable(unspendable: unspendable)
             builder = applyingReplayProtection(builder)
-            psbt = try builder.finish(wallet: wallet)
-        } catch {
-            throw WalletError.mapping(rawDescription: "\(error)")
+            return try builder.finish(wallet: wallet)
         }
 
         // Sign on demand (watch-only build → transient key, §7).
@@ -939,7 +1054,10 @@ public final class WalletEngine: WalletEngineProtocol {
         let bdkTreasuryAmount = BitcoinDevKit.Amount.fromSat(satoshi: UInt64(treasurySats))
         let script = Script(rawOutputScript: treasuryScript)
         #endif
-        // Same spend policy as send: confirmed coins + our own change only.
+        // Deposits keep the strict rule — confirmed coins + our own change only — rather than the
+        // send path's two passes: a deposit spends the slot's treasury alongside our coins, and the
+        // enforcer-side ordering is delicate enough (`docs/sidechain-deposits.md`) without an input
+        // that can vanish from under it. One block's wait is the price.
         let untrusted: [OutPoint] = untrustedUnconfirmedOutpoints()
         #if SKIP
         let unspendable = untrusted.kotlin() as! kotlin.collections.List<OutPoint>
@@ -1121,9 +1239,14 @@ public final class WalletEngine: WalletEngineProtocol {
 }
 #endif // !SKIP_BRIDGE
 
-/// The wallet's unconfirmed txids and the subset it funded itself (see `unconfirmedTxids()`). A struct,
+/// The wallet's unconfirmed txids and the subset it trusts (see `unconfirmedTxids()`). A struct,
 /// not a tuple: it transpiles to plain Kotlin.
 struct UnconfirmedTxids {
     let unconfirmed: Set<String>
     let trusted: Set<String>
+
+    /// An unconfirmed tx whose outputs still depend on someone else's unconfirmed transaction.
+    func isUntrusted(_ txid: String) -> Bool {
+        unconfirmed.contains(txid) && !trusted.contains(txid)
+    }
 }

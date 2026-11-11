@@ -146,6 +146,8 @@ low-fee-when-cheap logic as consolidation.
 - **Dust / uneconomical coins:** churning a coin worth less than its hop fee is pure loss — flag or
   exclude (ties into coin-control's economical-coin check).
 - **Interaction with the 0-conf spend policy:** a hop's output is our own unconfirmed change →
-  already treated as spendable, so back-to-back hops work; confirm the timing model doesn't starve
-  on unconfirmed parents (long chains of unconfirmed self-spends can hit mempool ancestor limits).
+  spendable (and preferred over incoming 0-conf by the two-pass build, 2026-11-11), so back-to-back
+  hops work — unless the chain started from an incoming 0-conf coin, in which case every hop's
+  change stays untrusted (taint follows the chain) and the review warns on each; confirm the timing model doesn't starve on unconfirmed parents (long chains of
+  unconfirmed self-spends can hit mempool ancestor limits).
 </content>
