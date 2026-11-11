@@ -8,3 +8,4 @@ Also in this release:
 • Retired test networks (Alphanet, Betanet, Thunder Betanet) are hidden by default. A Settings toggle brings them back; nothing is deleted.
 • One Confirm for every send. The extra "Send real eCash?" alert is gone; the review and your device unlock are the gate on every network.
 • Fixed: switching networks did not always refresh the balance on the network you switched to.
+• Fixed: "Deposit to one of my wallets" was missing from the Thunder deposit screen. It now lists your wallets, with the one you are in first.

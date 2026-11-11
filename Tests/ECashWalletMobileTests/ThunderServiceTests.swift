@@ -107,6 +107,21 @@ import WalletService
         #expect(try await relaunched.receiveAddress(walletId: "w1", unused: false).index == 3)
     }
 
+    /// The deposit picker asks for a wallet's address on an EXPLICIT Thunder while the wallet is
+    /// switched elsewhere: same account key, but the revealed index lives under that chain's key,
+    /// so handing out mainnet addresses never moves the betanet counter (or vice versa).
+    @Test func anExplicitThunderUsesTheSameKeyAndItsOwnIndex() async throws {
+        let service = Self.service()   // `networkOf` defaults to betanet Thunder
+        #expect(!service.hasAccountKey(walletId: "w1"))
+        let mainnet0 = try await service.receiveAddress(walletId: "w1", network: .thunderMainnet, unused: true)
+        #expect(mainnet0.address == Self.address0)   // one seed, one Thunder key on every chain
+        #expect(service.hasAccountKey(walletId: "w1"))
+        _ = try await service.receiveAddress(walletId: "w1", network: .thunderMainnet, unused: false)   // mainnet → 1
+        #expect(try await service.receiveAddress(walletId: "w1", network: .thunderMainnet, unused: true).index == 1)
+        #expect(try await service.receiveAddress(walletId: "w1", unused: true).index == 0)   // betanet untouched
+        #expect(service.cachedBalance(walletId: "w1", network: .thunderMainnet) == .unknown)   // never synced there
+    }
+
     @Test func missingMnemonicThrowsTyped() async {
         let service = Self.service(mnemonic: nil)
         do {

@@ -169,6 +169,11 @@ final class AppState {
         return EmptyCoinNewsClient()
     }
 
+    /// The Thunder engine, also reachable through `walletOps` for the SELECTED account. Held
+    /// directly for the one question the facade can't route: another wallet's Thunder address
+    /// while that wallet is switched to eCash (the deposit picker).
+    @ObservationIgnored private let thunder: ThunderService
+
     enum SyncState: Equatable {
         case idle
         case syncing
@@ -181,9 +186,7 @@ final class AppState {
         manager = WalletManager()
         // Route Thunder wallets to the Fuse-native engine; the mnemonic is read app-side, transiently,
         // only when Thunder needs to derive/sign (Golden Rule §2). Everything else stays on BDK.
-        walletOps = WalletFacade(
-            primary: WalletManagerOps(manager),
-            thunder: ThunderService(
+        let thunder = ThunderService(
                 loadMnemonic: { [manager] id in try manager.mnemonic(for: id) },
                 // Resolved per call so a Settings → Network endpoint change applies immediately
                 // (the same override chain the BDK backends use). The KIND is resolved too, not just
@@ -196,7 +199,11 @@ final class AppState {
                 // Which Thunder a wallet is on right now (betanet or mainnet) — its selected account.
                 networkOf: { [manager] id in
                     manager.wallets.first { $0.id == id }?.network ?? WalletNetwork.thunder
-                }),
+                })
+        self.thunder = thunder
+        walletOps = WalletFacade(
+            primary: WalletManagerOps(manager),
+            thunder: thunder,
             isThunder: { [manager] id in manager.wallets.first { $0.id == id }?.network.isThunder ?? false })
         balanceHidden = UserDefaults.standard.bool(forKey: "balanceHidden")
         // Unset reads as ON (`object(forKey:) as? Bool`, not `bool(forKey:)`'s false).
@@ -1043,12 +1050,13 @@ final class AppState {
         let network = wallet.network
         let params = NetworkRegistry.params(for: network)
         let ops = walletOps
-        // The user's wallets ON THIS SIDECHAIN (Thunder for slot 9 on eCash, betanet Thunder for
-        // betanet's slot 9), exactly like Send's same-network list.
+        // The user's wallets that can receive on THIS sidechain (Thunder for slot 9 on eCash, betanet
+        // Thunder for betanet's slot 9) — every seed wallet, this one first (`SidechainDestinations`).
         let receiving = SidechainWalletNetwork.walletNetwork(forSlot: sidechain.slot, onMainchain: network)
-        let destinations = manager.wallets
-            .filter { receiving != nil && $0.network == receiving }
-            .map { SendViewModel.Destination(id: $0.id, label: $0.label, balance: balanceSummary(walletId: $0.id)) }
+        let thunder = self.thunder
+        let destinations = SidechainDestinations.deposit(wallets: manager.wallets, currentId: id, receiving: receiving) { walletId in
+            receiving.map { thunder.cachedBalance(walletId: walletId, network: $0) } ?? .unknown
+        }
         return SidechainDepositViewModel(
             sidechain: sidechain,
             network: network,
@@ -1075,8 +1083,18 @@ final class AppState {
             },
             destinations: destinations,
             addressForDestination: { walletId in
+                guard let receiving else { return "" }
+                // The wallet's Thunder address on THIS Thunder — not through the facade, which routes
+                // by the account the wallet is switched to (eCash, for the wallet depositing). The
+                // account key is derived from the phrase once per wallet, then cached; that first
+                // read is gated on device auth like opening the wallet on a new network (§7).
+                if !thunder.hasAccountKey(walletId: walletId), self.appLock.enabled {
+                    let label = self.manager.wallets.first { $0.id == walletId }?.label ?? ""
+                    let reason = "Open \(label) on \(NetworkRegistry.params(for: receiving).displayName)"
+                    guard await DeviceAuth.authenticate(reason: reason) else { throw CancellationError() }
+                }
                 // `unused: true`: the wallet's current address. Picking must not burn index space.
-                try await ops.receiveAddress(walletId: walletId, unused: true).address
+                return try await thunder.receiveAddress(walletId: walletId, network: receiving, unused: true).address
             })
     }
 
@@ -1090,11 +1108,12 @@ final class AppState {
         let mainParams = NetworkRegistry.params(for: mainchain)
         let ops = walletOps
         let manager = self.manager
-        // The user's wallets ON THE MAINCHAIN — the safe default destination (same-network filter as
-        // Send: an address from any other network would look valid and lose the coins).
-        let destinations = manager.wallets
-            .filter { $0.network == mainchain }
-            .map { SendViewModel.Destination(id: $0.id, label: $0.label, balance: balanceSummary(walletId: $0.id)) }
+        // The user's wallets WITH AN ACCOUNT ON THE MAINCHAIN — the safe default destination (same
+        // network rule as Send: an address from any other network would look valid and lose the
+        // coins). This wallet's own mainchain account first (`SidechainDestinations`).
+        let destinations = SidechainDestinations.withdraw(wallets: manager.wallets, currentId: id, mainchain: mainchain) {
+            balanceSummary(walletId: $0, network: mainchain)
+        }
         let enforcerEndpoint = EnforcerEndpointRegistry.endpoint(for: mainchain)
         return SidechainWithdrawViewModel(
             sidechainTitle: sidechainParams.displayName,
@@ -1143,8 +1162,9 @@ final class AppState {
             },
             destinations: destinations,
             addressForDestination: { walletId in
+                // The destination's account ON THE MAINCHAIN, not whichever it is switched to.
                 // `unused: true`: browsing the picker must not burn the destination wallet's index.
-                try await ops.receiveAddress(walletId: walletId, unused: true).address
+                try manager.nextUnusedAddress(walletId: walletId, network: mainchain).address
             })
     }
 
@@ -1173,9 +1193,9 @@ final class AppState {
               let endpoint = fastWithdrawalEndpoint, let baseURL = endpoint.baseURL else { return nil }
         let ops = walletOps
         let manager = self.manager
-        let destinations = manager.wallets
-            .filter { $0.network == mainchain }
-            .map { SendViewModel.Destination(id: $0.id, label: $0.label, balance: balanceSummary(walletId: $0.id)) }
+        let destinations = SidechainDestinations.withdraw(wallets: manager.wallets, currentId: id, mainchain: mainchain) {
+            balanceSummary(walletId: $0, network: mainchain)
+        }
         let deps = FastWithdrawalViewModel.Dependencies(
             service: FastWithdrawalClient(baseURL: baseURL),
             endpoint: endpoint,
@@ -1196,7 +1216,7 @@ final class AppState {
                 try await ops.receiveAddress(walletId: id, unused: false).address
             },
             addressForDestination: { walletId in
-                try await ops.receiveAddress(walletId: walletId, unused: true).address
+                try manager.nextUnusedAddress(walletId: walletId, network: mainchain).address
             },
             onPaid: { tx in
                 self.insertPending(tx)

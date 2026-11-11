@@ -95,18 +95,39 @@ final class ThunderService: WalletOps {
     /// Derived from the account public key — no mnemonic — off the main actor so the Receive sheet's
     /// present animation stays smooth.
     func receiveAddress(walletId: String, unused: Bool) async throws -> AddressInfo {
+        try await receiveAddress(walletId: walletId, network: networkOf(walletId), unused: unused)
+    }
+
+    /// As above, on an explicit Thunder `network`. The deposit picker asks for a wallet's Thunder
+    /// address while that wallet is switched to eCash, where `networkOf` answers with the
+    /// mainchain and the revealed index would be read and written under the wrong chain key.
+    func receiveAddress(walletId: String, network: WalletNetwork, unused: Bool) async throws -> AddressInfo {
         let account = try await accountPublicKey(walletId: walletId)
+        let key = Self.chainKey(walletId, network: network)
         let index: UInt32
         if unused {
-            index = indexStore.revealedIndex(walletId: chainKey(walletId))
+            index = indexStore.revealedIndex(walletId: key)
         } else {
-            index = indexStore.revealedIndex(walletId: chainKey(walletId)) + 1
-            indexStore.setRevealedIndex(index, walletId: chainKey(walletId))
+            index = indexStore.revealedIndex(walletId: key) + 1
+            indexStore.setRevealedIndex(index, walletId: key)
         }
         return try await Task.detached(priority: .userInitiated) {
             let address = try ThunderWallet.addresses(account: account, indices: index..<(index + 1))[0]
             return AddressInfo(address: address.base58, index: Int32(index))
         }.value
+    }
+
+    /// Whether the wallet's account key is already cached — an address then needs no phrase read.
+    /// The deposit picker gates the first read behind device auth, like opening a new network.
+    func hasAccountKey(walletId: String) -> Bool {
+        accountKeyStore.accountKey(walletId: walletId) != nil
+    }
+
+    /// The last synced spendable balance on `network`, or `.unknown` before any sync there — for a
+    /// picker row of a wallet that may be switched to another chain.
+    func cachedBalance(walletId: String, network: WalletNetwork) -> WalletBalanceSummary {
+        guard let utxos = utxoCache[Self.chainKey(walletId, network: network)] else { return .unknown }
+        return .known(Amount(sats: Int64(clamping: utxos.reduce(UInt64(0)) { $0 &+ $1.valueSats })))
     }
 
     // MARK: - Balance / sync

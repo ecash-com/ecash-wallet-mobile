@@ -55,6 +55,9 @@ final class SendViewModel {
         /// Last-known balance, or `.unknown` for a wallet that has never synced here — a freshly
         /// created destination wallet reads "Not synced", not a confident "0".
         let balance: WalletBalanceSummary
+        /// The wallet the user is in right now — a sidechain deposit or withdrawal to the same seed,
+        /// which the picker marks so it is never mistaken for a lookalike label.
+        var isCurrent: Bool = false
     }
 
     // Wallet context, fixed at presentation time (the Send sheet is per-selected-wallet).

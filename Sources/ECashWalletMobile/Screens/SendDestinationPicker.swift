@@ -70,9 +70,22 @@ struct SendDestinationPicker: View {
             .frame(width: 30, height: 30)
 
             VStack(alignment: .leading, spacing: 2) {
-                Text(destination.label)
-                    .textStyle(.body)
-                    .foregroundStyle(Theme.Colors.text0)
+                HStack(spacing: Theme.Space.x2) {
+                    Text(destination.label)
+                        .textStyle(.body)
+                        .foregroundStyle(Theme.Colors.text0)
+                    // The wallet the user is in: the same seed, on the other chain. Marked, so a
+                    // deposit to yourself is never mistaken for a wallet with a similar name.
+                    if destination.isCurrent {
+                        Text("This wallet", bundle: .module,
+                             comment: "destination picker: the wallet the user is currently in")
+                            .textStyle(.xs)
+                            .foregroundStyle(Theme.Colors.accent)
+                            .padding(.horizontal, Theme.Space.x2)
+                            .padding(.vertical, 2)
+                            .background(Theme.Colors.accentTint, in: Capsule())
+                    }
+                }
                 WalletBalanceLabel(balance: destination.balance, unitLabel: unitLabel)
             }
 

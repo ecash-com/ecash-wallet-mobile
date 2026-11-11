@@ -222,7 +222,7 @@ struct SidechainDepositScreen: View {
     /// (unwrapped from `s<slot>_…`); an invalid one says why, in red.
     @ViewBuilder private var addressStatus: some View {
         if vm.addressText.isEmpty {
-            Text("Paste the deposit address from your \(vm.sidechain.title) wallet.", bundle: .module,
+            Text("Paste a deposit address from a \(vm.sidechain.title) wallet, or pick one of your own wallets below.", bundle: .module,
                  comment: "deposit address hint; %@ is the sidechain name")
                 .textStyle(.sm)
                 .foregroundStyle(Theme.Colors.text2)
