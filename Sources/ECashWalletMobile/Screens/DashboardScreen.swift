@@ -203,7 +203,7 @@ struct DashboardScreen: View {
     // MARK: - 1. Price
 
     /// ECX as eCash.com's price API quotes it: the last price on each ECX market it tracks, weighted
-    /// by 24h volume. The API carries no 24h change, so the card shows none.
+    /// by 24h volume, with the API's own 24h change beside it (omitted when it is absent).
     private var priceCard: some View {
         let section = app.dashboard.markets
         return VStack(alignment: .leading, spacing: Theme.Space.x2) {

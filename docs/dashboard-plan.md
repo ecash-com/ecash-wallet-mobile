@@ -164,7 +164,7 @@ every 5 min while the tab is visible (the site's cadence).
 |---|---|---|---|
 | BTC, BCH, BSV | **Gate.io** spot tickers | `GET https://api.gateio.ws/api/v4/spot/tickers?currency_pair=BTC_USDT` (one call per pair, or one call with no pair and filter) | `last`, `change_percentage`, `quote_volume` |
 | BTCB2 | **NonKYC** | `GET https://api.nonkyc.io/api/v2/market/getbysymbol/BTCB2_USDT` | `lastPrice`, `yesterdayPrice` (→ 24h %), `volume` |
-| ECX | **eCash.com** price API (since 2026-11-09, `EcashPriceProvider`) | `GET https://dev.ecash.com/price` | USD price, volume-weighted across the ECX markets it tracks, 24h volume; **no 24h change** |
+| ECX | **eCash.com** price API (since 2026-11-09, `EcashPriceProvider`) | `GET https://dev.ecash.com/price` | USD price, volume-weighted across the ECX markets it tracks, 24h volume, and (since 2026-11-11) `priceChange24hPercent` |
 | wbECX → ECX *(superseded — §11)* | **Jupiter** price API (+ **Orca** pool for volume / fallback price) — *DexScreener dropped the pool 2026-10-07, see §10* | `GET https://lite-api.jup.ag/price/v3?ids=EVHqNdzjCupKi4rQkbuYw52sa1m8A7jeUAMP23S9AVVq`; `GET https://api.orca.so/v2/solana/pools/nNKg814Wq3uTkoG4fM8LzvBQv4Fu2iCgKFmK2YmPQzM` | Jupiter `usdPrice`, `priceChange24h`; Orca `stats.24h.volume`, `price` (wbECX per USDC — inverted) |
 
 All verified live 2026-10-07. Notes:
@@ -328,6 +328,7 @@ Ecosystem / Development tabs, and any buy/swap/trade entry point (§3.6).
   wallet's network, as before.
 - **2026-11-09 — ECX price is back, from eCash.com.** The headline card and the first Markets row read
   `https://dev.ecash.com/price` (`EcashPriceProvider`, shared with the eCash-mainnet and Thunder-mainnet
-  fiat lines): USD, volume-weighted across the ECX markets it tracks, labelled "eCash.com"; the API
-  publishes **no 24h change**, so none is shown. (2026-11-05 to 11-09 it was the wECX/USDC Orca pool
-  via GeckoTerminal.) XEC was dropped from the table 2026-11-05.
+  fiat lines): USD, volume-weighted across the ECX markets it tracks, labelled "eCash.com". It
+  published no 24h change at first; since 2026-11-11 it carries `priceChange24hPercent` (against
+  `price24hAgo`) and the card and row show it like every other asset's. (2026-11-05 to 11-09 it was
+  the wECX/USDC Orca pool via GeckoTerminal.) XEC was dropped from the table 2026-11-05.

@@ -45,7 +45,8 @@ import Testing
         #expect(board.quotes.map(\.ticker) == ["BTC", "BCH", "BTCB2"])
         #expect(board.ecx?.ticker == "ECX")                                   // the headline card
         #expect(board.allQuotes.map(\.ticker) == ["ECX", "BTC", "BCH", "BTCB2"])   // and first in the table
-        #expect(abs((board.ecx?.price ?? 0) - 24.893271911813528) < 1e-9)
+        #expect(abs((board.ecx?.price ?? 0) - 27.45574264817553) < 1e-9)
+        #expect(board.ecx?.change24h == 28.52)
     }
 
     @Test func everyVenueDownFailsTheSection() async {

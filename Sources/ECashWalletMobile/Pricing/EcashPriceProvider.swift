@@ -12,9 +12,9 @@ import FoundationNetworking   // URLSession lives here on Android/Linux Foundati
 /// last trade on every ECX market it tracks (native ECX on Neoxa, wECX on Orca), weighted by each
 /// market's 24h ECX volume, with USDC/USDT taken as $1 and the BTC pair converted at Coinbase spot.
 ///
-/// Only the headline `price` and the aggregate `volume24hUsd` are read. The per-market breakdown
-/// carries trade-venue links, which the app must never show (App Review 3.1.5) — so it is not even
-/// decoded. The API has no 24h change, so the quote carries none and the UI shows none. USD only.
+/// Only the headline `price`, the aggregate `volume24hUsd` and the `priceChange24hPercent` the API
+/// added on 2026-11-11 are read. The per-market breakdown carries trade-venue links, which the app
+/// must never show (App Review 3.1.5) — so it is not even decoded. USD only.
 struct EcashPriceProvider: PriceProvider {
     let id = "ecash.com"
     let displayName = "eCash.com"
@@ -43,10 +43,13 @@ struct EcashPriceProvider: PriceProvider {
     }
 
     /// What the endpoint gives us. A missing, non-positive, or non-USD price is a bad response,
-    /// never a zero price.
+    /// never a zero price. Volume and change are optional extras: absent or garbled, the quote
+    /// simply carries none and the UI omits them.
     struct Quote: Equatable, Sendable {
         let priceUSD: Double
         let volume24hUSD: Double?
+        /// 24h change in percent (`28.52` = +28.52 %), as the API computes it against `price24hAgo`.
+        let change24hPercent: Double?
     }
 
     static func parse(_ data: Data) throws -> Quote {
@@ -57,14 +60,29 @@ struct EcashPriceProvider: PriceProvider {
               payload.currency == nil || payload.currency == "USD",
               let price = payload.price, price > 0, price.isFinite else { throw PriceError.badResponse }
         let volume = payload.volume24hUsd.flatMap { $0 > 0 && $0.isFinite ? $0 : nil }
-        return Quote(priceUSD: price, volume24hUSD: volume)
+        let change = payload.priceChange24hPercent.flatMap { $0.isFinite ? $0 : nil }
+        return Quote(priceUSD: price, volume24hUSD: volume, change24hPercent: change)
     }
 
-    // Only the fields we read; `markets[]`, `method`, `errors` and `updateTime` are ignored.
+    // Only the fields we read; `markets[]`, `method`, `errors`, `updateTime` and `price24hAgo` are
+    // ignored. The extras decode leniently: a garbled volume or change is dropped, never allowed to
+    // sink the price (and with it the fiat line under every eCash balance).
     private struct Payload: Decodable {
         let asset: String?
         let currency: String?
         let price: Double?
         let volume24hUsd: Double?
+        let priceChange24hPercent: Double?
+
+        private enum CodingKeys: String, CodingKey { case asset, currency, price, volume24hUsd, priceChange24hPercent }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            asset = try c.decodeIfPresent(String.self, forKey: .asset)
+            currency = try c.decodeIfPresent(String.self, forKey: .currency)
+            price = try c.decodeIfPresent(Double.self, forKey: .price)
+            volume24hUsd = (try? c.decodeIfPresent(Double.self, forKey: .volume24hUsd)) ?? nil
+            priceChange24hPercent = (try? c.decodeIfPresent(Double.self, forKey: .priceChange24hPercent)) ?? nil
+        }
     }
 }

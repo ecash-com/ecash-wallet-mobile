@@ -53,10 +53,11 @@ struct MarketClient: Sendable {
         return Self.quote(ecx: quote)
     }
 
-    /// No 24h change: the API doesn't publish one, and the row/card simply omit it.
+    /// The 24h change is the API's own `priceChange24hPercent` (published since 2026-11-11); when
+    /// it is missing the row/card simply omit it.
     static func quote(ecx: EcashPriceProvider.Quote) -> MarketQuote {
         MarketQuote(id: "ecx", name: "eCash", ticker: "ECX", price: ecx.priceUSD,
-                    change24h: nil, volume24h: ecx.volume24hUSD, source: "eCash.com")
+                    change24h: ecx.change24hPercent, volume24h: ecx.volume24hUSD, source: "eCash.com")
     }
 
     // MARK: - Gate.io

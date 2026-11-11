@@ -4,7 +4,7 @@ Also in this release:
 • Thunder mainnet is in the network switcher, nested under eCash.
 • Coins you receive can be spent before they confirm. Send prefers confirmed coins, the review shows the exact fee, and it warns when a payment depends on a coin that hasn't confirmed yet. Home shows how much of your balance is still unconfirmed.
 • Creating a wallet: the words appear on the grid as you draw, then you name the wallet.
-• The ECX price now comes from eCash.com, under eCash balances and on the Dashboard.
+• The ECX price now comes from eCash.com, under eCash balances and on the Dashboard, with its 24-hour change.
 • Retired test networks (Alphanet, Betanet, Thunder Betanet) are hidden by default. A Settings toggle brings them back; nothing is deleted.
 • One Confirm for every send. The extra "Send real eCash?" alert is gone; the review and your device unlock are the gate on every network.
 • Fixed: switching networks did not always refresh the balance on the network you switched to.
