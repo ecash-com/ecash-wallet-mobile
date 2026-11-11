@@ -240,12 +240,23 @@ jobs:
           echo "===================== Gradle text reports ====================="
           find .build -path "*reports*" -name "*.txt" -exec sh -c 'echo "----- $1 -----"; cat "$1"' _ {} \; 2>/dev/null | head -c 200000 || true
 
+      # Skip names its log with an ISO timestamp (skip-export-2026-11-11T18:04:51Z.txt); the colons
+      # are rejected by upload-artifact, so copy under a safe name first.
+      - name: Collect failure logs
+        if: failure()
+        run: |
+          mkdir -p .build/failure-logs
+          shopt -s nullglob
+          for f in /tmp/skip-export-*.txt; do
+            cp "$f" ".build/failure-logs/$(basename "$f" | tr ':' '-')"
+          done
+
       - name: Upload failure logs
         if: failure()
         uses: actions/upload-artifact@v5
         with:
           name: skip-export-failure-logs
           path: |
-            /tmp/skip-export-*.txt
+            .build/failure-logs/*.txt
             .build/Android/**/reports/**
           if-no-files-found: warn
