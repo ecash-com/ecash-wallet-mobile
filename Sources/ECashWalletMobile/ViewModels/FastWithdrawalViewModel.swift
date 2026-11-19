@@ -59,6 +59,9 @@ final class FastWithdrawalViewModel {
 
     private(set) var phase: Phase = .loading
     private(set) var info: FastWithdrawalServiceInfo?
+    /// The largest payout the service can fund right now (`GetStatus`), when it said. Below the
+    /// configured maximum while its hot wallet is low or near its daily cap.
+    private(set) var maxPayoutNowSats: Int64?
     private(set) var record: FastWithdrawalRecord?
     private(set) var authorizing = false
     private(set) var isResolvingDestination = false
@@ -108,6 +111,16 @@ final class FastWithdrawalViewModel {
                 phase = .unavailable("Fast withdrawal isn't available for \(sidechainTitle) right now.")
                 return
             }
+            // Best effort: a service that can't answer this still refuses a quote it can't fund.
+            if let status = try? await deps.service.serviceStatus() {
+                guard status.acceptingWithdrawals else {
+                    phase = .unavailable(status.pausedReason.isEmpty
+                        ? "The provider isn't taking fast withdrawals right now. Try again later."
+                        : "The provider isn't taking fast withdrawals right now: \(status.pausedReason)")
+                    return
+                }
+                if status.maxPayoutNowSats > 0 { maxPayoutNowSats = status.maxPayoutNowSats }
+            }
             self.info = info
             phase = .entering
         } catch {
@@ -147,7 +160,12 @@ final class FastWithdrawalViewModel {
 
     var amount: Amount? { Amount.fromCoin(amountText) }
     var minimum: Amount? { info.map { Amount(sats: $0.minimumPayoutSats) } }
-    var maximum: Amount? { info.map { Amount(sats: $0.maximumPayoutSats) } }
+    /// The configured cap, or what the service can fund right now when that's less.
+    var maximumSats: Int64? {
+        guard let info else { return nil }
+        return min(info.maximumPayoutSats, maxPayoutNowSats ?? info.maximumPayoutSats)
+    }
+    var maximum: Amount? { maximumSats.map { Amount(sats: $0) } }
     /// Fee estimate from the advertised rate. The quote's own fee is the truth.
     var estimatedFee: Amount? {
         guard let info, let amount else { return nil }
@@ -164,7 +182,7 @@ final class FastWithdrawalViewModel {
     var amountProblem: AmountProblem {
         guard let amount, let info else { return .none }
         if amount.sats < info.minimumPayoutSats { return .belowMinimum }
-        if amount.sats > info.maximumPayoutSats { return .aboveMaximum }
+        if amount.sats > maximumSats ?? info.maximumPayoutSats { return .aboveMaximum }
         let fee = info.estimatedFee(forPayout: amount.sats)
         return amount.sats + fee > spendable.sats ? .exceedsBalance : .none
     }
@@ -369,6 +387,8 @@ final class FastWithdrawalViewModel {
             switch error {
             case .server(_, let message?) where !message.isEmpty:
                 return "The provider declined: \(message)"
+            // Connect maps both rate limiting and RESOURCE_EXHAUSTED (no liquidity, too many open
+            // quotes) to 429; those carry a message and are handled above.
             case .server(let status, _) where status == 429:
                 return "The provider is busy. Try again in a moment."
             case .network:

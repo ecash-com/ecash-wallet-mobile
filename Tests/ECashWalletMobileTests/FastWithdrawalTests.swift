@@ -133,9 +133,10 @@ import WalletService
         FastWithdrawalClient(baseURL: URL(string: "https://example.test")!) { _ in (Data(body.utf8), status) }
     }
 
-    /// The live betanet response (2026-10-13): uint64 as strings, bytes as base64.
+    /// The betanet response of 2026-10-13 with the field names of the published protocol (2026-11):
+    /// uint64 as strings, bytes as base64.
     @Test func decodesServiceInfo() async throws {
-        let info = try await client(responding: #"{"quoteSigningPublicKey":"UQV+6FfUeQeooadEeQtkAbrpCX1T4lOz+pgYq1iTxo0=","feeBasisPoints":100,"minimumPayoutSats":"10000","maximumPayoutSats":"10000000","chains":[{"sidechain":"thunder","requiredConfirmations":2}],"hotWalletAddress":"bc1qwr2ldwlgz6mwdymjkwjrx8nk8dqtup5eupf2yl"}"#).serviceInfo()
+        let info = try await client(responding: #"{"quoteSigningPublicKey":"UQV+6FfUeQeooadEeQtkAbrpCX1T4lOz+pgYq1iTxo0=","feeBasisPoints":100,"minPayoutSats":"10000","maxPayoutSats":"10000000","sidechains":[{"sidechain":"thunder","requiredConfirmations":2}],"hotWalletAddress":"bc1qwr2ldwlgz6mwdymjkwjrx8nk8dqtup5eupf2yl"}"#).serviceInfo()
         #expect(info.quoteSigningPublicKey.count == 32)
         #expect(info.feeBasisPoints == 100)
         #expect(info.minimumPayoutSats == 10_000)
@@ -146,7 +147,7 @@ import WalletService
 
     /// proto3 JSON omits fields at their default value; a fresh quote has no payment yet.
     @Test func decodesAWithdrawalWithOmittedFields() async throws {
-        let w = try await client(responding: #"{"withdrawal":{"withdrawalId":"abc","sidechain":"thunder","l2PaymentAddress":"L2","l2PaymentSats":"101000","l1Destination":"bc1q","l1PayoutSats":"100000","serviceFeeSats":"1000","requiredConfirmations":2,"status":"WITHDRAWAL_STATUS_AWAITING_PAYMENT","expiresAt":"2026-10-13T16:00:00Z","quoteSignature":"AAEC"}}"#).withdrawal(id: "abc")
+        let w = try await client(responding: #"{"withdrawal":{"withdrawalId":"abc","sidechain":"thunder","l2PaymentAddress":"L2","l2PaymentSats":"101000","l1Address":"bc1q","l1PayoutSats":"100000","serviceFeeSats":"1000","requiredConfirmations":2,"status":"WITHDRAWAL_STATUS_AWAITING_PAYMENT","expiresAt":"2026-10-13T16:00:00Z","quoteSignature":"AAEC"}}"#).withdrawal(id: "abc")
         #expect(w.id == "abc")
         #expect(w.l2PaymentSats == 101_000)
         #expect(w.status == .awaitingPayment)
@@ -158,10 +159,12 @@ import WalletService
 
     /// A REAL quote from the L2L betanet service (2026-10-14), decoded by our client and verified by our
     /// checker against the service's real key. This is the end-to-end proof that the signed-bytes layout
-    /// matches the server's. Nothing was ever paid to it; it expired unused.
+    /// matches the server's. Nothing was ever paid to it; it expired unused. The JSON keys are renamed
+    /// to the published protocol's (`l1Address`, `minPayoutSats`, …); the signed VALUES are untouched,
+    /// and the published preimage is the same ten fields.
     @Test func aLiveBetanetQuoteVerifies() async throws {
-        let info = try await client(responding: #"{"quoteSigningPublicKey":"UQV+6FfUeQeooadEeQtkAbrpCX1T4lOz+pgYq1iTxo0=","feeBasisPoints":100,"minimumPayoutSats":"10000","maximumPayoutSats":"10000000","chains":[{"sidechain":"thunder","requiredConfirmations":2}],"hotWalletAddress":"bc1qwr2ldwlgz6mwdymjkwjrx8nk8dqtup5eupf2yl"}"#).serviceInfo()
-        let quote = try await client(responding: #"{"withdrawal":{"withdrawalId":"76122db5-664e-4200-b83a-1be66282070a","sidechain":"thunder","l2PaymentAddress":"2CgL244VZBcdUpChyXGcgoLoMiAp","l2PaymentSats":"20200","l1Destination":"bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4","l1PayoutSats":"20000","serviceFeeSats":"200","requiredConfirmations":2,"status":"WITHDRAWAL_STATUS_AWAITING_PAYMENT","expiresAt":"2026-10-14T13:58:37Z","quoteSignature":"RuF5tyBKH+clTxLZJhBHQMl1CntD7abPhf+F3RGyDGlR6+utzB/n1UbyDenL/Y+MjfiOZqkl+IB9vGvq4LraCw==","createdAt":"2026-10-14T13:43:37Z","updatedAt":"2026-10-14T13:43:37Z"}}"#).withdrawal(id: "76122db5-664e-4200-b83a-1be66282070a")
+        let info = try await client(responding: #"{"quoteSigningPublicKey":"UQV+6FfUeQeooadEeQtkAbrpCX1T4lOz+pgYq1iTxo0=","feeBasisPoints":100,"minPayoutSats":"10000","maxPayoutSats":"10000000","sidechains":[{"sidechain":"thunder","requiredConfirmations":2}],"hotWalletAddress":"bc1qwr2ldwlgz6mwdymjkwjrx8nk8dqtup5eupf2yl"}"#).serviceInfo()
+        let quote = try await client(responding: #"{"withdrawal":{"withdrawalId":"76122db5-664e-4200-b83a-1be66282070a","sidechain":"thunder","l2PaymentAddress":"2CgL244VZBcdUpChyXGcgoLoMiAp","l2PaymentSats":"20200","l1Address":"bc1qw508d6qejxtdg4y5r3zarvary0c5xw7kv8f3t4","l1PayoutSats":"20000","serviceFeeSats":"200","requiredConfirmations":2,"status":"WITHDRAWAL_STATUS_AWAITING_PAYMENT","expiresAt":"2026-10-14T13:58:37Z","quoteSignature":"RuF5tyBKH+clTxLZJhBHQMl1CntD7abPhf+F3RGyDGlR6+utzB/n1UbyDenL/Y+MjfiOZqkl+IB9vGvq4LraCw==","createdAt":"2026-10-14T13:43:37Z","updatedAt":"2026-10-14T13:43:37Z"}}"#).withdrawal(id: "76122db5-664e-4200-b83a-1be66282070a")
         #expect(FastWithdrawalQuote.signatureIsValid(quote, publicKey: info.quoteSigningPublicKey))
         // The full pre-payment check, as of 10 minutes before it expired.
         try FastWithdrawalQuote.check(quote, info: info, pinnedKey: nil, sidechain: "thunder",
@@ -175,6 +178,47 @@ import WalletService
                                       expiresAt: quote.expiresAt, paymentTxid: "", paymentVout: 0, payoutTxid: "",
                                       quoteSignature: quote.quoteSignature, l2ReceivedSats: 0, l2RefundAddress: "")
         #expect(!FastWithdrawalQuote.signatureIsValid(tampered, publicKey: info.quoteSigningPublicKey))
+    }
+
+    @Test func decodesAPaidWithdrawal() async throws {
+        let w = try await client(responding: #"{"withdrawal":{"withdrawalId":"abc","sidechain":"thunder","l2PaymentAddress":"L2","l2PaymentSats":"101000","l1Address":"bc1q","l1PayoutSats":"100000","serviceFeeSats":"1000","requiredConfirmations":2,"status":"WITHDRAWAL_STATUS_PAID","expiresAt":"2026-10-13T16:00:00Z","l2PaymentTxid":"aa11","l2PaymentVout":3,"l1PayoutTxid":"bb22","quoteSignature":"AAEC"}}"#).withdrawal(id: "abc")
+        #expect(w.status == .paid)
+        #expect(w.l1Destination == "bc1q")
+        #expect(w.paymentTxid == "aa11")
+        #expect(w.paymentVout == 3)
+        #expect(w.payoutTxid == "bb22")
+    }
+
+    @Test func decodesServiceStatus() async throws {
+        let open = try await client(responding: #"{"acceptingWithdrawals":true,"maxPayoutNowSats":"2400000","hotWalletBalanceSats":"10000000","dailyCapLeftSats":"50000000","l1TipHeight":973900,"sidechains":[{"sidechain":"thunder","tipHeight":120,"tipBmmHeight":973899,"connectedPeers":4}]}"#).serviceStatus()
+        #expect(open.acceptingWithdrawals)
+        #expect(open.maxPayoutNowSats == 2_400_000)
+        // proto3 JSON omits false and zero.
+        let paused = try await client(responding: #"{"pausedReason":"the payout wallet is unavailable"}"#).serviceStatus()
+        #expect(!paused.acceptingWithdrawals)
+        #expect(paused.pausedReason == "the payout wallet is unavailable")
+        #expect(paused.maxPayoutNowSats == 0)
+    }
+
+    /// The request bodies use the published field names.
+    @Test func requestsUseThePublishedFieldNames() async throws {
+        final class Bodies: @unchecked Sendable { var seen: [String: String] = [:] }
+        let bodies = Bodies()
+        let reply = #"{"withdrawal":{"withdrawalId":"abc","status":"WITHDRAWAL_STATUS_AWAITING_PAYMENT"}}"#
+        let client = FastWithdrawalClient(baseURL: URL(string: "https://example.test")!) { request in
+            bodies.seen[request.url?.lastPathComponent ?? ""] = String(data: request.httpBody ?? Data(), encoding: .utf8) ?? ""
+            return (Data(reply.utf8), 200)
+        }
+        _ = try await client.createWithdrawal(requestID: "r", sidechain: "thunder", l1Destination: "bc1q",
+                                              l1PayoutSats: 100_000)
+        _ = try await client.submitPayment(withdrawalID: "abc", txid: "aa11", vout: 0)
+        let create = bodies.seen["CreateWithdrawal"] ?? ""
+        #expect(create.contains(#""l1Address":"bc1q""#))
+        #expect(create.contains(#""l1PayoutSats":"100000""#))
+        #expect(!create.contains("l1Destination"))
+        let submit = bodies.seen["SubmitPayment"] ?? ""
+        #expect(submit.contains(#""l2PaymentTxid":"aa11""#))
+        #expect(submit.contains(#""l2PaymentVout":0"#))
     }
 
     @Test func serverErrorsCarryTheMessage() async {
@@ -207,12 +251,20 @@ import WalletService
         var created: [(requestID: String, destination: String, payout: Int64)] = []
         var submitted: [(id: String, txid: String, vout: Int32)] = []
         var refunds: [String] = []
+        /// nil = the call fails (a service that can't say).
+        var status: FastWithdrawalServiceStatus? = FastWithdrawalServiceStatus(
+            acceptingWithdrawals: true, pausedReason: "", maxPayoutNowSats: 10_000_000)
 
         init() {
             info = FastWithdrawalQuoteTests.info(key: [UInt8](key.publicKey.rawRepresentation))
         }
 
         func serviceInfo() async throws -> FastWithdrawalServiceInfo { info }
+
+        func serviceStatus() async throws -> FastWithdrawalServiceStatus {
+            guard let status else { throw CoinNewsError.network }
+            return status
+        }
 
         func createWithdrawal(requestID: String, sidechain: String, l1Destination: String,
                               l1PayoutSats: Int64) async throws -> FastWithdrawal {
@@ -420,6 +472,53 @@ import WalletService
         #expect(!vm.canQuote)
         vm.amountText = "0.2"       // 20,000,000 > 10,000,000 maximum
         #expect(vm.amountProblem == .aboveMaximum)
+    }
+
+    @Test func aPausedServiceIsUnavailable() async {
+        let service = FakeService()
+        service.status = FastWithdrawalServiceStatus(acceptingWithdrawals: false,
+                                                     pausedReason: "the payout wallet is unavailable",
+                                                     maxPayoutNowSats: 0)
+        let vm = makeVM(service: service, calls: Calls(), store: freshStore())
+        await vm.loadIfNeeded()
+        if case .unavailable(let message) = vm.phase {
+            #expect(message.contains("the payout wallet is unavailable"))
+        } else { Issue.record("expected unavailable, got \(vm.phase)") }
+    }
+
+    /// The hot wallet can fund less than the configured cap: the lower number is the limit shown.
+    @Test func theMaximumFollowsWhatTheServiceCanFundNow() async {
+        let service = FakeService()
+        service.status = FastWithdrawalServiceStatus(acceptingWithdrawals: true, pausedReason: "",
+                                                     maxPayoutNowSats: 50_000)
+        let vm = makeVM(service: service, calls: Calls(), store: freshStore())
+        await vm.loadIfNeeded()
+        vm.addressText = Self.destination
+        #expect(vm.maximum?.sats == 50_000)
+        vm.amountText = "0.001"   // 100,000 > 50,000
+        #expect(vm.amountProblem == .aboveMaximum)
+        vm.amountText = "0.0004"
+        #expect(vm.amountProblem == .none)
+    }
+
+    @Test func aStatusFailureDoesNotBlockTheFlow() async {
+        let service = FakeService()
+        service.status = nil
+        let vm = makeVM(service: service, calls: Calls(), store: freshStore())
+        await vm.loadIfNeeded()
+        #expect(vm.phase == .entering)
+        #expect(vm.maximum?.sats == 10_000_000)
+    }
+
+    /// A record saved by a build that knew the dropped PAYOUT_PREPARED status still loads.
+    @Test func aRecordWithTheDroppedStatusStillLoads() {
+        let store = freshStore()
+        store.save(FastWithdrawalRecord(
+            id: "w-1", walletId: "wallet", requestID: "r", sidechain: "thunder", l1Destination: "d",
+            l1PayoutSats: 1, l2PaymentAddress: "a", l2PaymentSats: 2, serviceFeeSats: 1, expiresAt: 1,
+            createdAt: 1, paymentTxid: "t", paymentStarted: true, status: .payoutPrepared,
+            payoutTxid: nil, l2ReceivedSats: 0, l2RefundAddress: nil, dismissed: false))
+        #expect(store.activeRecords(walletId: "wallet").first?.status == .payoutPrepared)
     }
 
     @Test func removingAWalletForgetsItsWithdrawals() {

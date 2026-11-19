@@ -4,10 +4,13 @@
 
 import Foundation
 
-/// The fast-withdrawal service's five calls (`fastwithdraw.v1.FastWithdrawalService`). A protocol so
+/// The fast-withdrawal service's six calls (`fastwithdraw.v1.FastWithdrawalService`, schema in
+/// github.com/LayerTwo-Labs/fast-withdrawals `proto/fastwithdraw/v1/fastwithdraw.proto`). A protocol so
 /// the view model is tested against a fake.
 protocol FastWithdrawalServicing: Sendable {
     func serviceInfo() async throws -> FastWithdrawalServiceInfo
+    /// Whether withdrawals are accepted right now, and how large one can be.
+    func serviceStatus() async throws -> FastWithdrawalServiceStatus
     func createWithdrawal(requestID: String, sidechain: String, l1Destination: String,
                           l1PayoutSats: Int64) async throws -> FastWithdrawal
     func submitPayment(withdrawalID: String, txid: String, vout: Int32) async throws -> FastWithdrawal
@@ -31,9 +34,15 @@ struct FastWithdrawalClient: FastWithdrawalServicing {
         return dto.model
     }
 
+    func serviceStatus() async throws -> FastWithdrawalServiceStatus {
+        let dto: ServiceStatusDTO = try await rpc.unary(service: Self.service, method: "GetStatus",
+                                                        request: EmptyRequest())
+        return dto.model
+    }
+
     func createWithdrawal(requestID: String, sidechain: String, l1Destination: String,
                           l1PayoutSats: Int64) async throws -> FastWithdrawal {
-        let request = CreateRequest(requestId: requestID, sidechain: sidechain, l1Destination: l1Destination,
+        let request = CreateRequest(requestId: requestID, sidechain: sidechain, l1Address: l1Destination,
                                     l1PayoutSats: String(l1PayoutSats))
         let dto: WithdrawalEnvelope = try await rpc.unary(service: Self.service, method: "CreateWithdrawal",
                                                           request: request)
@@ -41,7 +50,7 @@ struct FastWithdrawalClient: FastWithdrawalServicing {
     }
 
     func submitPayment(withdrawalID: String, txid: String, vout: Int32) async throws -> FastWithdrawal {
-        let request = SubmitRequest(withdrawalId: withdrawalID, paymentTxid: txid, paymentVout: vout)
+        let request = SubmitRequest(withdrawalId: withdrawalID, l2PaymentTxid: txid, l2PaymentVout: vout)
         let dto: WithdrawalEnvelope = try await rpc.unary(service: Self.service, method: "SubmitPayment",
                                                           request: request)
         return try dto.model()
@@ -62,6 +71,15 @@ struct FastWithdrawalClient: FastWithdrawalServicing {
 }
 
 // MARK: - Models
+
+/// `GetStatus`: the service's state right now, as opposed to `GetServiceInfo`'s fixed terms.
+struct FastWithdrawalServiceStatus: Equatable, Sendable {
+    let acceptingWithdrawals: Bool
+    /// Why not, when `acceptingWithdrawals` is false. The service's own wording.
+    let pausedReason: String
+    /// The largest payout a quote can ask for right now (liquidity and daily cap). Zero while paused.
+    let maxPayoutNowSats: Int64
+}
 
 struct FastWithdrawalServiceInfo: Equatable, Sendable {
     let quoteSigningPublicKey: [UInt8]
@@ -90,6 +108,8 @@ enum FastWithdrawalStatus: String, Codable, Equatable, Sendable {
     case awaitingPayment = "WITHDRAWAL_STATUS_AWAITING_PAYMENT"
     case confirmingPayment = "WITHDRAWAL_STATUS_CONFIRMING_PAYMENT"
     case paymentConfirmed = "WITHDRAWAL_STATUS_PAYMENT_CONFIRMED"
+    /// No longer sent by the service (dropped from the protocol, 2026-11). Kept so a record saved by
+    /// an older build still decodes; treated as `paymentConfirmed`.
     case payoutPrepared = "WITHDRAWAL_STATUS_PAYOUT_PREPARED"
     case paid = "WITHDRAWAL_STATUS_PAID"
     case expired = "WITHDRAWAL_STATUS_EXPIRED"
@@ -103,6 +123,9 @@ enum FastWithdrawalStatus: String, Codable, Equatable, Sendable {
 }
 
 /// One withdrawal as the service reports it. Amounts are signed `Int64` (the app's money type).
+/// On the wire `l1Destination` is `l1_address`, `paymentTxid`/`paymentVout` are `l2_payment_txid`/
+/// `l2_payment_vout` and `payoutTxid` is `l1_payout_txid` (renamed in the protocol, 2026-11); the
+/// names here are unchanged because saved records use them.
 struct FastWithdrawal: Equatable, Sendable {
     let id: String
     let sidechain: String
@@ -132,23 +155,35 @@ struct FastWithdrawal: Equatable, Sendable {
 private struct ServiceInfoDTO: Decodable {
     let quoteSigningPublicKey: String?
     let feeBasisPoints: Int64?
-    let minimumPayoutSats: String?
-    let maximumPayoutSats: String?
-    let chains: [ChainPolicyDTO]?
+    let minPayoutSats: String?
+    let maxPayoutSats: String?
+    let sidechains: [ChainPolicyDTO]?
     let hotWalletAddress: String?
 
     var model: FastWithdrawalServiceInfo {
         var confirmations: [String: Int64] = [:]
-        for chain in chains ?? [] {
+        for chain in sidechains ?? [] {
             if let id = chain.sidechain, !id.isEmpty { confirmations[id] = chain.requiredConfirmations ?? 0 }
         }
         return FastWithdrawalServiceInfo(
             quoteSigningPublicKey: base64Bytes(quoteSigningPublicKey),
             feeBasisPoints: feeBasisPoints ?? 0,
-            minimumPayoutSats: Int64(minimumPayoutSats ?? "") ?? 0,
-            maximumPayoutSats: Int64(maximumPayoutSats ?? "") ?? 0,
+            minimumPayoutSats: Int64(minPayoutSats ?? "") ?? 0,
+            maximumPayoutSats: Int64(maxPayoutSats ?? "") ?? 0,
             requiredConfirmations: confirmations,
             hotWalletAddress: hotWalletAddress ?? "")
+    }
+}
+
+private struct ServiceStatusDTO: Decodable {
+    let acceptingWithdrawals: Bool?
+    let pausedReason: String?
+    let maxPayoutNowSats: String?
+
+    var model: FastWithdrawalServiceStatus {
+        FastWithdrawalServiceStatus(acceptingWithdrawals: acceptingWithdrawals ?? false,
+                                    pausedReason: pausedReason ?? "",
+                                    maxPayoutNowSats: Int64(maxPayoutNowSats ?? "") ?? 0)
     }
 }
 
@@ -173,15 +208,15 @@ private struct WithdrawalDTO: Decodable {
     let sidechain: String?
     let l2PaymentAddress: String?
     let l2PaymentSats: String?
-    let l1Destination: String?
+    let l1Address: String?
     let l1PayoutSats: String?
     let serviceFeeSats: String?
     let requiredConfirmations: Int64?
     let status: String?
     let expiresAt: String?
-    let paymentTxid: String?
-    let paymentVout: Int32?
-    let payoutTxid: String?
+    let l2PaymentTxid: String?
+    let l2PaymentVout: Int32?
+    let l1PayoutTxid: String?
     let quoteSignature: String?
     let l2ReceivedSats: String?
     let l2RefundAddress: String?
@@ -195,15 +230,15 @@ private struct WithdrawalDTO: Decodable {
             sidechain: sidechain ?? "",
             l2PaymentAddress: l2PaymentAddress ?? "",
             l2PaymentSats: Int64(l2PaymentSats ?? "") ?? 0,
-            l1Destination: l1Destination ?? "",
+            l1Destination: l1Address ?? "",
             l1PayoutSats: Int64(l1PayoutSats ?? "") ?? 0,
             serviceFeeSats: Int64(serviceFeeSats ?? "") ?? 0,
             requiredConfirmations: requiredConfirmations ?? 0,
             status: status,
             expiresAt: expiresAt.flatMap(rfc3339Seconds) ?? 0,
-            paymentTxid: paymentTxid ?? "",
-            paymentVout: paymentVout ?? 0,
-            payoutTxid: payoutTxid ?? "",
+            paymentTxid: l2PaymentTxid ?? "",
+            paymentVout: l2PaymentVout ?? 0,
+            payoutTxid: l1PayoutTxid ?? "",
             quoteSignature: base64Bytes(quoteSignature),
             l2ReceivedSats: Int64(l2ReceivedSats ?? "") ?? 0,
             l2RefundAddress: l2RefundAddress ?? "")
@@ -213,14 +248,14 @@ private struct WithdrawalDTO: Decodable {
 private struct CreateRequest: Encodable {
     let requestId: String
     let sidechain: String
-    let l1Destination: String
+    let l1Address: String
     let l1PayoutSats: String   // uint64 → string in proto3 JSON
 }
 
 private struct SubmitRequest: Encodable {
     let withdrawalId: String
-    let paymentTxid: String
-    let paymentVout: Int32
+    let l2PaymentTxid: String
+    let l2PaymentVout: Int32
 }
 
 private struct GetRequest: Encodable {

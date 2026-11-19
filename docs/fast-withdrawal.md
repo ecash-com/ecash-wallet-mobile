@@ -8,6 +8,17 @@
 Thunder → betanet L1 only. A mainnet instance is the plan (the server is designed for ECX mainnet);
 its URL and operator aren't known yet.
 
+> **Protocol revision 2026-11-19.** L2L published the server as
+> [`LayerTwo-Labs/fast-withdrawals`](https://github.com/LayerTwo-Labs/fast-withdrawals) (PR #1, open).
+> Its `proto/fastwithdraw/v1/fastwithdraw.proto` is now the reference for this doc. Against the version
+> the client was first built on: fields renamed (`l1_destination` → `l1_address`, `payment_txid`/`vout`
+> → `l2_payment_txid`/`vout`, `payout_txid` → `l1_payout_txid`, `minimum_`/`maximum_payout_sats` →
+> `min_`/`max_payout_sats`, `chains` → `sidechains`), status `PAYOUT_PREPARED` dropped, a new
+> `GetStatus` call, and late payments are found automatically for **one hour** after expiry rather
+> than seven days (§5). The quote signature is unchanged. The client follows the published protocol
+> as of this date (still switched off); the PR isn't merged, so re-check the proto before enabling.
+> The betanet host didn't answer on 2026-11-19, so which version is deployed there is unverified.
+
 > **Revision note.** The 2026-09-16 version of this doc assessed L2L's public Go server
 > (`fast-withdraw-server-go`) and found its quote signature covered only the expiry. The deployed
 > service is a **different implementation** (a Rust rewrite, design dated 2026-10-03), reviewed from
@@ -42,14 +53,24 @@ arrive as **strings**, `bytes` as **base64**, timestamps as RFC 3339 strings, en
 
 | Method | Request | Returns / notes |
 |---|---|---|
-| `GetServiceInfo` | — | Quote signing public key (32 bytes, Ed25519), fee in basis points, min/max payout, per-chain required confirmations, the hot wallet address (empty while unreachable) |
-| `CreateWithdrawal` | `request_id` (fresh non-nil UUID), `sidechain` = `"thunder"`, `l1_destination`, `l1_payout_sats` | A signed, expiring quote: the Thunder address to pay, the exact amount, fee, confirmations, expiry |
-| `SubmitPayment` | `withdrawal_id`, `payment_txid`, `payment_vout` | Optional but recommended: locks in a payment still in the mempool. Idempotent |
-| `GetWithdrawal` | `withdrawal_id` | Current state; `payout_txid` once paid |
+| `GetServiceInfo` | — | The fixed terms: quote signing public key (32 bytes, Ed25519), `fee_basis_points`, `min_payout_sats` / `max_payout_sats`, `sidechains[]` with required confirmations, the hot wallet address (empty while unreachable) |
+| `GetStatus` | — | The state right now: `accepting_withdrawals`, `paused_reason`, `max_payout_now_sats` (zero while paused), hot wallet balance, what's left of the rolling 24-hour cap, L1 and sidechain tips |
+| `CreateWithdrawal` | `request_id` (fresh non-nil UUID), `sidechain` = `"thunder"`, `l1_address`, `l1_payout_sats` | A signed, expiring quote: the Thunder address to pay, the exact amount, fee, confirmations, expiry |
+| `SubmitPayment` | `withdrawal_id`, `l2_payment_txid`, `l2_payment_vout` | Reports the payment's outpoint. Optional within an hour of expiry, **required after** (§5). Idempotent |
+| `GetWithdrawal` | `withdrawal_id` | Current state; `l1_payout_txid` once paid |
 | `RequestRefund` | `withdrawal_id`, `l2_refund_address` | Only for `UNDERPAID`. **One-shot**: the address can't be changed |
 
-**Statuses:** `AWAITING_PAYMENT → CONFIRMING_PAYMENT → PAYMENT_CONFIRMED → PAYOUT_PREPARED → PAID`,
-plus `EXPIRED`, `FAILED`, `UNDERPAID → REFUNDED`.
+**Statuses:** `AWAITING_PAYMENT → CONFIRMING_PAYMENT → PAYMENT_CONFIRMED → PAID`, plus `EXPIRED`,
+`FAILED`, `UNDERPAID → REFUNDED`. `PAID`, `FAILED` and `REFUNDED` are final. (`PAYOUT_PREPARED` was
+dropped; the app keeps the case only so old saved records decode.) After `PAID`, `l1_payout_txid`
+**can still change** if the operator fee-bumps a stuck payout — the app stops polling at `PAID`, so
+the txid it shows can go stale (not handled yet).
+
+**Error codes:** `INVALID_ARGUMENT` (bad address, amount, sidechain, txid), `ALREADY_EXISTS`
+(`request_id` reused with other parameters; outpoint already claimed; a different refund address),
+`RESOURCE_EXHAUSTED` (the hot wallet can't fund the payout; too many open quotes),
+`FAILED_PRECONDITION` (refund of a withdrawal that isn't `UNDERPAID`), `UNAVAILABLE` (payouts paused,
+or a backing service is down).
 
 **Live betanet policy** (`GetServiceInfo`, 2026-10-13): fee **1%** (100 bps), payout **10,000 –
 10,000,000 sats**, Thunder needs **2 confirmations**. Read these at runtime; never hardcode them.
@@ -60,8 +81,13 @@ plus `EXPIRED`, `FAILED`, `UNDERPAID → REFUNDED`.
 - **Retries:** reusing a `request_id` with the same sidechain, destination and payout returns the
   same quote. Reusing it with different parameters is rejected. So persist the full request.
 - **Refusals before any money moves:** payout outside limits; destination not a valid L1 address;
-  the operator's Thunder node is behind; liquidity — one quote may use at most **25% of the hot
-  wallet's spendable balance** (after a miner-fee reserve). Quotes reserve nothing.
+  the operator's Thunder node is behind; liquidity — a quote can't exceed `max_payout_now_sats` from
+  `GetStatus` (a share of the hot wallet's spendable balance, 25% by default, less a miner-fee
+  reserve). Quotes reserve nothing. The app reads `GetStatus` on load: a paused service shows its
+  reason, and the lower of `max_payout_sats` and `max_payout_now_sats` is the maximum offered.
+- **Open quotes per client:** 5 unexpired, unpaid quotes per IP by default; a sixth is refused until
+  one is paid or expires. The app reuses its `request_id` while destination and amount are unchanged,
+  so only changing them repeatedly within the quote lifetime can hit this.
 - **Quote lifetime:** 15 minutes by default (`expires_at`).
 - **Rate limit:** about 5 requests/second per IP, burst 20. Poll gently.
 
@@ -77,7 +103,7 @@ length as an **8-byte big-endian** integer:
 3. Sidechain: `thunder` (UTF-8)
 4. `l2_payment_address` (UTF-8, as returned)
 5. `l2_payment_sats` (8-byte big-endian)
-6. `l1_destination` (UTF-8, as returned)
+6. `l1_address` (UTF-8, as returned)
 7. `l1_payout_sats` (8-byte big-endian)
 8. `service_fee_sats` (8-byte big-endian)
 9. `required_confirmations` (as 8-byte big-endian)
@@ -85,7 +111,7 @@ length as an **8-byte big-endian** integer:
 
 **Client checks before paying** (all must pass, or abort with nothing spent):
 - the signature verifies;
-- `l1_destination` and `l1_payout_sats` are exactly what the user entered;
+- `l1_address` and `l1_payout_sats` are exactly what the user entered;
 - `l2_payment_sats == l1_payout_sats + service_fee_sats`, and the fee is consistent with the
   advertised bps;
 - the quote hasn't expired, with a margin for the payment to propagate.
@@ -103,9 +129,10 @@ config with a pinned key would catch a swapped server or key.
 | **One output** to the quote address paying **≥ `l2_payment_sats`** | Accepted |
 | Overpayment | Accepted, but the payout is fixed — **the excess is lost** |
 | Amount split across several outputs | Each output is judged alone → **`UNDERPAID`** |
-| Confirmed payment below the quote | `UNDERPAID`; refund on request (§6) |
-| Paid **after** the quote expired | Still honored, **within 7 days** of the quote's creation |
-| Paid after 7 days, a second payment to a paid address, or a payment after `PAID`/`FAILED`/`UNDERPAID` | **Ignored** — the coins sit until the operator sweeps them by hand |
+| Confirmed payment below the quote but at least `min_payout_sats` | `UNDERPAID`; refund on request (§6). Until a refund is requested, a full payment to the same address is still paid out |
+| Payment below `min_payout_sats` | **Ignored** (not even `UNDERPAID`) |
+| Paid **after** the quote expired | Still honored. A mined payment is found on its own until **one hour after `expires_at`**; later it must be reported with `SubmitPayment` |
+| A second payment to a paid address, or a payment after `PAID`/`FAILED` | **Ignored** — the coins sit until the operator sweeps them by hand |
 | Operator's hot wallet can't fund the payout | Stays `PAYMENT_CONFIRMED`, retried until topped up |
 | Payment reorged out | Cleared; the withdrawal goes back to waiting |
 
@@ -136,11 +163,14 @@ to a fresh address of the same wallet, and never let the user type an arbitrary 
 4. pay on Thunder                     ← the dangerous instant
 5. persist payment txid + vout
 6. SubmitPayment                      idempotent; retry freely
-7. poll GetWithdrawal until PAID      payout_txid → show on L1
+7. poll GetWithdrawal until PAID      l1_payout_txid → show on L1
 ```
 
 **Crash between 4 and 5:** recover by finding the payment to `l2_payment_address` in the wallet's own
-Thunder history, then resume at 6. That's why step 3 stores the address, not just the ID.
+Thunder history, then resume at 6. **Not built:** today such a record has no txid and relies on the
+service finding the payment itself, which now only happens until an hour after the quote expires. A
+payment mined later than that needs the txid to `SubmitPayment`, so this recovery should be built
+before the feature is enabled. That's why step 3 stores the address, not just the ID.
 `request_id` replay (§3) is a second recovery path, which is why step 3 stores every request field.
 
 Store per `walletId` (Golden Rule §5), purge on wallet removal, survive restarts. On app open, re-poll
