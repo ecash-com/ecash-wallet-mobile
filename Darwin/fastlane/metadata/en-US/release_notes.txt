@@ -1,12 +1,7 @@
-One wallet, every network. A wallet is now your recovery phrase, and you switch it between eCash, Bitcoin and L2L Signet from the network chip on the Home screen. Creating or importing a wallet no longer asks you to pick a network. If you held the same phrase as separate wallets on different networks, they are merged into one wallet the first time you open this version. Nothing needs to be re-entered, and your recovery phrases are untouched.
+Moved to a new phone? Your recovery phrase never leaves the phone it was saved on, so a wallet restored from a backup arrives with its balance and history but without its phrase. Until now the app gave no sign of that, and the wallet could not send.
 
-Also in this release:
-• Thunder mainnet is in the network switcher, nested under eCash.
-• Coins you receive can be spent before they confirm. Send prefers confirmed coins, the review shows the exact fee, and it warns when a payment depends on a coin that hasn't confirmed yet. Home shows how much of your balance is still unconfirmed.
-• Creating a wallet: the words appear on the grid as you draw, then you name the wallet.
-• The ECX price now comes from eCash.com, under eCash balances and on the Dashboard, with its 24-hour change.
-• Retired test networks (Alphanet, Betanet, Thunder Betanet) are hidden by default. A Settings toggle brings them back; nothing is deleted.
-• One Confirm for every send. The extra "Send real eCash?" alert is gone; the review and your device unlock are the gate on every network.
-• Fixed: switching networks did not always refresh the balance on the network you switched to.
-• Fixed: "Deposit to one of my wallets" was missing from the Thunder deposit screen. It now lists your wallets, with the one you are in first.
-• Moved to a new phone? Your recovery phrase never leaves the phone it was saved on, so a wallet restored from a backup arrives without it. The app now tells you when that has happened, on Home, Receive and in Settings, and lets you enter the phrase to restore the same wallet, with its name and history, instead of importing it again. Until you do, that wallet can show its balance but can't send.
+In this version:
+• The app tells you when a wallet is missing its recovery phrase: on Home, on Receive, in Settings and in the wallet list.
+• You can enter the phrase (or the private key, for a single-key wallet) to restore the same wallet, with its name and history, instead of importing it again. The app accepts it only if it belongs to that wallet.
+• Send and Withdraw take you to the restore step until the phrase is back.
+• The backup screen now says up front that the phrase stays on this phone and will not move to a new one. Write it down before you switch phones.
