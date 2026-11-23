@@ -89,6 +89,7 @@ struct RootView: View {
             case .active:
                 app.appLock.applyForegroundLock()
                 app.checkAndroidPaymentLink()
+                app.recheckMissingKeys()
                 withAnimation(.easeOut(duration: 0.28)) { privacyCovered = false }
                 // Returning from a real background trip: re-pull the remote endpoints config so a
                 // rotation takes effect without a cold launch. Guarded by `wasBackgrounded` so this

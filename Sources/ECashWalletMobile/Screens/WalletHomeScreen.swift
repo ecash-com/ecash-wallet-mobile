@@ -23,6 +23,7 @@ struct WalletHomeScreen: View {
     @State var sweepPrefill = false
     @State var claimSweepDismissed = false
     @State var showBackup = false
+    @State var showRestoreKey = false      // "recovery phrase isn't on this phone" sheet
     @State var showWalletManager = false
     @State var showNetworkSwitcher = false   // the Home chip's sheet
     @State var showFaucet = false
@@ -110,6 +111,12 @@ struct WalletHomeScreen: View {
                 BackupFlowView(viewModel: vm)
             }
         }
+        // Restore the recovery phrase of a wallet that arrived on this phone without it.
+        .sheet(isPresented: $showRestoreKey) {
+            if let vm = app.makeRestoreKeyViewModel() {
+                RestoreKeyScreen(viewModel: vm)
+            }
+        }
         // Wallet manager: switch / rename / add / import / remove.
         .sheet(isPresented: $showWalletManager) { WalletManagerSheet() }
         .sheet(isPresented: $showNetworkSwitcher) {
@@ -153,6 +160,8 @@ struct WalletHomeScreen: View {
     /// `.task` and `.onChange` — see the note in `.task` for why either alone misses a case.
     private func openSendForPendingLinkIfAny() {
         guard let body = app.takePendingPaymentLink() else { return }
+        // This wallet can't sign here: say why instead of walking the user through a send that fails.
+        if app.selectedWalletIsMissingKey { showRestoreKey = true; return }
         app.beginSendFlow()
         prefilledSendLink = body
         sendToken += 1
@@ -274,7 +283,11 @@ struct WalletHomeScreen: View {
 
             actionButtons
 
-            if !wallet.isBackedUp {
+            // The phrase isn't on this phone (new phone / restored backup): the wallet can't send.
+            // Takes the backup nudge's place — there is nothing here to back up until it's restored.
+            if app.selectedWalletIsMissingKey {
+                missingKeyBanner(isPrivateKey: wallet.keyType == .wif)
+            } else if !wallet.isBackedUp {
                 backupNudge
             }
 
@@ -381,6 +394,7 @@ struct WalletHomeScreen: View {
         HStack(spacing: Theme.Space.x3) {
             if isSidechainWallet {
                 actionButton(icon: Icon.sidechains, title: "Withdraw", prominent: false, labelSize: labelSize, showsIcon: showsIcons) {
+                    if app.selectedWalletIsMissingKey { showRestoreKey = true; return }
                     showWithdraw = true
                 }
             }
@@ -388,6 +402,8 @@ struct WalletHomeScreen: View {
                 showReceive = true
             }
             actionButton(icon: Icon.send, title: "Send", prominent: true, labelSize: labelSize, showsIcon: showsIcons) {
+                // No phrase on this phone → nothing can be signed. Offer the fix, not a dead end.
+                if app.selectedWalletIsMissingKey { showRestoreKey = true; return }
                 app.beginSendFlow()   // drop any cached (finished) Send VM → fresh flow
                 sendToken += 1        // force a fresh SendScreen (new nav path) (see sendToken)
                 showSend = true
@@ -488,6 +504,7 @@ struct WalletHomeScreen: View {
 
     private var claimSweepNudge: some View {
         Button {
+            if app.selectedWalletIsMissingKey { showRestoreKey = true; return }
             app.beginSendFlow()
             sweepPrefill = true
             sendToken += 1
@@ -569,6 +586,45 @@ struct WalletHomeScreen: View {
             .overlay(
                 RoundedRectangle(cornerRadius: Theme.Radius.md)
                     .stroke(Theme.Colors.accent.opacity(0.4), lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    /// The wallet's public data is here but its recovery phrase isn't (`docs/key-storage.md §9`).
+    /// The loudest card on Home, in the error colour: this wallet shows a balance it can't spend,
+    /// and coins sent to it are reachable only with a phrase that is somewhere else. Taps into the
+    /// restore sheet; gone once the phrase is back.
+    private func missingKeyBanner(isPrivateKey: Bool) -> some View {
+        Button {
+            showRestoreKey = true
+        } label: {
+            HStack(alignment: .top, spacing: Theme.Space.x3) {
+                Image(icon: Icon.caution).resizable().scaledToFit().frame(width: 18, height: 18)
+                    .foregroundStyle(Theme.Colors.negative)
+                VStack(alignment: .leading, spacing: Theme.Space.x1) {
+                    (isPrivateKey
+                        ? Text("This phone doesn't have your private key", bundle: .module,
+                               comment: "home missing key banner title (private key wallet)")
+                        : Text("This phone doesn't have your recovery phrase", bundle: .module,
+                               comment: "home missing key banner title"))
+                        .textStyle(.sm)
+                        .foregroundStyle(Theme.Colors.text0)
+                    (isPrivateKey
+                        ? Text("You can see this wallet, but you can't send from it. The key stayed on your old phone. Tap to enter it here.",
+                               bundle: .module, comment: "home missing key banner body (private key wallet)")
+                        : Text("You can see this wallet, but you can't send from it. The phrase stayed on your old phone. Tap to enter it here.",
+                               bundle: .module, comment: "home missing key banner body"))
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.text1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .padding(Theme.Space.x4)
+            .background(Theme.Colors.negativeTint, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+            .overlay(
+                RoundedRectangle(cornerRadius: Theme.Radius.md)
+                    .stroke(Theme.Colors.negative.opacity(0.5), lineWidth: 1)
             )
         }
         .buttonStyle(.plain)

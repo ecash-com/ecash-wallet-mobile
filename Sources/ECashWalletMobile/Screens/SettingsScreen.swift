@@ -11,6 +11,7 @@ struct SettingsScreen: View {
     @AppStorage("appearance") var appearance = ""
     @Environment(AppState.self) var app
     @State var showBackup = false   // not `private` — Fuse bridges @State (skip-fuse rule)
+    @State var showRestoreKey = false
     @State var showSplit = false
     @State var showSwitch = false
 
@@ -28,17 +29,28 @@ struct SettingsScreen: View {
                     // tappable: it sat between rows that DO signal interactivity (`menuRowLabel`
                     // adds a trailing indicator), wore the same `text0` as the non-interactive
                     // toggle labels, and ended in a STATUS — which reads as a value, not an action.
-                    Button { showBackup = true } label: {
+                    //
+                    // A wallet whose phrase isn't on this phone has nothing to reveal: the row says
+                    // so and opens the restore sheet instead (`docs/key-storage.md §9`).
+                    let missingKey = app.isMissingKey(walletId: wallet.id)
+                    Button { if missingKey { showRestoreKey = true } else { showBackup = true } } label: {
                         HStack {
                             Text("Recovery phrase", bundle: .module, comment: "settings security row")
                                 .textStyle(.body)
                                 .foregroundStyle(Theme.Colors.text0)
                             Spacer()
-                            (wallet.isBackedUp
-                                ? Text("Backed up", bundle: .module, comment: "wallet backup status")
-                                : Text("Not backed up", bundle: .module, comment: "wallet backup status"))
-                                .textStyle(.xs)
-                                .foregroundStyle(wallet.isBackedUp ? Theme.Colors.positive : Theme.Colors.warning)
+                            if missingKey {
+                                Text("Not on this phone", bundle: .module,
+                                     comment: "wallet backup status: the secret isn't on this device")
+                                    .textStyle(.xs)
+                                    .foregroundStyle(Theme.Colors.negative)
+                            } else {
+                                (wallet.isBackedUp
+                                    ? Text("Backed up", bundle: .module, comment: "wallet backup status")
+                                    : Text("Not backed up", bundle: .module, comment: "wallet backup status"))
+                                    .textStyle(.xs)
+                                    .foregroundStyle(wallet.isBackedUp ? Theme.Colors.positive : Theme.Colors.warning)
+                            }
                             disclosureChevron
                         }
                     }
@@ -304,6 +316,11 @@ struct SettingsScreen: View {
         }
         .groupedListStyle()
         .navigationTitle(Text("Settings", bundle: .module, comment: "settings screen title"))
+        .sheet(isPresented: $showRestoreKey) {
+            if let vm = app.makeRestoreKeyViewModel() {
+                RestoreKeyScreen(viewModel: vm)
+            }
+        }
         .fullScreenFlow(isPresented: $showBackup) {
             if let vm = app.makeBackupViewModel() {
                 BackupFlowView(viewModel: vm)

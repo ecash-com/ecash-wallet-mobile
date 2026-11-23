@@ -91,6 +91,12 @@ struct BackupFlowView: View {
                         infoBullet(Icon.backup,
                                    Text("We'll never ask for them. Don't type them into any site, app, or message.",
                                         bundle: .module, comment: "backup intro point: never share"))
+                        infoBullet(Icon.caution,
+                                   vm.isPrivateKey
+                                   ? Text("It stays on this phone only. It isn't in your phone's backup and won't move to a new phone, so you'll need to enter it there.",
+                                          bundle: .module, comment: "backup intro point: secret doesn't transfer to a new device (private key)")
+                                   : Text("They stay on this phone only. They aren't in your phone's backup and won't move to a new phone, so you'll need to enter them there.",
+                                          bundle: .module, comment: "backup intro point: secret doesn't transfer to a new device"))
                     }
 
                     commonScams

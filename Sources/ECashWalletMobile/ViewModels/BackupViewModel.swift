@@ -76,7 +76,10 @@ final class BackupViewModel {
         }
         do {
             guard let secret = try loadMnemonic(), !secret.isEmpty else {
-                step = .failed("Couldn't load the backup for this wallet.")
+                // Read fine, found nothing: the secret isn't on this device (new phone / restore).
+                step = .failed(isPrivateKey
+                    ? "This wallet's private key isn't on this phone, so there's nothing to show. Enter it from Home to restore the wallet."
+                    : "This wallet's recovery phrase isn't on this phone, so there's nothing to show. Enter it from Home to restore the wallet.")
                 return
             }
             if isPrivateKey {

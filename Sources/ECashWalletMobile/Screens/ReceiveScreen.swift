@@ -35,6 +35,20 @@ struct ReceiveScreen: View {
             VStack(spacing: Theme.Space.x5) {
                 NetworkBadge(network: wallet.network)
 
+                // The address is still this wallet's, but nothing sent to it can be spent from this
+                // phone until the phrase is restored — and never, if the phrase is lost.
+                if app.isMissingKey(walletId: wallet.id) {
+                    Text("This phone doesn't have this wallet's recovery phrase. Coins sent here can only be spent once you restore it. Don't receive to this wallet unless you have the phrase.",
+                         bundle: .module, comment: "receive warning: wallet's secret isn't on this device")
+                        .textStyle(.xs)
+                        .foregroundStyle(Theme.Colors.text0)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(Theme.Space.x3)
+                        .background(Theme.Colors.negativeTint, in: RoundedRectangle(cornerRadius: Theme.Radius.md))
+                        .overlay(RoundedRectangle(cornerRadius: Theme.Radius.md)
+                            .stroke(Theme.Colors.negative.opacity(0.5), lineWidth: 1))
+                }
+
                 QRCodeView(content: info.address)
 
                 VStack(spacing: Theme.Space.x2) {

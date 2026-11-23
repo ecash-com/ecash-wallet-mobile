@@ -356,6 +356,46 @@ final class AppState {
         return wallets.first { $0.id == id }
     }
 
+    // MARK: Wallets without their recovery phrase (`docs/key-storage.md §9`)
+
+    /// Wallets whose recovery phrase (or private key) is NOT on this device. A move to a new phone or
+    /// a restored backup brings the wallet list and chain data but never the secret, so such a
+    /// wallet shows its balance and can't spend it. Home, Receive, Settings and the wallet list all
+    /// say so, and Send opens the restore sheet instead. Refreshed by `refresh()` and each time the
+    /// app comes to the foreground.
+    private(set) var walletsMissingKey: Set<String> = []
+
+    func isMissingKey(walletId: String) -> Bool { walletsMissingKey.contains(walletId) }
+
+    var selectedWalletIsMissingKey: Bool {
+        guard let id = selectedWalletId else { return false }
+        return walletsMissingKey.contains(id)
+    }
+
+    /// Ask the secure store again. Cheap (one read per wallet, nothing kept). A read that fails says
+    /// nothing either way, so a locked device can't raise a false alarm — which is also why this
+    /// runs again on foreground: a launch while the phone was locked couldn't tell.
+    func recheckMissingKeys() {
+        let missing = Set(manager.walletIdsMissingSecret())
+        if missing != walletsMissingKey { walletsMissingKey = missing }
+    }
+
+    /// Vend the restore flow for the selected wallet, or nil if it isn't missing its secret. The
+    /// wallet id is captured now, so a switch mid-flow can't redirect where the phrase is written.
+    func makeRestoreKeyViewModel() -> RestoreKeyViewModel? {
+        guard let wallet = selectedWallet, walletsMissingKey.contains(wallet.id) else { return nil }
+        let id = wallet.id
+        // Public data only, so the sheet can say which wallet it is and what it expects. The address
+        // is the one Receive shows (`nextUnusedAddress` — it doesn't burn index space).
+        let address = wallet.network.isThunder ? nil : (try? manager.nextUnusedAddress(walletId: id))?.address
+        return RestoreKeyViewModel(walletLabel: wallet.label, keyType: wallet.keyType,
+                                   addressTypeName: wallet.scriptType.displayName,
+                                   receiveAddress: address) { secret in
+            try self.manager.restoreSecret(walletId: id, secret: secret)
+            self.refresh()   // clears the warning; also picks up `isBackedUp`
+        }
+    }
+
     // MARK: Retired networks (`RetiredNetworks`; Settings → "Hide retired networks")
 
     /// The wallets the list shows. `wallets` itself stays complete: `hasWallets`, onboarding and
@@ -1794,6 +1834,7 @@ final class AppState {
         // Persist the active wallet so it survives cold starts (create/import/select/remove all
         // funnel through here).
         UserDefaults.standard.set(selectedWalletId, forKey: Self.selectedWalletKey)
+        recheckMissingKeys()
         // Swap the News feed to the (now) selected wallet's network — no-op if the network is the
         // same (e.g. switching between two testnet wallets keeps the same feed).
         updateCoinNewsFeed()

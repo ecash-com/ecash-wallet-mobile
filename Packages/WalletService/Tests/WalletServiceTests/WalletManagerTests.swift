@@ -540,4 +540,111 @@ final class WalletManagerTests: XCTestCase {
         try ks.deleteMnemonic(walletId: "spare")
         XCTAssertNil(try manager.mnemonic(for: "m"))
     }
+
+    // MARK: - A wallet without its secret (new phone / restored backup)
+
+    private let vector = "abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon abandon about"
+
+    /// A store that fails every read, standing in for a locked device.
+    private final class LockedKeyStore: KeyStore {
+        func saveMnemonic(_ mnemonic: String, walletId: String) throws {}
+        func loadMnemonic(walletId: String) throws -> String? { throw WalletError.persistenceFailed }
+        func deleteMnemonic(walletId: String) throws {}
+    }
+
+    func testAWalletWhoseSecretIsGoneIsReportedMissing() throws {
+        let ks = InMemoryKeyStore()
+        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
+        let kept = try manager.importWallet(label: "Kept", mnemonic: vector)
+        let lost = try manager.importWallet(label: "Lost", mnemonic: vector)
+        XCTAssertTrue(manager.walletIdsMissingSecret().isEmpty)
+
+        try ks.deleteMnemonic(walletId: lost.id)   // what a move to a new phone leaves behind
+
+        XCTAssertEqual(manager.walletIdsMissingSecret(), [lost.id])
+        XCTAssertNotNil(try manager.mnemonic(for: kept.id))
+    }
+
+    /// A read that fails is not proof the secret is gone: no false alarm.
+    func testAnUnreadableKeyStoreIsNotReportedMissing() throws {
+        let ws = InMemoryWalletStore()
+        let seeded = WalletManager(keyStore: InMemoryKeyStore(), walletStore: ws, factory: MockWalletEngineFactory())
+        _ = try seeded.importWallet(label: "W", mnemonic: vector)
+        let locked = WalletManager(keyStore: LockedKeyStore(), walletStore: ws, factory: MockWalletEngineFactory())
+        try locked.load()
+        XCTAssertEqual(locked.wallets.count, 1)
+        XCTAssertTrue(locked.walletIdsMissingSecret().isEmpty)
+    }
+
+    func testRestoreSecretPutsThePhraseBackUnderTheSameWallet() throws {
+        let ks = InMemoryKeyStore()
+        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
+        let wallet = try manager.createWallet(label: "Mine")   // created → not backed up
+        try ks.deleteMnemonic(walletId: wallet.id)
+
+        // Pasted with stray spacing and capitals: normalized like an import.
+        try manager.restoreSecret(walletId: wallet.id, secret: "  Abandon abandon abandon abandon abandon\nabandon abandon abandon abandon abandon abandon   about ")
+
+        XCTAssertEqual(try ks.loadMnemonic(walletId: wallet.id), vector)
+        XCTAssertTrue(manager.walletIdsMissingSecret().isEmpty)
+        XCTAssertEqual(manager.wallets.count, 1)
+        XCTAssertEqual(manager.wallets.first?.id, wallet.id)
+        XCTAssertEqual(manager.wallets.first?.label, "Mine")
+        XCTAssertTrue(manager.wallets.first?.isBackedUp ?? false)   // they just proved they hold it
+    }
+
+    func testRestoreSecretRejectsASecretForAnotherWalletAndSavesNothing() throws {
+        let ks = InMemoryKeyStore()
+        let factory = MockWalletEngineFactory()
+        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: factory)
+        let wallet = try manager.importWallet(label: "Mine", mnemonic: vector)
+        try ks.deleteMnemonic(walletId: wallet.id)
+        // From here the factory derives different descriptors on Bitcoin, as another seed would.
+        factory.divergentRestoreNetworks = [.bitcoin]
+
+        XCTAssertEqual(thrown { try manager.restoreSecret(walletId: wallet.id, secret: self.vector) }, .secretMismatch)
+        XCTAssertNil(try ks.loadMnemonic(walletId: wallet.id))
+        XCTAssertEqual(manager.walletIdsMissingSecret(), [wallet.id])
+    }
+
+    func testRestoreSecretRejectsAnInvalidPhrase() throws {
+        let ks = InMemoryKeyStore()
+        let factory = MockWalletEngineFactory()
+        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: factory)
+        let wallet = try manager.importWallet(label: "Mine", mnemonic: vector)
+        try ks.deleteMnemonic(walletId: wallet.id)
+        factory.rejectImport = true
+
+        XCTAssertEqual(thrown { try manager.restoreSecret(walletId: wallet.id, secret: "not a phrase") }, .invalidMnemonic)
+        XCTAssertNil(try ks.loadMnemonic(walletId: wallet.id))
+    }
+
+    /// A secret that is still there is never replaced, whatever is entered.
+    func testRestoreSecretNeverOverwritesAnExistingSecret() throws {
+        let ks = InMemoryKeyStore()
+        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
+        let wallet = try manager.importWallet(label: "Mine", mnemonic: vector)
+
+        try manager.restoreSecret(walletId: wallet.id, secret: "zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo zoo wrong")
+
+        XCTAssertEqual(try ks.loadMnemonic(walletId: wallet.id), vector)
+    }
+
+    func testRestoreSecretWorksForAWifWallet() throws {
+        let ks = InMemoryKeyStore()
+        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: MockWalletEngineFactory())
+        let wallet = try manager.importPrivateKey(label: "Key", wif: "KwMockWif")
+        try ks.deleteMnemonic(walletId: wallet.id)
+
+        try manager.restoreSecret(walletId: wallet.id, secret: " KwMockWif\n")
+
+        XCTAssertEqual(try ks.loadMnemonic(walletId: wallet.id), "KwMockWif")
+    }
+
+    func testDescriptorComparisonIgnoresChecksumAndHardenedSpelling() {
+        XCTAssertTrue(WalletManager.sameDescriptor("wpkh([d34db33f/84'/0'/0']xpubA/0/*)#abcd1234",
+                                                   "wpkh([d34db33f/84h/0h/0h]xpubA/0/*)"))
+        XCTAssertFalse(WalletManager.sameDescriptor("wpkh([d34db33f/84'/0'/0']xpubA/0/*)",
+                                                    "wpkh([d34db33f/84'/0'/0']xpubB/0/*)"))
+    }
 }

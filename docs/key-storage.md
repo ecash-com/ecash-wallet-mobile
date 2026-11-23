@@ -158,3 +158,58 @@ only — auth-bound keys remain an open item, not a gate that was met.)*
       blocking was dropped 2026-06-25.)
 - [x] **Secret-scrub audit** across logs/errors/analytics (CLAUDE.md §7) — manual pass + automated no-leak test.
 - [ ] **Auth-bound keys** (§6) — still open; mainnet went live 2026-10-29 without them.
+- [x] **A wallet without its secret** (§9) — detected, flagged everywhere money moves, restorable in place (2026-11-22).
+- [ ] **Cloud backup of the secret** (iCloud Keychain / Google) — would remove the cause of §9; not designed yet.
+
+## 9. A wallet without its secret (new phone / restored backup) — BUILT 2026-11-22
+
+**How it happens.** The secret is device-only on purpose (§2, §4): iOS never migrates a
+`WhenUnlockedThisDeviceOnly` item to another device, by iCloud restore or by direct transfer, and on
+Android the keychain prefs are excluded from backup and device-transfer. Everything else *is*
+restored — `wallets.json`, the BDK chain stores, UserDefaults. So on a new phone the wallet appears
+with its name, balance and history, runs watch-only without complaint, hands out receive addresses,
+and cannot sign. Found on Jake's own phone move, 2026-11-22. Before this section's work nothing told
+the user: Send failed after review + device auth with "Signing failed.", and an imported wallet
+(marked backed up at import) showed no banner at all.
+
+**Detection.** `WalletManager.walletIdsMissingSecret()` reads each wallet's secret through
+`loadSecret` (so a seed-container merge's spare entries count) and reports the ones where the read
+**succeeded and found nothing**. A read that throws (device locked, Keystore trouble) is "can't
+tell" and is left out — a false alarm here would tell someone their coins are stranded. Only ids
+cross the bridge. `AppState.walletsMissingKey` holds the result, refreshed in `refresh()` and on
+every return to the foreground (a launch while the phone was locked couldn't tell).
+
+**What the user sees** (all keyed off `AppState.isMissingKey` / `selectedWalletIsMissingKey`):
+
+- **Home:** a red "This phone doesn't have your recovery phrase" card in place of the backup nudge.
+- **Send / Withdraw / claim sweep / an incoming payment link:** open the restore sheet instead of a
+  flow that would fail at signing.
+- **Receive:** still shows the address, under a warning not to receive unless they hold the phrase.
+- **Settings → Recovery phrase:** status "Not on this phone", opens the restore sheet (there is
+  nothing to reveal).
+- **Wallet list:** a red line on the affected wallet.
+- Any path not gated above still fails safely: the signer throws `WalletError.keyUnavailable`
+  ("…isn't on this device. Restore it to continue.") rather than a bare signing failure.
+
+**Restore in place.** `RestoreKeyScreen` / `RestoreKeyViewModel` → `WalletManager.restoreSecret`.
+The entered phrase (or WIF) is accepted only if it re-derives **exactly the public descriptors
+already stored** for every one of the wallet's BDK accounts (compared without the `#checksum` and
+with `h`/`'` unified). Then it is written to the Keychain under the **existing** `walletId`, and the
+wallet is marked backed up. So:
+
+- the wallet keeps its id, label, accounts, chain stores and everything keyed to them;
+- a phrase for another wallet can never be attached (`.secretMismatch`, nothing saved);
+- an existing secret is never overwritten (a present secret makes the call a no-op);
+- a wallet with no BDK descriptor to check against — a legacy Thunder-betanet-only wallet — throws
+  `.restoreNotVerifiable`; importing it as a new wallet is the path there.
+
+A plain **Import** of the same phrase also recovers the funds, but as a second wallet with a new id:
+the original stays in the list unable to sign and has to be removed by hand, and a non-default
+script type has to be re-chosen. Restore in place avoids both.
+
+**Telling users beforehand.** The backup intro has a bullet saying the phrase stays on this phone
+only and won't move to a new one.
+
+**Not solved here:** a user who never wrote the phrase down and no longer has the old phone has
+lost the coins. Only a backup of the secret that survives a device change (iCloud Keychain / a
+Google-backed equivalent, opt-in) fixes that; see the open to-do in §8.

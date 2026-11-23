@@ -20,7 +20,7 @@ extension ThunderError: UserFacingError {
         case .invalidAddress:
             return "That isn't a valid Thunder address."
         case .mnemonicUnavailable:
-            return "Couldn't unlock this wallet's keys."
+            return "This wallet's recovery phrase isn't on this device. Restore it to continue."
         case .backendUnavailable:
             return "Couldn't reach the Thunder network. Check your connection and try again."
         case let .withdrawalTooSmall(minimumSats):

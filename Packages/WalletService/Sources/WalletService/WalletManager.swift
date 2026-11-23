@@ -403,6 +403,77 @@ public final class WalletManager: @unchecked Sendable {
         try loadSecret(walletId: id)
     }
 
+    // MARK: - A wallet without its secret (`docs/key-storage.md §9`)
+
+    /// The wallets whose secret is NOT on this device. That is the state a phone-to-phone move or a
+    /// backup restore leaves behind: the wallet list and chain data come across, the Keychain entry
+    /// (device-only by design) doesn't — so the wallet shows a balance it can't spend.
+    ///
+    /// Only a read that SUCCEEDED and found nothing counts. A read that threw (device locked,
+    /// Keystore trouble) says nothing either way and is left out: a false alarm here would tell a
+    /// user their coins are stranded when they aren't. The secret is read and dropped, never returned.
+    public func walletIdsMissingSecret() -> [String] {
+        var missing: [String] = []
+        for wallet in wallets {
+            do {
+                let secret = try loadSecret(walletId: wallet.id)
+                if secret == nil { missing.append(wallet.id) }
+            } catch {
+                continue
+            }
+        }
+        return missing
+    }
+
+    /// Put a wallet's secret back **in place**: same wallet id, label, accounts and history. For a
+    /// wallet that lost its Keychain entry (`walletIdsMissingSecret`).
+    ///
+    /// The entered secret is accepted only if it re-derives EXACTLY the public descriptors already
+    /// stored for every one of the wallet's BDK accounts — so a phrase for some other wallet can
+    /// never be attached to this one (`.secretMismatch`, nothing saved). A wallet with no stored
+    /// descriptor to check against throws `.restoreNotVerifiable`. An existing secret is never
+    /// overwritten: if one is present this does nothing. Marks the wallet backed up — the user has
+    /// just shown they hold the secret. Throws `.invalidMnemonic` / `.invalidPrivateKey` for input
+    /// that isn't a phrase / key at all. Never logs or echoes the input.
+    public func restoreSecret(walletId: String, secret raw: String) throws {
+        guard let wallet = wallets.first(where: { $0.id == walletId }) else { throw WalletError.persistenceFailed }
+        if try loadSecret(walletId: walletId) != nil { return }
+        let secret: String
+        switch wallet.keyType {
+        case .mnemonic: secret = MnemonicInput.normalize(raw)
+        case .wif: secret = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        var checked = 0
+        for account in wallet.accounts where !account.externalDescriptor.isEmpty {
+            let keys: WalletKeys
+            switch wallet.keyType {
+            case .wif: keys = try factory.restorePrivateKey(network: account.network, wif: secret)
+            case .mnemonic: keys = try factory.restore(network: account.network, mnemonic: secret,
+                                                       scriptType: account.scriptType)
+            }
+            guard Self.sameDescriptor(keys.externalDescriptor, account.externalDescriptor),
+                  Self.sameDescriptor(keys.internalDescriptor, account.internalDescriptor) else {
+                throw WalletError.secretMismatch
+            }
+            checked += 1
+        }
+        guard checked > 0 else { throw WalletError.restoreNotVerifiable }
+        try keyStore.saveMnemonic(secret, walletId: walletId)
+        if !wallet.isBackedUp { try? setBackedUp(id: walletId) }
+    }
+
+    /// Two public descriptors name the same keys. Compared without the `#checksum` suffix and with
+    /// `h` hardened markers read as `'`, so a difference in how BDK printed one of them can't reject
+    /// the right secret. Both sides get the same rewrite, so distinct keys never compare equal.
+    static func sameDescriptor(_ a: String, _ b: String) -> Bool {
+        canonicalDescriptor(a) == canonicalDescriptor(b)
+    }
+
+    private static func canonicalDescriptor(_ descriptor: String) -> String {
+        let body = descriptor.components(separatedBy: "#").first ?? descriptor
+        return body.replacingOccurrences(of: "h", with: "'")
+    }
+
     /// The ONE path that reads a wallet's secret: its own Keychain entry, else the first non-empty
     /// entry among the orphan ids a seed-container merge left on it (`orphanKeychainIds`). Those
     /// entries hold the same phrase, written by copy-to-network — a spare copy the device already

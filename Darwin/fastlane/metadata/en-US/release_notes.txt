@@ -9,3 +9,4 @@ Also in this release:
 • One Confirm for every send. The extra "Send real eCash?" alert is gone; the review and your device unlock are the gate on every network.
 • Fixed: switching networks did not always refresh the balance on the network you switched to.
 • Fixed: "Deposit to one of my wallets" was missing from the Thunder deposit screen. It now lists your wallets, with the one you are in first.
+• Moved to a new phone? Your recovery phrase never leaves the phone it was saved on, so a wallet restored from a backup arrives without it. The app now tells you when that has happened, on Home, Receive and in Settings, and lets you enter the phrase to restore the same wallet, with its name and history, instead of importing it again. Until you do, that wallet can show its balance but can't send.

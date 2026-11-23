@@ -178,6 +178,13 @@ struct WalletManagerSheet: View {
                         // colour, so a wallet reads as a seed across networks, not as whatever was
                         // viewed last (docs/seed-container-model.md §4). An empty wallet names no
                         // chain at all (Jake, 2026-11-10). Backup state is Home's banner, not here.
+                        // The one state the list does flag: a wallet this phone can't spend from.
+                        if app.isMissingKey(walletId: wallet.id) {
+                            Text("Recovery phrase not on this phone", bundle: .module,
+                                 comment: "wallet list row: the wallet's secret isn't on this device")
+                                .textStyle(.xs)
+                                .foregroundStyle(Theme.Colors.negative)
+                        }
                         let lines = app.visibleAccountBalances(for: wallet)
                         if lines.isEmpty {
                             Text("No coins seen yet", bundle: .module,

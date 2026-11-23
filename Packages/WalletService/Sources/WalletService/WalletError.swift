@@ -37,8 +37,16 @@ public enum WalletError: Error, Equatable, Sendable {
     /// Re-deriving the wallet on the target network gave different keys. Nothing was saved. Never
     /// says which descriptor differed (§2).
     case copyMismatch
-    /// The wallet's secret isn't in the Keychain, so there's nothing to copy.
+    /// The wallet's secret isn't in the Keychain: nothing to sign with, reveal, or derive from.
+    /// The usual cause is a move to a new phone — the secret never leaves the device it was
+    /// created on, while the public wallet data is restored (`docs/key-storage.md §9`).
     case keyUnavailable
+    /// A secret entered to restore a wallet in place derives different keys than the wallet's stored
+    /// public descriptors. Nothing was saved. Never says what differed (§2).
+    case secretMismatch
+    /// The wallet has no stored public descriptor to check an entered secret against (a
+    /// sidechain-only wallet), so it can't be restored in place.
+    case restoreNotVerifiable
     /// Sidechain deposits aren't available on this wallet's network (no BIP300 there).
     case sidechainNotSupported
     /// The sidechain address can't be put in a deposit (empty, wrapped `s9_…` form, too long).
@@ -76,7 +84,9 @@ public enum WalletError: Error, Equatable, Sendable {
         case .copyNotSupported: return "This wallet can't be opened on that network."
         case .alreadyOnNetwork: return "This wallet is already open on that network."
         case .copyMismatch: return "Couldn't open this wallet on that network. Nothing was changed."
-        case .keyUnavailable: return "This wallet's key isn't available on this device."
+        case .keyUnavailable: return "This wallet's recovery phrase isn't on this device. Restore it to continue."
+        case .secretMismatch: return "That doesn't belong to this wallet. Nothing was changed."
+        case .restoreNotVerifiable: return "This wallet can't be restored here. Import it as a new wallet instead."
         case .sidechainNotSupported: return "Sidechain deposits aren't available on this network."
         case .invalidSidechainAddress: return "That isn't a valid sidechain address."
         case .sidechainTreasuryMismatch: return "Couldn't verify the sidechain on this network. Nothing was sent."

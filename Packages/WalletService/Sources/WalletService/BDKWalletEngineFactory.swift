@@ -158,7 +158,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
                 // drop it. BDK re-derives the key from the PSBT, so `pkh(<WIF>)` signs a PSBT the
                 // watch-only `pkh(<pubkey>)` wallet built (same key → same address).
                 signPsbt = { psbt in
-                    guard let wif = try loadSecret() else { throw WalletError.signingFailed }
+                    guard let wif = try loadSecret() else { throw WalletError.keyUnavailable }
                     let signerDesc: Descriptor
                     do {
                         signerDesc = try Descriptor(descriptor: "pkh(\(wif))", network: net)
@@ -189,7 +189,7 @@ public final class BDKWalletEngineFactory: WalletEngineFactory {
                 // signing. BDK derives the signing key from the PSBT's own BIP32 paths, so a fresh
                 // in-memory wallet from the secret descriptors signs a PSBT the watch-only wallet built.
                 signPsbt = { psbt in
-                    guard let phrase = try loadSecret() else { throw WalletError.signingFailed }
+                    guard let phrase = try loadSecret() else { throw WalletError.keyUnavailable }
                     let mnemonic: Mnemonic
                     do {
                         mnemonic = try Mnemonic.fromString(mnemonic: phrase)

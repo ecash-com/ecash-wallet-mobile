@@ -134,5 +134,37 @@ final class WalletKeysDescriptorTests: XCTestCase {
                        "bc1qcr8te4kr609gcawutmrza0j4xv80jy8z306fyu")
         XCTAssertFalse(ecash.externalDescriptor.lowercased().contains("xprv"))
     }
+
+    /// Restore in place with REAL derivation (`docs/key-storage.md §9`): a wallet that lost its
+    /// Keychain entry takes back only the phrase that derives its stored descriptors. Another valid
+    /// BIP39 phrase is refused and nothing is saved.
+    func testRestoreSecretAcceptsOnlyTheWalletsOwnPhrase() throws {
+        let ks = InMemoryKeyStore()
+        let manager = WalletManager(keyStore: ks, walletStore: InMemoryWalletStore(), factory: makeFactory())
+        let wallet = try manager.importWallet(label: "A", mnemonic: Self.abandon)
+        try ks.deleteMnemonic(walletId: wallet.id)
+        XCTAssertEqual(manager.walletIdsMissingSecret(), [wallet.id])
+
+        let other = "legal winner thank year wave sausage worth useful legal winner thank yellow"
+        do {
+            try manager.restoreSecret(walletId: wallet.id, secret: other)
+            XCTFail("another wallet's phrase was accepted")
+        } catch let error as WalletError {
+            XCTAssertEqual(error, .secretMismatch)
+        }
+        XCTAssertNil(try ks.loadMnemonic(walletId: wallet.id))
+
+        do {
+            try manager.restoreSecret(walletId: wallet.id, secret: "abandon abandon abandon")
+            XCTFail("a non-phrase was accepted")
+        } catch let error as WalletError {
+            XCTAssertEqual(error, .invalidMnemonic)
+        }
+
+        try manager.restoreSecret(walletId: wallet.id, secret: Self.abandon)
+        XCTAssertEqual(try ks.loadMnemonic(walletId: wallet.id), Self.abandon)
+        XCTAssertTrue(manager.walletIdsMissingSecret().isEmpty)
+        XCTAssertEqual(manager.wallets.first?.accounts.count, wallet.accounts.count)
+    }
 }
 #endif
