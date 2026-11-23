@@ -1,0 +1,1 @@
+One wallet, every network. New wallets open on eCash mainnet; switch to Bitcoin, L2L Signet or Thunder from the network chip. Wallets sharing a phrase merge on first launch, nothing to re-enter. Also: Dashboard on eCash mainnet, ECX price from eCash.com, unconfirmed coins spendable with exact fee on review.

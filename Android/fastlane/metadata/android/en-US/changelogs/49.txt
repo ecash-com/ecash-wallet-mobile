@@ -1,0 +1,1 @@
+Moved to a new phone? Your recovery phrase stays on the phone it was saved on, so a wallet restored from a backup arrives without it. The app now tells you when that has happened, on Home, Receive and in Settings, and lets you enter the phrase to restore the same wallet with its name and history. Until you do, that wallet shows its balance but can't send.
